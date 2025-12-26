@@ -11,7 +11,9 @@
       "WebFetch(domain:ai-sdk.dev)",
       "WebSearch",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:www.npmjs.com)"
+      "WebFetch(domain:www.npmjs.com)",
+      "Bash(pnpm install)",
+      "Bash(pnpm build:*)"
     ]
   }
 }

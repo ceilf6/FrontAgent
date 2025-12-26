@@ -4,7 +4,13 @@
       "Bash(tree:*)",
       "Bash(ls:*)",
       "Bash(cat:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "WebFetch(domain:sdk.vercel.ai)",
+      "WebFetch(domain:ai-sdk.dev)",
+      "WebSearch",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

@@ -17,7 +17,9 @@
       "Bash(pnpm turbo build:*)",
       "Bash(pnpm frontagent validate:*)",
       "Bash(node:*)",
-      "Bash(pnpm frontagent:*)"
+      "Bash(pnpm frontagent:*)",
+      "Bash(env)",
+      "Bash(echo:*)"
     ]
   }
 }

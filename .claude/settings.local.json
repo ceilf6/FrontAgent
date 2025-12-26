@@ -14,7 +14,10 @@
       "WebFetch(domain:www.npmjs.com)",
       "Bash(pnpm install)",
       "Bash(pnpm build:*)",
-      "Bash(pnpm turbo build:*)"
+      "Bash(pnpm turbo build:*)",
+      "Bash(pnpm frontagent validate:*)",
+      "Bash(node:*)",
+      "Bash(pnpm frontagent:*)"
     ]
   }
 }

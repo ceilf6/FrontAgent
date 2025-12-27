@@ -28,7 +28,8 @@
       "Bash(export BASE_URL=\"https://c.kiwi/api\")",
       "Bash(export:*)",
       "Bash(export API_KEY=\"cr_7288f3eaddab7b138621b480874bf8cc7f0a3334a4e11b2b45ebbb6b9afcc3ef\")",
-      "Bash(frontagent info:*)"
+      "Bash(frontagent info:*)",
+      "Bash(pnpm build:cli:*)"
     ]
   }
 }

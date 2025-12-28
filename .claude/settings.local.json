@@ -30,7 +30,12 @@
       "Bash(export API_KEY=\"cr_7288f3eaddab7b138621b480874bf8cc7f0a3334a4e11b2b45ebbb6b9afcc3ef\")",
       "Bash(frontagent info:*)",
       "Bash(pnpm build:cli:*)",
-      "Bash(pnpm build:core:*)"
+      "Bash(pnpm build:core:*)",
+      "Bash(npm install)",
+      "Bash(npm run typecheck:*)",
+      "Bash(npm run dev:*)",
+      "Bash(curl:*)",
+      "Bash(timeout 10 npm run dev:*)"
     ]
   }
 }

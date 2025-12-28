@@ -35,7 +35,10 @@
       "Bash(npm run typecheck:*)",
       "Bash(npm run dev:*)",
       "Bash(curl:*)",
-      "Bash(timeout 10 npm run dev:*)"
+      "Bash(timeout 10 npm run dev:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(timeout 5 npm run dev)"
     ]
   }
 }

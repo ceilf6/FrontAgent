@@ -41,7 +41,9 @@
       "Bash(timeout 5 npm run dev)",
       "Bash(git -C /Users/a86198/Desktop/FrontAgent log --oneline -10)",
       "Bash(pandoc:*)",
-      "Bash(fc-list:*)"
+      "Bash(fc-list:*)",
+      "Bash(pnpm run typecheck:*)",
+      "Bash(pnpm --filter @frontagent/core build:*)"
     ]
   }
 }

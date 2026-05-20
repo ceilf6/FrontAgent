@@ -22,7 +22,7 @@
     "@frontagent/shared": "workspace:*",
     "yaml": "^2.3.0",
     "ajv": "^8.12.0",
-    "minimatch": "^9.0.0"
+    "minimatch": "^10.2.5"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

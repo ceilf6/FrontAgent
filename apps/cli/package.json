@@ -24,16 +24,16 @@
     "@frontagent/mcp-web": "workspace:*",
     "@frontagent/mcp-shell": "workspace:*",
     "@frontagent/runtime-node": "workspace:*",
-    "commander": "^11.1.0",
+    "commander": "^14.0.3",
     "chalk": "^5.3.0",
-    "ora": "^8.0.0",
-    "ink": "^5.1.0",
+    "ora": "^9.4.0",
+    "ink": "^7.0.3",
     "ink-spinner": "^5.0.0",
-    "react": "^18.3.1"
+    "react": "^19.2.6"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
-    "@types/react": "^18.3.12",
+    "@types/react": "^19.2.15",
     "typescript": "^5.3.0"
   }
 }

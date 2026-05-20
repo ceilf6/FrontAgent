@@ -40,7 +40,7 @@ temp/
 
 # FrontAgent specific
 .frontagent/
-artifacts/
+/artifacts/
 
 # claude code
 .claude/

@@ -20,7 +20,7 @@
   "type": "module",
   "main": "./dist/extension.cjs",
   "engines": {
-    "vscode": "^1.95.0"
+    "vscode": "^1.120.0"
   },
   "categories": [
     "AI",

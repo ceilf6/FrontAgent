@@ -290,8 +290,6 @@ describe('MemoryStore', () => {
       expect(content).toContain('moment');
       expect(content).toContain('Known missing dependency');
     });
-
-// PLACEHOLDER_CRUD_2
   });
 
   // -------------------------------------------------------------------------
@@ -393,9 +391,14 @@ describe('MemoryStore', () => {
 
       const result = limitedStore.preload();
       expect(result).not.toBeNull();
-      // Count topic headers in the output (### Topic N)
-      const topicHeaders = result!.match(/### Topic/g) || [];
-      expect(topicHeaders.length).toBeLessThanOrEqual(3);
+      // renderTopicForPreload outputs "### {title}" for each loaded topic
+      const topicHeaders = result!.match(/^### Topic \d+/gm) || [];
+      expect(topicHeaders.length).toBe(3);
+      // Also verify readFileSync was called for exactly 3 topic files (plus the index)
+      const topicReadCalls = mockedReadFileSync.mock.calls.filter(
+        (c) => (c[0] as string).includes('topic-') && (c[0] as string).endsWith('.md'),
+      );
+      expect(topicReadCalls.length).toBe(3);
     });
 
     it('preload respects character budget and truncates when needed', () => {
@@ -414,9 +417,11 @@ describe('MemoryStore', () => {
       });
 
       const result = smallBudgetStore.preload();
-      // Result should be truncated or null depending on budget
+      // Result should be truncated. The header "## 项目记忆 (跨会话持久化)" is ~30 chars,
+      // so total output should not exceed budget (100) + initial header length (~35).
       if (result) {
-        expect(result.length).toBeLessThanOrEqual(200); // budget + header overhead
+        expect(result.length).toBeLessThanOrEqual(140);
+        expect(result).toContain('...(truncated)');
       }
     });
 

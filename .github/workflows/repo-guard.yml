@@ -25,4 +25,3 @@ jobs:
           model: ${{ vars.LLM_MODEL }}
           api-key: ${{ secrets.LLM_API_KEY }}
           base-url: ${{ vars.LLM_BASE_URL }}
-          language: zh

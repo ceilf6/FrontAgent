@@ -207,11 +207,12 @@ describe('PhaseRunner', () => {
     it('respects dependencies in parallel mode', async () => {
       const step1 = makeStep({ stepId: 's1', dependencies: [] });
       const step2 = makeStep({ stepId: 's2', dependencies: ['s1'] });
-      const callOrder: string[] = [];
+      const completedOrder: string[] = [];
       const deps = makeDeps({
         parallelExecution: true,
         executeStep: vi.fn().mockImplementation(async (step: ExecutionStep) => {
-          callOrder.push(step.stepId);
+          await new Promise((r) => setTimeout(r, 5));
+          completedOrder.push(step.stepId);
           return makeOutput();
         }),
       });
@@ -225,7 +226,7 @@ describe('PhaseRunner', () => {
         {},
       );
 
-      expect(callOrder).toEqual(['s1', 's2']);
+      expect(completedOrder).toEqual(['s1', 's2']);
     });
 
     it('skips steps with unmet dependencies in parallel mode', async () => {
@@ -296,6 +297,7 @@ describe('PhaseRunner', () => {
     it('stops recovery on repeated fingerprint', async () => {
       const step = makeStep({ stepId: 's1' });
       const deps = makeDeps({
+        getMaxRecoveryAttempts: () => 10,
         createRecoveryFingerprint: () => 'same-fingerprint',
       });
       const runner = new PhaseRunner(deps);

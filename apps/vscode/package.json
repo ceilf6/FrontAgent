@@ -1,223 +1,223 @@
 {
-	"name": "frontagent",
-	"displayName": "FrontAgent",
-	"description": "Chat with FrontAgent from a VS Code sidebar.",
-	"version": "2.0.0",
-	"publisher": "ceilf6",
-	"icon": "media/icon.png",
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/ceilf6/FrontAgent.git"
-	},
-	"keywords": [
-		"frontagent",
-		"ai",
-		"agent",
-		"frontend",
-		"coding"
-	],
-	"type": "module",
-	"main": "./dist/extension.cjs",
-	"engines": {
-		"vscode": "^1.95.0"
-	},
-	"categories": [
-		"AI",
-		"Other"
-	],
-	"activationEvents": [
-		"onView:frontagent.taskView",
-		"onCommand:frontagent.run",
-		"onCommand:frontagent.runCurrentFile",
-		"onCommand:frontagent.runSelection",
-		"onCommand:frontagent.initSdd",
-		"onCommand:frontagent.validateSdd",
-		"onCommand:frontagent.openRunLog",
-		"onCommand:frontagent.showLogs",
-		"onCommand:frontagent.configure"
-	],
-	"contributes": {
-		"viewsContainers": {
-			"activitybar": [
-				{
-					"id": "frontagent",
-					"title": "FrontAgent",
-					"icon": "media/activitybar.svg"
-				}
-			]
-		},
-		"views": {
-			"frontagent": [
-				{
-					"id": "frontagent.taskView",
-					"name": "Chat",
-					"type": "webview"
-				}
-			]
-		},
-		"commands": [
-			{
-				"command": "frontagent.run",
-				"title": "FrontAgent: Run Task",
-				"category": "FrontAgent"
-			},
-			{
-				"command": "frontagent.runCurrentFile",
-				"title": "FrontAgent: Run on Current File",
-				"category": "FrontAgent"
-			},
-			{
-				"command": "frontagent.runSelection",
-				"title": "FrontAgent: Run on Selection",
-				"category": "FrontAgent"
-			},
-			{
-				"command": "frontagent.initSdd",
-				"title": "FrontAgent: Initialize SDD",
-				"category": "FrontAgent"
-			},
-			{
-				"command": "frontagent.validateSdd",
-				"title": "FrontAgent: Validate SDD",
-				"category": "FrontAgent"
-			},
-			{
-				"command": "frontagent.openRunLog",
-				"title": "FrontAgent: Open Last Run Log",
-				"category": "FrontAgent"
-			},
-			{
-				"command": "frontagent.showLogs",
-				"title": "FrontAgent: Show Extension Logs",
-				"category": "FrontAgent"
-			},
-			{
-				"command": "frontagent.configure",
-				"title": "FrontAgent: Configure",
-				"category": "FrontAgent"
-			}
-		],
-		"menus": {
-			"view/title": [
-				{
-					"command": "frontagent.run",
-					"when": "view == frontagent.taskView",
-					"group": "navigation"
-				},
-				{
-					"command": "frontagent.configure",
-					"when": "view == frontagent.taskView",
-					"group": "navigation"
-				},
-				{
-					"command": "frontagent.showLogs",
-					"when": "view == frontagent.taskView",
-					"group": "navigation"
-				}
-			],
-			"editor/context": [
-				{
-					"command": "frontagent.runSelection",
-					"when": "editorHasSelection",
-					"group": "navigation@90"
-				},
-				{
-					"command": "frontagent.runCurrentFile",
-					"when": "editorTextFocus",
-					"group": "navigation@91"
-				}
-			]
-		},
-		"configuration": {
-			"title": "FrontAgent",
-			"properties": {
-				"frontagent.provider": {
-					"type": "string",
-					"enum": [
-						"",
-						"anthropic",
-						"openai"
-					],
-					"default": "",
-					"description": "LLM provider used by FrontAgent. Leave empty to read PROVIDER from the environment."
-				},
-				"frontagent.model": {
-					"type": "string",
-					"default": "",
-					"description": "LLM model name. Leave empty to read MODEL from the environment."
-				},
-				"frontagent.baseUrl": {
-					"type": "string",
-					"default": "",
-					"description": "OpenAI/Anthropic-compatible API base URL. Leave empty to read provider-specific env vars or BASE_URL."
-				},
-				"frontagent.apiKey": {
-					"type": "string",
-					"default": "",
-					"markdownDescription": "Optional API key fallback. Prefer `FrontAgent: Configure` or the sidebar Configure form because they store keys in VS Code SecretStorage. Leave empty to read provider-specific env vars or `API_KEY`."
-				},
-				"frontagent.maxTokens": {
-					"type": "number",
-					"default": 4096,
-					"minimum": 1,
-					"description": "Maximum output tokens."
-				},
-				"frontagent.temperature": {
-					"type": "number",
-					"default": 0.7,
-					"minimum": 0,
-					"maximum": 2,
-					"description": "Sampling temperature."
-				},
-				"frontagent.securityMode": {
-					"type": "string",
-					"enum": [
-						"balanced",
-						"strict",
-						"developer"
-					],
-					"default": "balanced",
-					"description": "Tool execution security mode."
-				},
-				"frontagent.rag.enabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "Enable the remote knowledge-base RAG flow."
-				},
-				"frontagent.rag.repo": {
-					"type": "string",
-					"default": "https://github.com/ceilf6/Lab.git",
-					"description": "Knowledge-base Git repository URL."
-				},
-				"frontagent.rag.branch": {
-					"type": "string",
-					"default": "main",
-					"description": "Knowledge-base Git branch."
-				},
-				"frontagent.runLog.enabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "Write FrontAgent run logs under .frontagent/runs."
-				}
-			}
-		}
-	},
-	"scripts": {
-		"build": "tsc --noEmit && node build.mjs",
-		"package": "pnpm dlx @vscode/vsce package --no-dependencies",
-		"dev": "tsc --watch --noEmit",
-		"test": "vitest run",
-		"typecheck": "tsc --noEmit",
-		"clean": "rm -rf dist"
-	},
-	"devDependencies": {
-		"@frontagent/runtime-node": "workspace:*",
-		"@types/node": "^25.9.1",
-		"@types/vscode": "^1.120.0",
-		"@vscode/test-electron": "^2.5.2",
-		"esbuild": "^0.28.0",
-		"typescript": "^6.0.3",
-		"vitest": "^4.1.7"
-	}
+  "name": "frontagent",
+  "displayName": "FrontAgent",
+  "description": "Chat with FrontAgent from a VS Code sidebar.",
+  "version": "2.0.0",
+  "publisher": "ceilf6",
+  "icon": "media/icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ceilf6/FrontAgent.git"
+  },
+  "keywords": [
+    "frontagent",
+    "ai",
+    "agent",
+    "frontend",
+    "coding"
+  ],
+  "type": "module",
+  "main": "./dist/extension.cjs",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:frontagent.taskView",
+    "onCommand:frontagent.run",
+    "onCommand:frontagent.runCurrentFile",
+    "onCommand:frontagent.runSelection",
+    "onCommand:frontagent.initSdd",
+    "onCommand:frontagent.validateSdd",
+    "onCommand:frontagent.openRunLog",
+    "onCommand:frontagent.showLogs",
+    "onCommand:frontagent.configure"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "frontagent",
+          "title": "FrontAgent",
+          "icon": "media/activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "frontagent": [
+        {
+          "id": "frontagent.taskView",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "frontagent.run",
+        "title": "FrontAgent: Run Task",
+        "category": "FrontAgent"
+      },
+      {
+        "command": "frontagent.runCurrentFile",
+        "title": "FrontAgent: Run on Current File",
+        "category": "FrontAgent"
+      },
+      {
+        "command": "frontagent.runSelection",
+        "title": "FrontAgent: Run on Selection",
+        "category": "FrontAgent"
+      },
+      {
+        "command": "frontagent.initSdd",
+        "title": "FrontAgent: Initialize SDD",
+        "category": "FrontAgent"
+      },
+      {
+        "command": "frontagent.validateSdd",
+        "title": "FrontAgent: Validate SDD",
+        "category": "FrontAgent"
+      },
+      {
+        "command": "frontagent.openRunLog",
+        "title": "FrontAgent: Open Last Run Log",
+        "category": "FrontAgent"
+      },
+      {
+        "command": "frontagent.showLogs",
+        "title": "FrontAgent: Show Extension Logs",
+        "category": "FrontAgent"
+      },
+      {
+        "command": "frontagent.configure",
+        "title": "FrontAgent: Configure",
+        "category": "FrontAgent"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "frontagent.run",
+          "when": "view == frontagent.taskView",
+          "group": "navigation"
+        },
+        {
+          "command": "frontagent.configure",
+          "when": "view == frontagent.taskView",
+          "group": "navigation"
+        },
+        {
+          "command": "frontagent.showLogs",
+          "when": "view == frontagent.taskView",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "frontagent.runSelection",
+          "when": "editorHasSelection",
+          "group": "navigation@90"
+        },
+        {
+          "command": "frontagent.runCurrentFile",
+          "when": "editorTextFocus",
+          "group": "navigation@91"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "FrontAgent",
+      "properties": {
+        "frontagent.provider": {
+          "type": "string",
+          "enum": [
+            "",
+            "anthropic",
+            "openai"
+          ],
+          "default": "",
+          "description": "LLM provider used by FrontAgent. Leave empty to read PROVIDER from the environment."
+        },
+        "frontagent.model": {
+          "type": "string",
+          "default": "",
+          "description": "LLM model name. Leave empty to read MODEL from the environment."
+        },
+        "frontagent.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI/Anthropic-compatible API base URL. Leave empty to read provider-specific env vars or BASE_URL."
+        },
+        "frontagent.apiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional API key fallback. Prefer `FrontAgent: Configure` or the sidebar Configure form because they store keys in VS Code SecretStorage. Leave empty to read provider-specific env vars or `API_KEY`."
+        },
+        "frontagent.maxTokens": {
+          "type": "number",
+          "default": 4096,
+          "minimum": 1,
+          "description": "Maximum output tokens."
+        },
+        "frontagent.temperature": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Sampling temperature."
+        },
+        "frontagent.securityMode": {
+          "type": "string",
+          "enum": [
+            "balanced",
+            "strict",
+            "developer"
+          ],
+          "default": "balanced",
+          "description": "Tool execution security mode."
+        },
+        "frontagent.rag.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the remote knowledge-base RAG flow."
+        },
+        "frontagent.rag.repo": {
+          "type": "string",
+          "default": "https://github.com/ceilf6/Lab.git",
+          "description": "Knowledge-base Git repository URL."
+        },
+        "frontagent.rag.branch": {
+          "type": "string",
+          "default": "main",
+          "description": "Knowledge-base Git branch."
+        },
+        "frontagent.runLog.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write FrontAgent run logs under .frontagent/runs."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc --noEmit && node build.mjs",
+    "package": "pnpm dlx @vscode/vsce package --no-dependencies",
+    "dev": "tsc --watch --noEmit",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@frontagent/runtime-node": "workspace:*",
+    "@types/node": "^25.9.1",
+    "@types/vscode": "^1.120.0",
+    "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.28.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
+  }
 }

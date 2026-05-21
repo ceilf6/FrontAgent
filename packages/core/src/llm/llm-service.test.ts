@@ -41,7 +41,7 @@ describe('normalizeProviderBaseURL', () => {
     );
   });
 
-  it('returns normalized URL as-is for unknown providers', () => {
+  it('returns URL as-is when no stripping needed', () => {
     expect(normalizeProviderBaseURL('openai', 'https://api.example.com/v1')).toBe(
       'https://api.example.com/v1',
     );
@@ -71,19 +71,24 @@ describe('LLMService', () => {
   });
 
   describe('errorStats', () => {
-    it('returns initial error stats', () => {
+    it('returns zero stats after reset', () => {
       LLMService.resetErrorStats();
       const stats = LLMService.getErrorStats();
       expect(stats.totalErrors).toBe(0);
       expect(stats.fixedErrors).toBe(0);
       expect(stats.unfixedErrors).toBe(0);
+      expect(stats.fixStrategies.unwrapDollarKeys).toBe(0);
+      expect(stats.fixStrategies.deepParseStringified).toBe(0);
+      expect(stats.fixStrategies.combined).toBe(0);
+      expect(stats.fixStrategies.parseFromText).toBe(0);
     });
 
-    it('resets error stats', () => {
+    it('returns a copy of error stats', () => {
       LLMService.resetErrorStats();
-      const stats = LLMService.getErrorStats();
-      expect(stats.totalErrors).toBe(0);
-      expect(stats.fixStrategies.unwrapDollarKeys).toBe(0);
+      const stats1 = LLMService.getErrorStats();
+      const stats2 = LLMService.getErrorStats();
+      expect(stats1).toEqual(stats2);
+      expect(stats1).not.toBe(stats2);
     });
   });
 

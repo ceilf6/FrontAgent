@@ -79,6 +79,12 @@ describe('normalizeSecurity', () => {
     const result = normalizeSecurity({ mode: 'strict', interactive: true, auditEnabled: false });
     expect(result).toEqual({ mode: 'strict', interactive: true, auditEnabled: false });
   });
+
+  it('passes through unrecognized mode values without validation', () => {
+    // normalizeSecurity does not validate mode values; it trusts the caller
+    const result = normalizeSecurity({ mode: 'turbo' as any });
+    expect(result.mode).toBe('turbo');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -123,6 +129,22 @@ describe('toApprovalRequest', () => {
     expect(denyResult.decision).toBe('deny');
     expect(() => toApprovalRequest(denyResult)).toThrow();
   });
+
+  it('generates unique approvalIds on consecutive calls', () => {
+    const askResult1 = security.evaluate({
+      toolName: 'browser_navigate',
+      args: { url: 'https://a.com' },
+      projectRoot,
+    });
+    const askResult2 = security.evaluate({
+      toolName: 'browser_navigate',
+      args: { url: 'https://b.com' },
+      projectRoot,
+    });
+    const approval1 = toApprovalRequest(askResult1);
+    const approval2 = toApprovalRequest(askResult2);
+    expect(approval1.approvalId).not.toBe(approval2.approvalId);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -146,13 +168,11 @@ describe('SecurityManager', () => {
       'get_interactive_elements',
       'browser_screenshot',
       'screenshot',
-      'rag_query',
       'filesense_navigate',
       'filesense_query',
     ];
 
     for (const tool of readTools) {
-      if (tool === 'rag_query') continue; // rag_query has special handling
       it(`allows ${tool} by default`, () => {
         const result = security.evaluate({ toolName: tool, args: {}, projectRoot });
         expect(result.decision).toBe('allow');
@@ -534,23 +554,24 @@ describe('SecurityManager', () => {
       });
     });
 
-    it('handles empty command string', () => {
+    it('asks for empty command string (structurally untrusted)', () => {
       const result = security.evaluate({
         toolName: 'run_command',
         args: { command: '' },
         projectRoot,
       });
-      // Empty command should still go through analysis
-      expect(['allow', 'ask', 'deny']).toContain(result.decision);
+      expect(result.decision).toBe('ask');
+      expect(result.riskLevel).toBe('high');
     });
 
-    it('handles missing command arg', () => {
+    it('asks for missing command arg (treated as empty string)', () => {
       const result = security.evaluate({
         toolName: 'run_command',
         args: {},
         projectRoot,
       });
-      expect(['allow', 'ask', 'deny']).toContain(result.decision);
+      expect(result.decision).toBe('ask');
+      expect(result.riskLevel).toBe('high');
     });
   });
 
@@ -696,7 +717,11 @@ describe('SecurityManager', () => {
         args: { path: longPath },
         projectRoot,
       });
-      expect(result.argsSummary!.length).toBeLessThanOrEqual(223); // 220 + "..."
+      // security.ts truncates at 220 chars + "..." suffix
+      const MAX_SUMMARY_LENGTH = 220;
+      expect(result.argsSummary!.length).toBeLessThanOrEqual(MAX_SUMMARY_LENGTH + 3);
+      expect(result.argsSummary!).toMatch(/\.\.\.$/);
+
     });
   });
 

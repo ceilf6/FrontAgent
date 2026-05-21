@@ -13,7 +13,7 @@ export {
   type A2AEnvelope,
   type A2ARequest,
   type A2AResponse,
-  type A2AAgent
+  type A2AAgent,
 } from './a2a.js';
 export {
   CodeQualitySubAgent,
@@ -23,14 +23,14 @@ export {
   type CodeQualityReviewFile,
   type CodeQualityIssue,
   type CodeQualityReviewRequest,
-  type CodeQualityReviewResponse
+  type CodeQualityReviewResponse,
 } from './sub-agents/index.js';
 export {
   LLMService,
   createLLMService,
   type GeneratedPlan,
   type GeneratedCode,
-  type GeneratedPatch
+  type GeneratedPatch,
 } from './llm.js';
 export { MemoryStore } from './memory/index.js';
 export {
@@ -99,7 +99,7 @@ export type {
   ProjectFacts,
   ProjectFactsSnapshot,
   ProjectFactsUpdate,
-  ProjectFactsMergeResult
+  ProjectFactsMergeResult,
 } from './types.js';
 export type {
   SkillLabConfig,

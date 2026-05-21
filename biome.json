@@ -1,8 +1,7 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "organizeImports": {
-    "enabled": true
-  },
+  "root": false,
+  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "linter": {
     "enabled": true,
     "rules": {
@@ -43,25 +42,29 @@
     }
   },
   "files": {
-    "ignore": [
-      "node_modules",
-      "dist",
-      "build",
-      "*.tsbuildinfo",
-      "pnpm-lock.yaml",
-      "coverage",
-      ".turbo",
-      ".gitnexus",
-      ".frontagent",
-      "models",
-      "assets",
-      "reference",
-      "workspace",
-      "skills",
-      "docs",
-      "benchmarks",
-      "*.vsix",
-      "*.mjs"
+    "ignoreUnknown": true,
+    "includes": [
+      "**",
+      "!**/node_modules/**",
+      "!**/dist/**",
+      "!**/build/**",
+      "!**/*.tsbuildinfo",
+      "!**/pnpm-lock.yaml",
+      "!**/coverage/**",
+      "!**/.turbo/**",
+      "!**/.gitnexus/**",
+      "!**/.frontagent/**",
+      "!**/models/**",
+      "!**/assets/**",
+      "!**/reference/**",
+      "!**/workspace/**",
+      "!**/skills/**",
+      "!**/docs/**",
+      "!**/benchmarks/**",
+      "!**/*.vsix",
+      "!**/*.mjs",
+      "!**/*.cjs",
+      "!**/*.log"
     ]
   }
 }

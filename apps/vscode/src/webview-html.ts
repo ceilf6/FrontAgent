@@ -1,24 +1,25 @@
-import type * as vscode from 'vscode';
+import type * as vscode from "vscode";
 
 export function nonce(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let value = '';
-  for (let i = 0; i < 32; i++) {
-    value += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return value;
+	const chars =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+	let value = "";
+	for (let i = 0; i < 32; i++) {
+		value += chars.charAt(Math.floor(Math.random() * chars.length));
+	}
+	return value;
 }
 
 export function getWebviewHtml(webview: vscode.Webview): string {
-  const scriptNonce = nonce();
-  const styleNonce = nonce();
-  const csp = [
-    `default-src 'none'`,
-    `style-src ${webview.cspSource} 'nonce-${styleNonce}'`,
-    `script-src 'nonce-${scriptNonce}'`,
-  ].join('; ');
+	const scriptNonce = nonce();
+	const styleNonce = nonce();
+	const csp = [
+		`default-src 'none'`,
+		`style-src ${webview.cspSource} 'nonce-${styleNonce}'`,
+		`script-src 'nonce-${scriptNonce}'`,
+	].join("; ");
 
-  return `<!DOCTYPE html>
+	return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">

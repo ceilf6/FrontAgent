@@ -1,5 +1,5 @@
 import type { AgentTask, ExecutionStep } from '@frontagent/shared';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ExecutorOutput } from '../types.js';
 import { PhaseRunner, type PhaseRunnerDeps } from './phase-runner.js';
 import type { ExecutorCollectedContext, PhaseExecutionGroup } from './types.js';
@@ -253,7 +253,10 @@ describe('PhaseRunner', () => {
       const deps = makeDeps();
       const runner = new PhaseRunner(deps);
       const callbacks = {
-        onPhaseComplete: vi.fn().mockResolvedValueOnce([{ step, error: 'failed' }]).mockResolvedValueOnce([]),
+        onPhaseComplete: vi
+          .fn()
+          .mockResolvedValueOnce([{ step, error: 'failed' }])
+          .mockResolvedValueOnce([]),
         onPhaseError: vi.fn().mockResolvedValue([recoveryStep]),
       };
 

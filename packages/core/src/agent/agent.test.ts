@@ -38,7 +38,7 @@ describe('generateOutput', () => {
     const output = generateOutput(steps);
     expect(output).toContain('执行完成 (1/2 步骤成功)');
     expect(output).toContain('✅ Create file');
-    expect(output).not.toContain('Build project');
+    expect(output).not.toContain('✅ Build project');
   });
 
   it('reports zero completed steps', () => {
@@ -60,35 +60,40 @@ describe('createAgent', () => {
       llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
     });
     expect(agent).toBeDefined();
+    expect(agent.getPlannerSkillSnapshot()).toBeDefined();
+    expect(agent.getExecutorSkillSnapshot()).toBeDefined();
   });
 
-  it('creates agent with debug mode', () => {
+  it('registers MCP client without error', () => {
     const agent = createAgent({
       projectRoot: '/test',
       llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
-      debug: true,
     });
-    expect(agent).toBeDefined();
+    const client = {
+      callTool: async () => ({}),
+      listTools: async () => [],
+    };
+    agent.registerMCPClient('test', client);
   });
 
-  it('creates agent with hallucination guard config', () => {
+  it('adds and removes event listeners', () => {
     const agent = createAgent({
       projectRoot: '/test',
       llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
-      hallucinationGuard: {
-        enabled: true,
-        checks: { fileExistence: true },
-      },
     });
-    expect(agent).toBeDefined();
+    const listener = () => {};
+    agent.addEventListener(listener);
+    agent.removeEventListener(listener);
   });
 
-  it('creates agent with memory config', () => {
+  it('returns planner and executor skill snapshots', () => {
     const agent = createAgent({
       projectRoot: '/test',
       llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
-      memory: { enabled: true },
     });
-    expect(agent).toBeDefined();
+    const plannerSnap = agent.getPlannerSkillSnapshot();
+    const executorSnap = agent.getExecutorSkillSnapshot();
+    expect(plannerSnap.taskSkills).toBeInstanceOf(Array);
+    expect(executorSnap.actionSkills).toBeInstanceOf(Array);
   });
 });

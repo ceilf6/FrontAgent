@@ -42,6 +42,16 @@ function mockLLMGeneratePlan(planner: Planner, mockFn: (...args: unknown[]) => u
   vi.spyOn(llmService, 'generatePlan').mockImplementation(mockFn as never);
 }
 
+/** Default step params to reduce verbosity in mock LLM responses */
+function defaultParams(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    path: '', recursive: false, query: '', pattern: '', filePattern: '',
+    globOnly: false, maxResults: 0, directory: '', command: '', url: '',
+    selector: '', text: '', fullPage: false, codeDescription: '', changeDescription: '',
+    ...overrides,
+  };
+}
+
 // ─── Tests: Query task planning (rule-based) ────────────────────────────────
 
 describe('Planner query tasks', () => {
@@ -126,7 +136,7 @@ describe('Planner LLM-based plan generation', () => {
           action: 'list_directory',
           tool: 'list_directory',
           phase: '阶段1-分析',
-          params: { path: 'src/utils', recursive: false, query: '', pattern: '', filePattern: '', globOnly: false, maxResults: 0, directory: '', command: '', url: '', selector: '', text: '', fullPage: false, codeDescription: '', changeDescription: '' },
+          params: defaultParams({ path: 'src/utils' }),
           reasoning: '了解目录结构',
           needsCodeGeneration: false,
         },
@@ -135,7 +145,7 @@ describe('Planner LLM-based plan generation', () => {
           action: 'create_file',
           tool: 'create_file',
           phase: '阶段2-创建',
-          params: { path: 'src/utils/helper.ts', recursive: false, query: '', pattern: '', filePattern: '', globOnly: false, maxResults: 0, directory: '', command: '', url: '', selector: '', text: '', fullPage: false, codeDescription: '创建工具函数', changeDescription: '' },
+          params: defaultParams({ path: 'src/utils/helper.ts', codeDescription: '创建工具函数' }),
           reasoning: '创建新文件',
           needsCodeGeneration: true,
         },
@@ -207,7 +217,7 @@ describe('Planner step ordering and dependencies', () => {
           action: 'read_file',
           tool: 'read_file',
           phase: '阶段1-分析',
-          params: { path: 'src/index.ts', recursive: false, query: '', pattern: '', filePattern: '', globOnly: false, maxResults: 0, directory: '', command: '', url: '', selector: '', text: '', fullPage: false, codeDescription: '', changeDescription: '' },
+          params: defaultParams({ path: 'src/index.ts' }),
           reasoning: '读取源文件',
           needsCodeGeneration: false,
         },
@@ -216,7 +226,7 @@ describe('Planner step ordering and dependencies', () => {
           action: 'apply_patch',
           tool: 'apply_patch',
           phase: '阶段2-修改',
-          params: { path: 'src/index.ts', recursive: false, query: '', pattern: '', filePattern: '', globOnly: false, maxResults: 0, directory: '', command: '', url: '', selector: '', text: '', fullPage: false, codeDescription: '', changeDescription: '添加导出' },
+          params: defaultParams({ path: 'src/index.ts', changeDescription: '添加导出' }),
           reasoning: '应用修改',
           needsCodeGeneration: true,
         },
@@ -225,7 +235,7 @@ describe('Planner step ordering and dependencies', () => {
           action: 'run_command',
           tool: 'run_command',
           phase: '阶段4-验证',
-          params: { path: '', recursive: false, query: '', pattern: '', filePattern: '', globOnly: false, maxResults: 0, directory: '', command: 'pnpm test', url: '', selector: '', text: '', fullPage: false, codeDescription: '', changeDescription: '' },
+          params: defaultParams({ command: 'pnpm test' }),
           reasoning: '验证修改',
           needsCodeGeneration: false,
         },
@@ -256,7 +266,7 @@ describe('Planner step ordering and dependencies', () => {
           action: 'read_file',
           tool: 'read_file',
           phase: '阶段1-分析',
-          params: { path: 'a.ts', recursive: false, query: '', pattern: '', filePattern: '', globOnly: false, maxResults: 0, directory: '', command: '', url: '', selector: '', text: '', fullPage: false, codeDescription: '', changeDescription: '' },
+          params: defaultParams({ path: 'a.ts' }),
           reasoning: '读取A',
           needsCodeGeneration: false,
         },
@@ -265,7 +275,7 @@ describe('Planner step ordering and dependencies', () => {
           action: 'search_code',
           tool: 'search_code',
           phase: '阶段1-分析',
-          params: { path: '', recursive: false, query: 'function', pattern: '', filePattern: '', globOnly: false, maxResults: 10, directory: '', command: '', url: '', selector: '', text: '', fullPage: false, codeDescription: '', changeDescription: '' },
+          params: defaultParams({ query: 'function', maxResults: 10 }),
           reasoning: '搜索相关代码',
           needsCodeGeneration: false,
         },
@@ -365,7 +375,7 @@ describe('Planner error handling', () => {
           action: 'unknown_action_xyz',
           tool: 'unknown_tool',
           phase: '阶段1-分析',
-          params: { path: 'x.ts', recursive: false, query: '', pattern: '', filePattern: '', globOnly: false, maxResults: 0, directory: '', command: '', url: '', selector: '', text: '', fullPage: false, codeDescription: '', changeDescription: '' },
+          params: defaultParams({ path: 'x.ts' }),
           reasoning: '测试未知action',
           needsCodeGeneration: false,
         },
@@ -435,7 +445,7 @@ describe('Planner edge cases', () => {
           action: 'read_file',
           tool: 'read_file',
           phase: '阶段1-分析',
-          params: { path: 'config.json', recursive: false, query: '', pattern: '', filePattern: '', globOnly: false, maxResults: 0, directory: '', command: '', url: '', selector: '', text: '', fullPage: false, codeDescription: '', changeDescription: '' },
+          params: defaultParams({ path: 'config.json' }),
           reasoning: '读取配置',
           needsCodeGeneration: false,
         },
@@ -545,7 +555,7 @@ describe('Planner edge cases', () => {
           action: 'create_file',
           tool: 'create_file',
           phase: '阶段2-创建',
-          params: { path: 'src/new.ts', recursive: false, query: '', pattern: '', filePattern: '', globOnly: false, maxResults: 0, directory: '', command: '', url: '', selector: '', text: '', fullPage: false, codeDescription: '新文件', changeDescription: '' },
+          params: defaultParams({ path: 'src/new.ts', codeDescription: '新文件' }),
           reasoning: '创建',
           needsCodeGeneration: true,
         },
@@ -554,7 +564,7 @@ describe('Planner edge cases', () => {
           action: 'run_command',
           tool: 'run_command',
           phase: '阶段4-验证',
-          params: { path: '', recursive: false, query: '', pattern: '', filePattern: '', globOnly: false, maxResults: 0, directory: '', command: 'pnpm typecheck', url: '', selector: '', text: '', fullPage: false, codeDescription: '', changeDescription: '' },
+          params: defaultParams({ command: 'pnpm typecheck' }),
           reasoning: '验证类型',
           needsCodeGeneration: false,
         },
@@ -579,7 +589,7 @@ describe('Planner edge cases', () => {
           action: 'create_file',
           tool: 'create_file',
           phase: '阶段2-创建',
-          params: { path: 'src/new.ts', recursive: false, query: '', pattern: '', filePattern: '', globOnly: false, maxResults: 0, directory: '', command: '', url: '', selector: '', text: '', fullPage: false, codeDescription: '新文件', changeDescription: '' },
+          params: defaultParams({ path: 'src/new.ts', codeDescription: '新文件' }),
           reasoning: '创建',
           needsCodeGeneration: true,
         },
@@ -588,7 +598,7 @@ describe('Planner edge cases', () => {
           action: 'run_command',
           tool: 'run_command',
           phase: '阶段7-仓库管理',
-          params: { path: '', recursive: false, query: '', pattern: '', filePattern: '', globOnly: false, maxResults: 0, directory: '', command: 'git commit -m "feat: add new file"', url: '', selector: '', text: '', fullPage: false, codeDescription: '', changeDescription: '' },
+          params: defaultParams({ command: 'git commit -m "feat: add new file"' }),
           reasoning: '提交',
           needsCodeGeneration: false,
         },

@@ -26,9 +26,9 @@
     "@frontagent/mcp-filesense": "workspace:*",
     "@frontagent/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "diff": "^5.2.2",
-    "glob": "^10.5.0",
-    "ts-morph": "^21.0.1"
+    "diff": "^9.0.0",
+    "glob": "^13.0.6",
+    "ts-morph": "^28.0.0"
   },
   "devDependencies": {
     "@types/diff": "^5.2.3",

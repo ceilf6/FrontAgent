@@ -25,15 +25,15 @@
     "@frontagent/sdd": "workspace:*",
     "@frontagent/shared": "workspace:*",
     "chalk": "^5.6.2",
-    "commander": "^11.1.0",
-    "ink": "^5.2.1",
+    "commander": "^15.0.0",
+    "ink": "^7.0.5",
     "ink-spinner": "^5.0.0",
-    "ora": "^8.2.0",
-    "react": "^18.3.1"
+    "ora": "^9.4.0",
+    "react": "^19.2.7"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
-    "@types/react": "^18.3.29",
+    "@types/react": "^19.2.16",
     "typescript": "^6.0.3"
   }
 }

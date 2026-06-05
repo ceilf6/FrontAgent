@@ -351,6 +351,75 @@ describe('MemoryStore', () => {
       expect(content).toContain('Add null check');
     });
 
+    it('gateway mode honors a custom captureSource when capturing drafts', () => {
+      const gatewayStore = new MemoryStore(PROJECT_ROOT, {
+        gateway: {
+          enabled: true,
+          rootDir: '/gateway-root',
+          captureSource: 'frontagent-test-suite',
+        },
+      });
+      mockedExistsSync.mockReturnValue(false);
+
+      gatewayStore.persist({
+        factsSnapshot: createFactsSnapshot(),
+        createdFiles: ['src/App.tsx'],
+        errorResolutions: [],
+        dependencyChanges: { installed: [], missing: [] },
+        taskDescription: 'Capture custom source',
+      });
+
+      const gatewayWrite = mockedWriteFileSync.mock.calls.find((call) =>
+        (call[0] as string).includes('/gateway-root/memory/inbox/.'),
+      );
+      expect(gatewayWrite).toBeDefined();
+      expect(gatewayWrite![1] as string).toContain('source: frontagent-test-suite');
+    });
+
+    it('gateway autoApprove writes active memories that preload can inject', () => {
+      const gatewayStore = new MemoryStore(PROJECT_ROOT, {
+        gateway: { enabled: true, rootDir: '/gateway-root', autoApprove: true },
+      });
+      mockedExistsSync.mockImplementation((path) => {
+        const filePath = path as string;
+        return filePath.includes('/gateway-root/memory/active');
+      });
+      mockedReaddirSync.mockImplementation((path) => {
+        if ((path as string).includes('/gateway-root/memory/active')) {
+          return [{ name: 'mem_20260605_active123.md', isFile: () => true }] as ReturnType<
+            typeof readdirSync
+          >;
+        }
+        return [] as unknown as ReturnType<typeof readdirSync>;
+      });
+      mockedReadFileSync.mockImplementation((path) => {
+        if ((path as string).includes('/gateway-root/memory/active')) {
+          const activeWrite = mockedWriteFileSync.mock.calls.find((call) =>
+            (call[0] as string).includes('/gateway-root/memory/active/.'),
+          );
+          return activeWrite?.[1] as string;
+        }
+        return '';
+      });
+
+      gatewayStore.persist({
+        factsSnapshot: createFactsSnapshot(),
+        createdFiles: ['src/App.tsx'],
+        errorResolutions: [],
+        dependencyChanges: { installed: [], missing: [] },
+        taskDescription: 'Auto approve gateway memory',
+      });
+
+      const activeWrite = mockedWriteFileSync.mock.calls.find((call) =>
+        (call[0] as string).includes('/gateway-root/memory/active/.'),
+      );
+      expect(activeWrite).toBeDefined();
+      expect(activeWrite![1] as string).toContain('status: active');
+
+      const result = gatewayStore.preload();
+      expect(result).toContain('Auto approve gateway memory');
+    });
+
     it('gateway capture failures do not block local memory persistence', () => {
       const gatewayStore = new MemoryStore(PROJECT_ROOT, {
         gateway: { enabled: true, rootDir: '/gateway-root' },
@@ -602,6 +671,49 @@ describe('MemoryStore', () => {
       expect(result!.indexOf('Gateway active memory content.')).toBeLessThan(
         result!.indexOf('Local memory content'),
       );
+    });
+
+    it('preload keeps Open Memory Gateway active memories within the character budget', () => {
+      const gatewayStore = new MemoryStore(PROJECT_ROOT, {
+        preloadBudgetChars: 120,
+        gateway: { enabled: true, rootDir: '/gateway-root' },
+      });
+      const gatewayMemory = [
+        '---',
+        'id: mem_20260605_active123',
+        'status: active',
+        'scope: personal',
+        'source: manual',
+        'tags:',
+        '  - preference',
+        'createdAt: "2026-06-05T09:00:00.000Z"',
+        'updatedAt: "2026-06-05T09:01:00.000Z"',
+        '---',
+        `${'Gateway active memory content. '.repeat(20)}`,
+        '',
+      ].join('\n');
+
+      mockedExistsSync.mockReturnValue(true);
+      mockedReaddirSync.mockImplementation((path) => {
+        if ((path as string).includes('/gateway-root/memory/active')) {
+          return [{ name: 'mem_20260605_active123.md', isFile: () => true }] as ReturnType<
+            typeof readdirSync
+          >;
+        }
+        return [] as unknown as ReturnType<typeof readdirSync>;
+      });
+      mockedReadFileSync.mockImplementation((path) => {
+        const filePath = path as string;
+        if (filePath.includes('/gateway-root/memory/active')) return gatewayMemory;
+        if (filePath.includes(INDEX_FILE_NAME)) return makeIndexContent([]);
+        return '';
+      });
+
+      const result = gatewayStore.preload();
+
+      expect(result).not.toBeNull();
+      expect(result!.length).toBeLessThanOrEqual(120);
+      expect(result).toContain('...(truncated)');
     });
 
     it('persist caps project-structure entries at 200', () => {

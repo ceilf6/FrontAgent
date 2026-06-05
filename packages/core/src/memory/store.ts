@@ -25,6 +25,8 @@ import {
   TOPICS_DIR_NAME,
 } from './types.js';
 
+const PRELOAD_HEADER = '## 项目记忆 (跨会话持久化)';
+
 /**
  * Durable memory store backed by human-readable Markdown files and JSON snapshots.
  * All writes funnel through this class (single-writer pattern).
@@ -294,13 +296,13 @@ export class MemoryStore {
    * within the configured budget.
    */
   preload(): string | null {
-    const parts: string[] = ['## 项目记忆 (跨会话持久化)'];
+    const parts: string[] = [PRELOAD_HEADER];
     let charCount = parts[0].length;
 
     const gatewaySection = this.renderGatewayForPreload();
-    if (gatewaySection) {
+    if (gatewaySection && charCount < this.preloadBudget) {
       parts.push(gatewaySection);
-      charCount += gatewaySection.length;
+      charCount = measurePreloadParts(parts);
     }
 
     const index = this.loadIndex();
@@ -323,18 +325,18 @@ export class MemoryStore {
       if (!topic || topic.entries.length === 0) continue;
 
       const section = this.renderTopicForPreload(topic);
-      if (charCount + section.length > this.preloadBudget) {
-        // Try to include a truncated version
-        const remaining = this.preloadBudget - charCount;
+      const sectionLength = section.length + sectionSeparatorLength(parts);
+      if (charCount + sectionLength > this.preloadBudget) {
+        const remaining = this.preloadBudget - charCount - sectionSeparatorLength(parts);
         if (remaining > 200) {
-          parts.push(`${section.slice(0, remaining)}\n...(truncated)`);
-          charCount = this.preloadBudget;
+          parts.push(truncatePreloadSection(section, remaining));
+          charCount = measurePreloadParts(parts);
         }
         break;
       }
 
       parts.push(section);
-      charCount += section.length;
+      charCount = measurePreloadParts(parts);
       loaded++;
     }
 
@@ -345,11 +347,38 @@ export class MemoryStore {
     const memories = this.listGatewayActiveMemories();
     if (memories.length === 0) return null;
 
-    const lines = ['## Open Memory Gateway Active Memories'];
+    const lines: string[] = [];
+    const title = '## Open Memory Gateway Active Memories';
+    const marker = '\n...(truncated)';
+    let charCount = 0;
+
+    if (title.length > this.remainingPreloadBudgetAfterHeader()) {
+      return null;
+    }
+
+    lines.push(title);
+    charCount = title.length;
     for (const memory of memories) {
-      lines.push(`- **${memory.id}**: ${memory.content}`);
+      const line = `- **${memory.id}**: ${memory.content}`;
+      const lineLength = line.length + 1;
+      const remaining = this.remainingPreloadBudgetAfterHeader() - charCount - 1;
+
+      if (charCount + lineLength <= this.remainingPreloadBudgetAfterHeader()) {
+        lines.push(line);
+        charCount += lineLength;
+        continue;
+      }
+
+      if (remaining > marker.length) {
+        lines.push(truncatePreloadSection(line, remaining));
+      }
+      break;
     }
     return lines.join('\n');
+  }
+
+  private remainingPreloadBudgetAfterHeader(): number {
+    return this.preloadBudget - PRELOAD_HEADER.length - 2;
   }
 
   private renderTopicForPreload(topic: MemoryTopic): string {
@@ -556,7 +585,6 @@ export class MemoryStore {
     try {
       this.gateway.captureDraft({
         content: renderGatewayCapture(input),
-        source: 'frontagent',
         tags: ['frontagent', 'task-memory'],
       });
     } catch (error) {
@@ -767,6 +795,22 @@ export class MemoryStore {
       return false;
     }
   }
+}
+
+function measurePreloadParts(parts: string[]): number {
+  return parts.join('\n\n').length;
+}
+
+function sectionSeparatorLength(parts: string[]): number {
+  return parts.length > 0 ? 2 : 0;
+}
+
+function truncatePreloadSection(section: string, budget: number): string {
+  const marker = '\n...(truncated)';
+  if (budget <= marker.length) {
+    return section.slice(0, Math.max(0, budget));
+  }
+  return `${section.slice(0, budget - marker.length)}${marker}`;
 }
 
 function renderGatewayCapture(input: PersistenceInput): string {

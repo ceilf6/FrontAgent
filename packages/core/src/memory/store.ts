@@ -569,14 +569,14 @@ export class MemoryStore {
 
       // 5. Rebuild index
       this.rebuildIndex(input.factsSnapshot);
-
-      this.persistGateway(input);
     } catch (error) {
       // Non-blocking: swallow errors to avoid disrupting the main task
       if (process.env.DEBUG) {
         logger.warn('[MemoryStore] Persistence failed:', error);
       }
     }
+
+    this.persistGateway(input);
   }
 
   private persistGateway(input: PersistenceInput): void {

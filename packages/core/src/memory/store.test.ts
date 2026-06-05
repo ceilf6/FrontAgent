@@ -420,6 +420,32 @@ describe('MemoryStore', () => {
       expect(result).toContain('Auto approve gateway memory');
     });
 
+    it('gateway capture is attempted even when local memory persistence fails', () => {
+      const gatewayStore = new MemoryStore(PROJECT_ROOT, {
+        gateway: { enabled: true, rootDir: '/gateway-root' },
+      });
+      mockedExistsSync.mockReturnValue(false);
+      mockedWriteFileSync.mockImplementation((path) => {
+        if ((path as string).includes(SNAPSHOTS_DIR)) {
+          throw new Error('local memory unavailable');
+        }
+      });
+
+      gatewayStore.persist({
+        factsSnapshot: createFactsSnapshot(),
+        createdFiles: ['src/App.tsx'],
+        errorResolutions: [],
+        dependencyChanges: { installed: [], missing: [] },
+        taskDescription: 'Capture despite local failure',
+      });
+
+      const gatewayWrite = mockedWriteFileSync.mock.calls.find((call) =>
+        (call[0] as string).includes('/gateway-root/memory/inbox/.'),
+      );
+      expect(gatewayWrite).toBeDefined();
+      expect(gatewayWrite![1] as string).toContain('Capture despite local failure');
+    });
+
     it('gateway capture failures do not block local memory persistence', () => {
       const gatewayStore = new MemoryStore(PROJECT_ROOT, {
         gateway: { enabled: true, rootDir: '/gateway-root' },
@@ -897,6 +923,56 @@ describe('MemoryStore', () => {
       expect(results.length).toBeGreaterThan(0);
       const buttonEntry = results.find((r) => r.content.includes('forwardRef'));
       expect(buttonEntry).toBeDefined();
+    });
+
+    it('recall returns active Open Memory Gateway memories and deduplicates them per session', () => {
+      const gatewayStore = new MemoryStore(PROJECT_ROOT, {
+        gateway: { enabled: true, rootDir: '/gateway-root' },
+      });
+      const gatewayMemory = [
+        '---',
+        'id: mem_20260605_active123',
+        'status: active',
+        'scope: personal',
+        'source: manual',
+        'tags:',
+        '  - preference',
+        'createdAt: "2026-06-05T09:00:00.000Z"',
+        'updatedAt: "2026-06-05T09:01:00.000Z"',
+        '---',
+        'Remember to preserve the compact toolbar layout for editor actions.',
+        '',
+      ].join('\n');
+
+      mockedExistsSync.mockImplementation((path) =>
+        (path as string).includes('/gateway-root/memory/active'),
+      );
+      mockedReaddirSync.mockImplementation((path) => {
+        if ((path as string).includes('/gateway-root/memory/active')) {
+          return [{ name: 'mem_20260605_active123.md', isFile: () => true }] as ReturnType<
+            typeof readdirSync
+          >;
+        }
+        return [] as unknown as ReturnType<typeof readdirSync>;
+      });
+      mockedReadFileSync.mockImplementation((path) => {
+        if ((path as string).includes('/gateway-root/memory/active')) return gatewayMemory;
+        return '';
+      });
+
+      const first = gatewayStore.recall({ tags: ['preference'], text: 'compact toolbar' });
+      expect(first).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            topicId: 'open-memory-gateway',
+            entryKey: 'mem_20260605_active123',
+            content: 'Remember to preserve the compact toolbar layout for editor actions.',
+          }),
+        ]),
+      );
+
+      const second = gatewayStore.recall({ tags: ['preference'], text: 'compact toolbar' });
+      expect(second.find((memory) => memory.entryKey === 'mem_20260605_active123')).toBeUndefined();
     });
 
     it('recall deduplicates entries already injected in this session', () => {

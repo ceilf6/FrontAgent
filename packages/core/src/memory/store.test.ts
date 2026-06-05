@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectFactsSnapshot } from '../types.js';
@@ -94,12 +102,16 @@ describe('MemoryStore', () => {
   const mockedWriteFileSync = vi.mocked(writeFileSync);
   const mockedMkdirSync = vi.mocked(mkdirSync);
   const mockedReaddirSync = vi.mocked(readdirSync);
+  const mockedRenameSync = vi.mocked(renameSync);
+  const mockedRmSync = vi.mocked(rmSync);
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockedExistsSync.mockReturnValue(false);
     mockedMkdirSync.mockReturnValue(undefined);
     mockedWriteFileSync.mockReturnValue(undefined);
+    mockedRenameSync.mockReturnValue(undefined);
+    mockedRmSync.mockReturnValue(undefined);
     store = new MemoryStore(PROJECT_ROOT);
   });
 
@@ -297,6 +309,73 @@ describe('MemoryStore', () => {
       expect(content).toContain('moment');
       expect(content).toContain('Known missing dependency');
     });
+
+    it('gateway mode captures post-task learning as an Open Memory Gateway draft', () => {
+      const gatewayStore = new MemoryStore(PROJECT_ROOT, {
+        gateway: {
+          enabled: true,
+          rootDir: '/gateway-root',
+          captureSource: 'frontagent',
+        },
+      });
+      mockedExistsSync.mockReturnValue(false);
+
+      const input: PersistenceInput = {
+        factsSnapshot: createFactsSnapshot(),
+        createdFiles: ['src/App.tsx'],
+        errorResolutions: [
+          {
+            errorType: 'TypeError',
+            errorMessage: 'Cannot read property x',
+            resolution: 'Add null check',
+          },
+        ],
+        dependencyChanges: { installed: ['react'], missing: ['zod'] },
+        taskDescription: 'Create app shell',
+      };
+
+      gatewayStore.persist(input);
+
+      const gatewayWrite = mockedWriteFileSync.mock.calls.find((call) =>
+        (call[0] as string).includes('/gateway-root/memory/inbox/.'),
+      );
+      expect(gatewayWrite).toBeDefined();
+      const content = gatewayWrite![1] as string;
+      expect(content).toContain('status: draft');
+      expect(content).toContain('source: frontagent');
+      expect(content).toContain('Task: Create app shell');
+      expect(content).toContain('Created files: src/App.tsx');
+      expect(content).toContain('Installed dependencies: react');
+      expect(content).toContain('Missing dependencies: zod');
+      expect(content).toContain('TypeError: Cannot read property x');
+      expect(content).toContain('Add null check');
+    });
+
+    it('gateway capture failures do not block local memory persistence', () => {
+      const gatewayStore = new MemoryStore(PROJECT_ROOT, {
+        gateway: { enabled: true, rootDir: '/gateway-root' },
+      });
+      mockedExistsSync.mockReturnValue(false);
+      mockedWriteFileSync.mockImplementation((path) => {
+        if ((path as string).includes('/gateway-root/memory/inbox/.')) {
+          throw new Error('gateway unavailable');
+        }
+      });
+
+      const input: PersistenceInput = {
+        factsSnapshot: createFactsSnapshot(),
+        createdFiles: ['src/App.tsx'],
+        errorResolutions: [],
+        dependencyChanges: { installed: [], missing: [] },
+        taskDescription: 'Create app shell',
+      };
+
+      expect(() => gatewayStore.persist(input)).not.toThrow();
+      const localWrite = mockedWriteFileSync.mock.calls.find((call) =>
+        (call[0] as string).includes('project-structure.md'),
+      );
+      expect(localWrite).toBeDefined();
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -472,6 +551,57 @@ describe('MemoryStore', () => {
       // The most recently updated topic (New Topic) should be loaded first
       expect(result).toContain('New Topic');
       expect(result).not.toContain('Old Topic');
+    });
+
+    it('preload includes active Open Memory Gateway memories before local topics', () => {
+      const gatewayStore = new MemoryStore(PROJECT_ROOT, {
+        gateway: { enabled: true, rootDir: '/gateway-root' },
+      });
+      const indexContent = makeIndexContent([
+        { title: 'Project Structure', id: 'project-structure', summary: 'tracked files' },
+      ]);
+      const localTopic = makeTopicContent('Project Structure', [
+        { key: 'src/App.tsx', content: 'Local memory content', tags: ['component'] },
+      ]);
+      const gatewayMemory = [
+        '---',
+        'id: mem_20260605_active123',
+        'status: active',
+        'scope: personal',
+        'source: manual',
+        'tags:',
+        '  - preference',
+        'createdAt: "2026-06-05T09:00:00.000Z"',
+        'updatedAt: "2026-06-05T09:01:00.000Z"',
+        '---',
+        'Gateway active memory content.',
+        '',
+      ].join('\n');
+
+      mockedExistsSync.mockReturnValue(true);
+      mockedReaddirSync.mockImplementation((path) => {
+        if ((path as string).includes('/gateway-root/memory/active')) {
+          return [{ name: 'mem_20260605_active123.md', isFile: () => true }] as ReturnType<
+            typeof readdirSync
+          >;
+        }
+        return [] as unknown as ReturnType<typeof readdirSync>;
+      });
+      mockedReadFileSync.mockImplementation((path) => {
+        const filePath = path as string;
+        if (filePath.includes('/gateway-root/memory/active')) return gatewayMemory;
+        if (filePath.includes(INDEX_FILE_NAME)) return indexContent;
+        return localTopic;
+      });
+
+      const result = gatewayStore.preload();
+
+      expect(result).toContain('## Open Memory Gateway Active Memories');
+      expect(result).toContain('Gateway active memory content.');
+      expect(result).toContain('Local memory content');
+      expect(result!.indexOf('Gateway active memory content.')).toBeLessThan(
+        result!.indexOf('Local memory content'),
+      );
     });
 
     it('persist caps project-structure entries at 200', () => {

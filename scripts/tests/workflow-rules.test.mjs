@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import test from 'node:test';
+import { getChangedFiles } from '../workflows/contract-check.mjs';
 import {
   classifyContractPaths,
   evaluateGitNexusContract,
@@ -39,7 +40,7 @@ test('critical changes require matching tests and structured GitNexus impact sum
   assert.equal(result.ok, false);
   assert.match(
     result.reasons.join('\n'),
-    /Missing contract test for critical category: repo-harness/u,
+    /Missing contract test for critical file: scripts\/workflows\/contract-check\.mjs/u,
   );
   assert.match(result.reasons.join('\n'), /Missing structured GitNexus impact summary/u);
 });
@@ -52,6 +53,17 @@ test('critical changes pass with matching tests and structured GitNexus impact s
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.reasons, []);
+});
+
+test('package scoped critical changes reject unrelated package tests', () => {
+  const result = evaluateGitNexusContract({
+    changedFiles: ['packages/mcp-web/src/server.ts', 'packages/mcp-file/src/security.test.ts'],
+    impactSummary: validImpactSummary,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.reasons.join('\n'), /Missing contract test for critical file/u);
+  assert.match(result.reasons.join('\n'), /packages\/mcp-web\/src\/server\.ts/u);
 });
 
 test('local contract mode does not require a PR impact summary', () => {
@@ -149,6 +161,39 @@ test('hook files exist and invoke intended quality gates', () => {
   assert.match(prePush, /SKIP_QUALITY_HOOKS/u);
   assert.equal(Boolean(statSync('.githooks/pre-commit').mode & 0o111), true);
   assert.equal(Boolean(statSync('.githooks/pre-push').mode & 0o111), true);
+});
+
+test('local contract mode compares committed branch changes and worktree changes', () => {
+  const calls = [];
+  const result = getChangedFiles('local', {
+    env: {},
+    git: {
+      refExists: (ref) => ref === 'origin/develop',
+      fetchBaseRef: () => {
+        throw new Error('local mode should not fetch the base branch');
+      },
+      lines: (args) => {
+        calls.push(args);
+        const command = args.join(' ');
+        if (command.includes('origin/develop...HEAD'))
+          return ['scripts/workflows/contract-check.mjs'];
+        if (command.includes('--cached')) return ['.github/workflows/contract-guard.yml'];
+        if (command.includes('diff') && command.includes('HEAD')) return ['AGENTS.md'];
+        if (command.includes('ls-files')) return ['scripts/tests/workflow-rules.test.mjs'];
+        return [];
+      },
+    },
+  });
+
+  assert.deepEqual(result, [
+    'scripts/workflows/contract-check.mjs',
+    '.github/workflows/contract-guard.yml',
+    'AGENTS.md',
+    'scripts/tests/workflow-rules.test.mjs',
+  ]);
+  assert.ok(calls.some((args) => args.includes('origin/develop...HEAD')));
+  assert.ok(calls.some((args) => args.includes('--cached')));
+  assert.ok(calls.some((args) => args.includes('--others')));
 });
 
 test('CI and contract guard target develop and call named quality scripts', () => {

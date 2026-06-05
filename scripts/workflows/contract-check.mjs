@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   CONTRACT_DIFF_FILTER,
   combineChangedFiles,
@@ -9,24 +10,27 @@ import {
 
 const DEFAULT_LOCAL_ANALYZE_TIMEOUT_MS = 60_000;
 const DEFAULT_CI_ANALYZE_TIMEOUT_MS = 180_000;
+const DEFAULT_LOCAL_BASE_BRANCH = 'develop';
 
-const command = process.argv[2] ?? 'check';
+if (isMainModule()) {
+  const command = process.argv[2] ?? 'check';
 
-try {
-  if (command === 'bootstrap') {
-    runBootstrap();
-  } else if (command === 'local') {
-    runGitNexusContract({ mode: 'local' });
-  } else if (command === 'gitnexus') {
-    runGitNexusContract({ mode: 'ci' });
-  } else if (command === 'check') {
-    runGitNexusContract({ mode: process.env.CI ? 'ci' : 'local' });
-  } else {
-    throw new Error(`unknown contract command: ${command}`);
+  try {
+    if (command === 'bootstrap') {
+      runBootstrap();
+    } else if (command === 'local') {
+      runGitNexusContract({ mode: 'local' });
+    } else if (command === 'gitnexus') {
+      runGitNexusContract({ mode: 'ci' });
+    } else if (command === 'check') {
+      runGitNexusContract({ mode: process.env.CI ? 'ci' : 'local' });
+    } else {
+      throw new Error(`unknown contract command: ${command}`);
+    }
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
   }
-} catch (err) {
-  console.error(err instanceof Error ? err.message : String(err));
-  process.exitCode = 1;
 }
 
 function runBootstrap() {
@@ -62,33 +66,63 @@ function runGitNexusContract({ mode }) {
   if (!result.ok) process.exitCode = 1;
 }
 
-function getChangedFiles(mode) {
-  if (process.env.CONTRACT_CHANGED_FILES) {
-    return process.env.CONTRACT_CHANGED_FILES.split(/\r?\n|,/)
+export function getChangedFiles(mode, options = {}) {
+  const env = options.env ?? process.env;
+  const git = options.git ?? {
+    lines: gitLines,
+    refExists: gitRefExists,
+    fetchBaseRef: fetchBaseRef,
+  };
+
+  if (env.CONTRACT_CHANGED_FILES) {
+    return env.CONTRACT_CHANGED_FILES.split(/\r?\n|,/)
       .map((file) => file.trim())
       .filter(Boolean);
   }
-  if (mode === 'ci' && process.env.GITHUB_BASE_REF) {
-    const baseRef = `origin/${process.env.GITHUB_BASE_REF}`;
-    if (!gitRefExists(baseRef)) {
-      execFileSync(
-        'git',
-        ['fetch', '--no-tags', '--depth=1', 'origin', process.env.GITHUB_BASE_REF],
-        {
-          stdio: 'inherit',
-        },
-      );
+
+  if (mode === 'ci' && env.GITHUB_BASE_REF) {
+    const baseBranch = env.GITHUB_BASE_REF;
+    const baseRef = `origin/${baseBranch}`;
+    if (!git.refExists(baseRef)) {
+      git.fetchBaseRef(baseBranch);
     }
-    return gitLines([
+    return git.lines([
       'diff',
       '--name-only',
       `--diff-filter=${CONTRACT_DIFF_FILTER}`,
       `${baseRef}...HEAD`,
     ]);
   }
+
+  const baseBranch = env.CONTRACT_BASE_REF ?? env.GITHUB_BASE_REF ?? DEFAULT_LOCAL_BASE_BRANCH;
+  const baseRef = `origin/${baseBranch}`;
+  if (git.refExists(baseRef)) {
+    return combineChangedFiles(
+      git.lines([
+        'diff',
+        '--name-only',
+        `--diff-filter=${CONTRACT_DIFF_FILTER}`,
+        `${baseRef}...HEAD`,
+      ]),
+      git.lines([
+        'diff',
+        '--name-only',
+        '--cached',
+        `--diff-filter=${CONTRACT_DIFF_FILTER}`,
+        'HEAD',
+      ]),
+      git.lines(['diff', '--name-only', `--diff-filter=${CONTRACT_DIFF_FILTER}`, 'HEAD']),
+      git.lines(['ls-files', '--others', '--exclude-standard']),
+    );
+  }
+
+  console.warn(
+    `warning: ${baseRef} is unavailable; local contract check only includes staged, unstaged, and untracked files.`,
+  );
   return combineChangedFiles(
-    gitLines(['diff', '--name-only', `--diff-filter=${CONTRACT_DIFF_FILTER}`, 'HEAD']),
-    gitLines(['ls-files', '--others', '--exclude-standard']),
+    git.lines(['diff', '--name-only', '--cached', `--diff-filter=${CONTRACT_DIFF_FILTER}`, 'HEAD']),
+    git.lines(['diff', '--name-only', `--diff-filter=${CONTRACT_DIFF_FILTER}`, 'HEAD']),
+    git.lines(['ls-files', '--others', '--exclude-standard']),
   );
 }
 
@@ -161,6 +195,16 @@ function gitRefExists(ref) {
   } catch {
     return false;
   }
+}
+
+function fetchBaseRef(baseBranch) {
+  execFileSync('git', ['fetch', '--no-tags', '--depth=1', 'origin', baseBranch], {
+    stdio: 'inherit',
+  });
+}
+
+function isMainModule() {
+  return process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 }
 
 function printContractResult(title, result) {

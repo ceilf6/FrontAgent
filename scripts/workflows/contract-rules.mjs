@@ -13,6 +13,15 @@ export const criticalContractRules = [
   {
     category: 'agent-core',
     testPattern: /^packages\/core\/src\/.*\.test\.tsx?$/u,
+    matchesTest: (testFile, changedFile) => {
+      if (changedFile.startsWith('packages/core/src/agent/')) {
+        return /^packages\/core\/src\/agent\/.*\.test\.tsx?$/u.test(testFile);
+      }
+      const directTest = changedFile.replace(/\.tsx?$/u, '.test.ts');
+      return (
+        testFile === directTest || /^packages\/core\/src\/executor\/.*\.test\.tsx?$/u.test(testFile)
+      );
+    },
     matches: (file) =>
       file.startsWith('packages/core/src/agent/') ||
       file === 'packages/core/src/planner.ts' ||
@@ -29,12 +38,28 @@ export const criticalContractRules = [
   {
     category: 'mcp-boundary',
     testPattern: /^(packages\/mcp-[^/]+|packages\/runtime-node)\/src\/.*\.test\.ts$/u,
+    matchesTest: (testFile, changedFile) => {
+      const packageRoot = changedFile.match(/^(packages\/(?:mcp-[^/]+|runtime-node))\/src\//u)?.[1];
+      return Boolean(
+        packageRoot &&
+          new RegExp(`^${escapeRegExp(packageRoot)}/src/.*\\.test\\.ts$`, 'u').test(testFile),
+      );
+    },
     matches: (file) =>
       /^packages\/mcp-[^/]+\/src\//u.test(file) || file.startsWith('packages/runtime-node/src/'),
   },
   {
     category: 'memory-boundary',
     testPattern: /^(packages\/mcp-memory\/src|packages\/core\/src\/memory)\/.*\.test\.ts$/u,
+    matchesTest: (testFile, changedFile) => {
+      if (changedFile.startsWith('packages/mcp-memory/src/')) {
+        return /^packages\/mcp-memory\/src\/.*\.test\.ts$/u.test(testFile);
+      }
+      if (changedFile.startsWith('packages/core/src/memory/')) {
+        return /^packages\/core\/src\/memory\/.*\.test\.ts$/u.test(testFile);
+      }
+      return false;
+    },
     matches: (file) =>
       file.startsWith('packages/mcp-memory/src/') || file.startsWith('packages/core/src/memory/'),
   },
@@ -80,8 +105,8 @@ export function classifyContractPaths(files) {
   return { critical, nonCritical };
 }
 
-export function combineChangedFiles(changedFiles, untrackedFiles) {
-  return normalizeFiles([...(changedFiles ?? []), ...(untrackedFiles ?? [])]);
+export function combineChangedFiles(...fileGroups) {
+  return normalizeFiles(fileGroups.flatMap((files) => files ?? []));
 }
 
 export function evaluateGitNexusContract({
@@ -106,13 +131,14 @@ export function evaluateGitNexusContract({
     return { ok: true, reasons, warnings, suggestions, ...classification };
   }
 
-  const touchedCategories = new Set(classification.critical.map((item) => item.category));
-  for (const category of touchedCategories) {
-    const rule = criticalContractRules.find((candidate) => candidate.category === category);
+  for (const item of classification.critical) {
+    const rule = criticalContractRules.find((candidate) => candidate.category === item.category);
     if (!rule) continue;
-    const hasMatchingTest = normalized.some((file) => rule.testPattern.test(file));
+    const hasMatchingTest = normalized.some((file) =>
+      rule.matchesTest ? rule.matchesTest(file, item.file) : rule.testPattern.test(file),
+    );
     if (!hasMatchingTest) {
-      reasons.push(`Missing contract test for critical category: ${category}`);
+      reasons.push(`Missing contract test for critical file: ${item.file}`);
     }
   }
 
@@ -200,4 +226,8 @@ function isPlaceholder(value) {
 
 function normalizeFiles(files) {
   return [...new Set((files ?? []).map((file) => file.replaceAll('\\', '/')).filter(Boolean))];
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }

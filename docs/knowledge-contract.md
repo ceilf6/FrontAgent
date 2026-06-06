@@ -58,6 +58,17 @@ Do not use placeholders such as `-`, `none`, `n/a`, `todo`, or `tbd` for critica
 
 For non-critical changes, GitNexus is advisory.
 
+## Versioned Index Files
+
+FrontAgent keeps `.gitnexus/lbug` and `.gitnexus/meta.json` in the repository as a seed index
+for local code intelligence. These files are generated and may change after `gitnexus analyze`,
+so contributors should not include index-only churn in ordinary PRs.
+
+Only commit `.gitnexus/*` changes when the task explicitly refreshes the repository knowledge
+base, changes the Harness/GitNexus contract, or a maintainer requests a canonical index update.
+If local hooks or verification refresh the index after a commit or push, leave the resulting
+working-tree drift out of follow-up commits unless it is part of the reviewed scope.
+
 ## Expected Evidence
 
 Before final review, contributors and agents should be able to state:

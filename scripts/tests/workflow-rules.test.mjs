@@ -113,6 +113,20 @@ test('local contract mode does not require a PR impact summary', () => {
   assert.match(result.warnings.join('\n'), /not enforced locally/u);
 });
 
+test('GitNexus analyze streams output to avoid spawn buffer limits', () => {
+  const contractCheck = readFileSync('scripts/workflows/contract-check.mjs', 'utf8');
+  const analyzeFunction = contractCheck.slice(
+    contractCheck.indexOf('function runGitNexusAnalyze'),
+    contractCheck.indexOf('function getGitNexusAnalyzeInvocation'),
+  );
+
+  assert.match(
+    analyzeFunction,
+    /spawnSync\(command, args, \{\s*stdio: 'inherit',\s*timeout: timeoutMs,\s*\}\)/u,
+  );
+  assert.doesNotMatch(analyzeFunction, /encoding: 'utf8'/u);
+});
+
 test('non-critical changes keep GitNexus advisory', () => {
   const result = evaluateGitNexusContract({
     changedFiles: ['docs/README-CN.md'],

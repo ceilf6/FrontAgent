@@ -142,12 +142,9 @@ function runGitNexusAnalyze(mode) {
   const { command, args } = getGitNexusAnalyzeInvocation();
   console.log(`Running GitNexus analyze --force --index-only (${mode}, timeout ${timeoutMs}ms)...`);
   const result = spawnSync(command, args, {
-    encoding: 'utf8',
+    stdio: 'inherit',
     timeout: timeoutMs,
   });
-
-  if (result.stdout) process.stdout.write(result.stdout);
-  if (result.stderr) process.stderr.write(result.stderr);
 
   if (result.error) {
     if (isTimeoutError(result.error)) {

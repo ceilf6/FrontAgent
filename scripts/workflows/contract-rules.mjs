@@ -36,19 +36,6 @@ export const criticalContractRules = [
       file === 'docs/architecture.md',
   },
   {
-    category: 'mcp-boundary',
-    testPattern: /^(packages\/mcp-[^/]+|packages\/runtime-node)\/src\/.*\.test\.ts$/u,
-    matchesTest: (testFile, changedFile) => {
-      const packageRoot = changedFile.match(/^(packages\/(?:mcp-[^/]+|runtime-node))\/src\//u)?.[1];
-      return Boolean(
-        packageRoot &&
-          new RegExp(`^${escapeRegExp(packageRoot)}/src/.*\\.test\\.ts$`, 'u').test(testFile),
-      );
-    },
-    matches: (file) =>
-      /^packages\/mcp-[^/]+\/src\//u.test(file) || file.startsWith('packages/runtime-node/src/'),
-  },
-  {
     category: 'memory-boundary',
     testPattern: /^(packages\/mcp-memory\/src|packages\/core\/src\/memory)\/.*\.test\.ts$/u,
     matchesTest: (testFile, changedFile) => {
@@ -62,6 +49,19 @@ export const criticalContractRules = [
     },
     matches: (file) =>
       file.startsWith('packages/mcp-memory/src/') || file.startsWith('packages/core/src/memory/'),
+  },
+  {
+    category: 'mcp-boundary',
+    testPattern: /^(packages\/mcp-[^/]+|packages\/runtime-node)\/src\/.*\.test\.ts$/u,
+    matchesTest: (testFile, changedFile) => {
+      const packageRoot = changedFile.match(/^(packages\/(?:mcp-[^/]+|runtime-node))\/src\//u)?.[1];
+      return Boolean(
+        packageRoot &&
+          new RegExp(`^${escapeRegExp(packageRoot)}/src/.*\\.test\\.ts$`, 'u').test(testFile),
+      );
+    },
+    matches: (file) =>
+      /^packages\/mcp-[^/]+\/src\//u.test(file) || file.startsWith('packages/runtime-node/src/'),
   },
   {
     category: 'repo-harness',

@@ -66,6 +66,14 @@ test('package scoped critical changes reject unrelated package tests', () => {
   assert.match(result.reasons.join('\n'), /packages\/mcp-web\/src\/server\.ts/u);
 });
 
+test('mcp-memory files classify as memory boundary before generic mcp boundary', () => {
+  const result = classifyContractPaths(['packages/mcp-memory/src/index.ts']);
+
+  assert.deepEqual(result.critical, [
+    { file: 'packages/mcp-memory/src/index.ts', category: 'memory-boundary' },
+  ]);
+});
+
 test('local contract mode does not require a PR impact summary', () => {
   const result = evaluateGitNexusContract({
     changedFiles: ['scripts/workflows/contract-check.mjs', 'scripts/tests/workflow-rules.test.mjs'],

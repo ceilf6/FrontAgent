@@ -289,23 +289,25 @@ test('Claude reusable assets are public while local state stays private', () => 
 test('public Harness workflow assets are portable', () => {
   const publicClaudeAssets = listPublicClaudeAssets();
   const publicAssets = ['docs/oss-harness-engineering-workflow.md', ...publicClaudeAssets];
+  const secretEnvNamePattern = /\b[A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET)\b/u;
 
   for (const asset of publicAssets) {
     const content = readFileSync(asset, 'utf8');
 
     assert.doesNotMatch(content, /\/Users\//u, asset);
     assert.doesNotMatch(content, /sankuai\.com/u, asset);
-    assert.doesNotMatch(content, /LLM_API_KEY/u, asset);
+    assert.doesNotMatch(content, secretEnvNamePattern, asset);
   }
 });
 
 test('Claude Harness workflow has a single portable entrypoint', () => {
+  const workflowAssets = listPublicClaudeAssets().filter((file) =>
+    file.startsWith('.claude/workflows/'),
+  );
   const workflow = readFileSync('.claude/workflows/oss-harness-engineering-workflow.js', 'utf8');
 
+  assert.deepEqual(workflowAssets, ['.claude/workflows/oss-harness-engineering-workflow.js']);
   assert.match(workflow, /name:\s*'oss-harness-engineering-workflow'/u);
-  assert.throws(() => readFileSync('.claude/workflows/harness-workflow-research.js', 'utf8'));
-  assert.throws(() => readFileSync('.claude/workflows/harness-workflow-synthesize.js', 'utf8'));
-  assert.throws(() => readFileSync('.claude/workflows/harness-workflow-critique.js', 'utf8'));
 });
 
 test('repo guard remains advisory and training-camp workflows are absent', () => {

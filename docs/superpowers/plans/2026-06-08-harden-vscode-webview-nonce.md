@@ -73,7 +73,11 @@ import { randomBytes } from 'node:crypto';
 import type * as vscode from 'vscode';
 
 export function nonce(): string {
-  return randomBytes(32).toString('base64url');
+  return randomBytes(32)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
 }
 ```
 

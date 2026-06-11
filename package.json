@@ -78,7 +78,7 @@
     "@biomejs/biome": "2.4.16",
     "@types/node": "^25.9.1",
     "esbuild": "^0.28.0",
-    "gitnexus": "1.6.6",
+    "gitnexus": "1.6.7",
     "turbo": "^2.9.14",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7"

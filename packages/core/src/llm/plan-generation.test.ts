@@ -376,7 +376,7 @@ describe('generatePlanInTwoPhases', () => {
     expect(outline.stepOutlines[3].phase).toBe('未分组');
   });
 
-  it('applies the read_file -> 阶段1-分析 heuristic only for steps within the first 10 (i < 10)', async () => {
+  it('auto-fix assigns read_file steps to 阶段1-分析 at all indices (i<10 special case and final fallback coincide)', async () => {
     // Build 12 steps: index 0-10 are read_file with empty phase (11 steps), index 11 is read_file too.
     // Total 12 steps, all ungrouped -> 100% > 50%, auto-fix fires.
     const stepOutlines = Array.from({ length: 12 }, (_, i) => ({
@@ -413,12 +413,15 @@ describe('generatePlanInTwoPhases', () => {
 
     await generatePlanInTwoPhases(baseOptions, deps);
 
-    // Indices 0-9 (i < 10) get 阶段1-分析 via the read_file heuristic.
+    // Indices 0-9 (i < 10) get 阶段1-分析 via the read_file && i<10 special case.
     for (let i = 0; i < 10; i++) {
       expect(outline.stepOutlines[i].phase).toBe('阶段1-分析');
     }
-    // Index 10 and 11 (i >= 10) fall through to the default '阶段1-分析' branch
-    // (the final else clause), which produces the same value here.
+    // Indices 10 and 11 (i >= 10) don't match the i<10 special case, but
+    // read_file matches no other branch either, so they fall through to the
+    // final else fallback, which also assigns 阶段1-分析. The i<10 sub-condition
+    // is therefore not independently observable for read_file steps -- this
+    // assertion documents that coincidence rather than a distinguishable branch.
     expect(outline.stepOutlines[10].phase).toBe('阶段1-分析');
     expect(outline.stepOutlines[11].phase).toBe('阶段1-分析');
   });

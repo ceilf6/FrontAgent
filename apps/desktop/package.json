@@ -6,8 +6,8 @@
   "type": "module",
   "main": "./dist/electron/main.mjs",
   "scripts": {
-    "dev": "vite",
-    "dev:app": "concurrently -k -n VITE,ELECTRON -c blue,green \"vite --port 5173 --strictPort\" \"node electron.build.mjs && cross-env ELECTRON_RENDERER_URL=http://localhost:5173 electron .\"",
+    "dev": "concurrently -k -n VITE,ELECTRON -c blue,green \"vite --port 5173 --strictPort\" \"node electron.build.mjs && cross-env ELECTRON_RENDERER_URL=http://localhost:5173 electron .\"",
+    "dev:renderer": "vite",
     "build": "tsc --noEmit && vite build && node electron.build.mjs",
     "build:electron": "node electron.build.mjs",
     "start": "electron .",

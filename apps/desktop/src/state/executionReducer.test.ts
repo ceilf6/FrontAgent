@@ -270,6 +270,23 @@ describe('consoleReducer', () => {
 
     expect(state.phases[0].steps[0].status).toBe('completed');
   });
+
+  it('routes task_completed status by result.success so a failed run is never shown as completed', () => {
+    let state = consoleReducer(initialConsoleState, {
+      type: 'phase_started',
+      phase: '实现',
+      stepCount: 1,
+    });
+    state = consoleReducer(state, { type: 'step_started', step: step({ phase: '实现' }) });
+    state = consoleReducer(state, {
+      type: 'task_completed',
+      result: result({ success: false, error: '验证未通过' }),
+    });
+
+    expect(state.status).toBe('failed');
+    expect(state.error).toBe('验证未通过');
+    expect(state.phases[0].steps[0].status).toBe('failed');
+  });
 });
 
 describe('approval actions', () => {

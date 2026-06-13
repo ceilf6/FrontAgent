@@ -287,11 +287,15 @@ export function consoleReducer(state: ConsoleState, event: AgentEvent): ConsoleS
       return appendLog(state, 'info', `回滚完成: ${event.snapshotId}`);
 
     case 'task_completed':
+      // A `task_completed` event only means the run reached its end — the run
+      // may still have failed. Route the status by `result.success` so the UI
+      // can rely on `status` alone and never paints a failed run as successful.
       return appendLog(
         {
           ...state,
-          status: 'completed',
+          status: event.result.success ? 'completed' : 'failed',
           result: event.result,
+          error: event.result.success ? state.error : (event.result.error ?? state.error),
           activeStepId: undefined,
           phases: terminalizeRunningSteps(
             state.phases,
@@ -300,7 +304,7 @@ export function consoleReducer(state: ConsoleState, event: AgentEvent): ConsoleS
           ),
         },
         event.result.success ? 'success' : 'warn',
-        `任务完成${event.result.success ? '' : '（部分失败）'}`,
+        `任务完成${event.result.success ? '' : '（失败）'}`,
       );
 
     case 'task_failed':

@@ -354,6 +354,10 @@ test('CI and contract guard target develop and call named quality scripts', () =
   assert.match(ci, /pnpm quality:ci/u);
   assert.match(ci, /\n\s+package:\n/u);
   assert.match(ci, /run: pnpm build\n/u);
+  // The package job also packages the Electron desktop app (unsigned --dir),
+  // run via pnpm so electron-builder detects pnpm + the workspace spine.
+  assert.match(ci, /run: pnpm --filter @frontagent\/desktop package\n/u);
+  assert.match(ci, /test -d apps\/desktop\/release\/linux-unpacked/u);
   assert.match(ci, /\n\s+ci:\n\s+name:\s+CI\n/u);
   assert.match(ci, /\n\s+needs:\s+\[check,\s*package\]\n/u);
   assert.match(ci, /needs\.check\.result/u);
@@ -361,6 +365,25 @@ test('CI and contract guard target develop and call named quality scripts', () =
   assert.match(contractGuard, /branches:\s*\[develop\]/u);
   assert.match(contractGuard, /pnpm contract:gitnexus/u);
   assert.match(contractGuard, /GITNEXUS_IMPACT_SUMMARY/u);
+});
+
+test('desktop app has an unsigned electron-builder packaging path', () => {
+  const pkg = JSON.parse(readFileSync('apps/desktop/package.json', 'utf8'));
+  const config = readFileSync('apps/desktop/electron-builder.yml', 'utf8');
+
+  // A `package` script symmetric with the CLI bundle and the VSCode VSIX:
+  // build first, then an unsigned host-platform (--dir) electron-builder run.
+  assert.equal(pkg.scripts.package, 'pnpm run clean && pnpm run build && electron-builder --dir');
+  assert.match(pkg.devDependencies['electron-builder'], /^\^?26\./u);
+  // The packaged output dir is gitignored, so clean must drop it too.
+  assert.equal(pkg.scripts.clean, 'rm -rf dist release');
+
+  // No native node addons in the JS runtime spine → skip the electron-ABI
+  // rebuild so CI needs no native toolchain.
+  assert.match(config, /npmRebuild:\s*false/u);
+  assert.match(config, /output:\s*release/u);
+  // Packages the renderer + esbuilt main/preload produced by `build`.
+  assert.match(config, /dist\/\*\*/u);
 });
 
 test('PR template contains enforced GitNexus summary fields', () => {

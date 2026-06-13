@@ -44,6 +44,17 @@ jobs:
       - name: Package VSIX
         run: pnpm build
 
+      # Unsigned, host-platform (--dir) packaging of the Electron desktop app —
+      # symmetric with the CLI bundle and the VSIX above. Run via pnpm so
+      # electron-builder detects pnpm and collects the symlinked workspace
+      # runtime spine. Signed multi-platform installers are a maintainer-led
+      # follow-up (need secrets + multi-OS runners). See Issue #339.
+      - name: Package desktop app (unsigned --dir)
+        run: pnpm --filter @frontagent/desktop package
+
+      - name: Verify desktop package produced an app
+        run: test -d apps/desktop/release/linux-unpacked
+
   ci:
     name: CI
     runs-on: ubuntu-latest
@@ -58,7 +69,7 @@ jobs:
           fi
 
           if [ "${{ needs.package.result }}" != "success" ]; then
-            echo "VSIX packaging check failed."
+            echo "Packaging check failed (VSIX and/or desktop app)."
             exit 1
           fi
 

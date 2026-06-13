@@ -256,6 +256,7 @@ describe('consoleReducer', () => {
     expect(state.status).toBe('failed');
     expect(state.phases[0].steps[0].status).toBe('failed');
     expect(state.phases[0].steps[0].error).toContain('任务失败时中断');
+    expect(state.phases[0].status).toBe('completed'); // active phase lane is closed out
     expect(state.activeStepId).toBeUndefined();
   });
 
@@ -269,6 +270,7 @@ describe('consoleReducer', () => {
     state = consoleReducer(state, { type: 'task_completed', result: result({ success: true }) });
 
     expect(state.phases[0].steps[0].status).toBe('completed');
+    expect(state.phases[0].status).toBe('completed'); // active phase lane is closed out
   });
 
   it('routes task_completed status by result.success so a failed run is never shown as completed', () => {

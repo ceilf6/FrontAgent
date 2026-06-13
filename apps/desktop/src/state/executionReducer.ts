@@ -113,9 +113,11 @@ function resolvePhaseName(state: ConsoleState, stepPhase: string | undefined): s
 }
 
 /**
- * Force any still-`running` step to a terminal state. Used when the run ends
- * (succeeded or failed) so a step interrupted mid-flight is never left dangling
- * in the UI. `error` is attached when terminalizing as failed.
+ * Close out a run that has ended: force any still-`running` step to a terminal
+ * state and any still-`active` phase lane to `completed`, so a finished run is
+ * never rendered as in-progress. `error` is attached to steps terminalized as
+ * failed. (Phase status has no `failed` variant — step-level status carries the
+ * failure detail.)
  */
 function terminalizeRunningSteps(
   phases: PhaseView[],
@@ -124,6 +126,7 @@ function terminalizeRunningSteps(
 ): PhaseView[] {
   return phases.map((phase) => ({
     ...phase,
+    status: phase.status === 'active' ? 'completed' : phase.status,
     steps: phase.steps.map((step) =>
       step.status === 'running' ? { ...step, status, error: error ?? step.error } : step,
     ),

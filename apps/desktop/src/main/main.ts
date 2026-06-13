@@ -43,13 +43,13 @@ function createMainWindow(): BrowserWindow {
     backgroundColor: '#0e1014',
     show: false,
     webPreferences: {
-      preload: join(import.meta.dirname, 'preload.mjs'),
+      // CommonJS preload (see electron.build.mjs) so the renderer stays
+      // sandboxed; it reaches the main process only through the typed
+      // `window.frontagent` bridge the preload exposes.
+      preload: join(import.meta.dirname, 'preload.cjs'),
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
-      // ESM (.mjs) preload requires the sandbox disabled; the renderer still has
-      // no Node access (contextIsolation + nodeIntegration:false) and reaches the
-      // main process only through the typed `window.frontagent` bridge.
-      sandbox: false,
     },
   });
   win.once('ready-to-show', () => win.show());

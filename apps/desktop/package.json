@@ -7,7 +7,7 @@
   "main": "./dist/electron/main.mjs",
   "scripts": {
     "dev": "vite",
-    "dev:app": "concurrently -k -n VITE,ELECTRON -c blue,green \"vite --port 5173 --strictPort\" \"node electron.build.mjs && ELECTRON_RENDERER_URL=http://localhost:5173 electron .\"",
+    "dev:app": "concurrently -k -n VITE,ELECTRON -c blue,green \"vite --port 5173 --strictPort\" \"node electron.build.mjs && cross-env ELECTRON_RENDERER_URL=http://localhost:5173 electron .\"",
     "build": "tsc --noEmit && vite build && node electron.build.mjs",
     "build:electron": "node electron.build.mjs",
     "start": "electron .",
@@ -30,6 +30,7 @@
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.1.0",
     "concurrently": "^9.2.0",
+    "cross-env": "^7.0.3",
     "electron": "^42.4.0",
     "esbuild": "^0.25.0",
     "typescript": "^6.0.3",

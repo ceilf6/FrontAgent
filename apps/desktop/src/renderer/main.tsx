@@ -16,9 +16,10 @@ import { App } from './App.js';
 import { createMockBridge } from './mock/mockBridge.js';
 import './theme.css';
 
-// PR 2 runs the renderer against the in-browser mock bridge. PR 3 swaps this
-// for the preload bridge exposed by the Electron main process over IPC.
-const bridge = createMockBridge();
+// Use the real preload bridge (`window.frontagent`) when running inside Electron;
+// fall back to the in-browser mock under plain `vite dev` so the UI stays
+// reviewable on its own.
+const bridge = window.frontagent ?? createMockBridge();
 
 const root = document.getElementById('root');
 if (!root) throw new Error('missing #root');

@@ -8,6 +8,7 @@
  * mutates its input — every branch returns a new state object.
  */
 import type { AgentEvent, AgentExecutionResult } from '@frontagent/core';
+import type { ApprovalRequest } from '@frontagent/shared';
 
 export type RunStatus = 'idle' | 'planning' | 'running' | 'completed' | 'failed';
 export type StepStatusView = 'pending' | 'running' | 'completed' | 'failed';
@@ -50,6 +51,14 @@ export interface ConsoleState {
   log: LogLine[];
   /** Accumulated streamed tokens keyed by step id. */
   tokensByStep: Record<string, string>;
+  /**
+   * Outstanding approval requests awaiting a decision. Approvals do not flow
+   * through the `AgentEvent` union — they arrive on a separate bridge channel —
+   * so they are applied via {@link addApprovalRequest} / {@link resolveApproval}
+   * rather than `consoleReducer`. They live here so the whole console renders
+   * from one state model (one truth, not a parallel UI-owned store).
+   */
+  pendingApprovals: ApprovalRequest[];
   result?: AgentExecutionResult;
   error?: string;
   /** Monotonic counter backing stable log keys. */
@@ -61,6 +70,7 @@ export const initialConsoleState: ConsoleState = {
   phases: [],
   log: [],
   tokensByStep: {},
+  pendingApprovals: [],
   logSeq: 0,
 };
 
@@ -100,6 +110,24 @@ function upsertStep(phase: PhaseView, step: StepView): PhaseView {
 
 function resolvePhaseName(state: ConsoleState, stepPhase: string | undefined): string {
   return stepPhase ?? activePhaseName(state) ?? UNGROUPED_PHASE;
+}
+
+/**
+ * Force any still-`running` step to a terminal state. Used when the run ends
+ * (succeeded or failed) so a step interrupted mid-flight is never left dangling
+ * in the UI. `error` is attached when terminalizing as failed.
+ */
+function terminalizeRunningSteps(
+  phases: PhaseView[],
+  status: 'completed' | 'failed',
+  error?: string,
+): PhaseView[] {
+  return phases.map((phase) => ({
+    ...phase,
+    steps: phase.steps.map((step) =>
+      step.status === 'running' ? { ...step, status, error: error ?? step.error } : step,
+    ),
+  }));
 }
 
 export function consoleReducer(state: ConsoleState, event: AgentEvent): ConsoleState {
@@ -260,14 +288,30 @@ export function consoleReducer(state: ConsoleState, event: AgentEvent): ConsoleS
 
     case 'task_completed':
       return appendLog(
-        { ...state, status: 'completed', result: event.result, activeStepId: undefined },
+        {
+          ...state,
+          status: 'completed',
+          result: event.result,
+          activeStepId: undefined,
+          phases: terminalizeRunningSteps(
+            state.phases,
+            event.result.success ? 'completed' : 'failed',
+            event.result.success ? undefined : '任务结束时该步骤仍未完成',
+          ),
+        },
         event.result.success ? 'success' : 'warn',
         `任务完成${event.result.success ? '' : '（部分失败）'}`,
       );
 
     case 'task_failed':
       return appendLog(
-        { ...state, status: 'failed', error: event.error, activeStepId: undefined },
+        {
+          ...state,
+          status: 'failed',
+          error: event.error,
+          activeStepId: undefined,
+          phases: terminalizeRunningSteps(state.phases, 'failed', `任务失败时中断: ${event.error}`),
+        },
         'error',
         `任务失败: ${event.error}`,
       );
@@ -283,6 +327,43 @@ export function reduceEvents(
   state: ConsoleState = initialConsoleState,
 ): ConsoleState {
   return events.reduce(consoleReducer, state);
+}
+
+/**
+ * Record an incoming approval request. Approvals arrive on a separate bridge
+ * channel (not the `AgentEvent` stream), so they have their own action while
+ * still living in {@link ConsoleState}. De-duplicates on `approvalId`.
+ */
+export function addApprovalRequest(state: ConsoleState, request: ApprovalRequest): ConsoleState {
+  if (state.pendingApprovals.some((pending) => pending.approvalId === request.approvalId)) {
+    return state;
+  }
+  return appendLog(
+    { ...state, pendingApprovals: [...state.pendingApprovals, request] },
+    'warn',
+    `等待审批 [${request.riskLevel}] ${request.toolName}: ${request.message}`,
+  );
+}
+
+/** Remove a resolved approval request from the pending queue once a decision is made. */
+export function resolveApproval(
+  state: ConsoleState,
+  approvalId: string,
+  approved: boolean,
+): ConsoleState {
+  if (!state.pendingApprovals.some((pending) => pending.approvalId === approvalId)) {
+    return state;
+  }
+  return appendLog(
+    {
+      ...state,
+      pendingApprovals: state.pendingApprovals.filter(
+        (pending) => pending.approvalId !== approvalId,
+      ),
+    },
+    approved ? 'info' : 'warn',
+    `审批${approved ? '通过' : '拒绝'}: ${approvalId}`,
+  );
 }
 
 function assertNever(event: never): never {

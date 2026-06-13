@@ -1,11 +1,13 @@
 import type { AgentEvent, AgentExecutionResult } from '@frontagent/core';
-import type { AgentTask, ExecutionPlan, ExecutionStep } from '@frontagent/shared';
+import type { AgentTask, ApprovalRequest, ExecutionPlan, ExecutionStep } from '@frontagent/shared';
 import { describe, expect, it } from 'vitest';
 import {
+  addApprovalRequest,
   type ConsoleState,
   consoleReducer,
   initialConsoleState,
   reduceEvents,
+  resolveApproval,
   UNGROUPED_PHASE,
 } from './executionReducer.js';
 
@@ -238,5 +240,74 @@ describe('consoleReducer', () => {
     const frozen = Object.freeze({ ...initialConsoleState, phases: Object.freeze([]) as never });
     expect(() => consoleReducer(frozen, { type: 'planning_started' })).not.toThrow();
     expect(initialConsoleState).toEqual(before);
+  });
+
+  it('terminalizes a step left running when the task fails', () => {
+    let state = consoleReducer(initialConsoleState, {
+      type: 'phase_started',
+      phase: '实现',
+      stepCount: 1,
+    });
+    state = consoleReducer(state, { type: 'step_started', step: step({ phase: '实现' }) });
+    expect(state.phases[0].steps[0].status).toBe('running');
+
+    state = consoleReducer(state, { type: 'task_failed', error: 'LLM 超时' });
+
+    expect(state.status).toBe('failed');
+    expect(state.phases[0].steps[0].status).toBe('failed');
+    expect(state.phases[0].steps[0].error).toContain('任务失败时中断');
+    expect(state.activeStepId).toBeUndefined();
+  });
+
+  it('terminalizes a dangling running step when the task completes', () => {
+    let state = consoleReducer(initialConsoleState, {
+      type: 'phase_started',
+      phase: '实现',
+      stepCount: 1,
+    });
+    state = consoleReducer(state, { type: 'step_started', step: step({ phase: '实现' }) });
+    state = consoleReducer(state, { type: 'task_completed', result: result({ success: true }) });
+
+    expect(state.phases[0].steps[0].status).toBe('completed');
+  });
+});
+
+describe('approval actions', () => {
+  function approval(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
+    return {
+      decision: 'ask',
+      approvalId: 'a1',
+      createdAt: '2026-06-13T00:00:00Z',
+      riskLevel: 'high',
+      reasonCode: 'shell_ask',
+      message: '执行 npm install',
+      toolName: 'run_command',
+      argsSummary: 'npm install',
+      provenance: [],
+      ...overrides,
+    };
+  }
+
+  it('queues an approval request in the same state model and de-duplicates', () => {
+    const queued = addApprovalRequest(initialConsoleState, approval());
+    expect(queued.pendingApprovals).toHaveLength(1);
+    expect(queued.log.at(-1)).toMatchObject({ level: 'warn' });
+
+    const again = addApprovalRequest(queued, approval());
+    expect(again.pendingApprovals).toHaveLength(1); // deduped on approvalId
+  });
+
+  it('removes an approval from the queue once resolved', () => {
+    const queued = addApprovalRequest(initialConsoleState, approval());
+    const approved = resolveApproval(queued, 'a1', true);
+
+    expect(approved.pendingApprovals).toHaveLength(0);
+    expect(approved.log.at(-1)?.text).toContain('审批通过');
+  });
+
+  it('ignores resolving an unknown approval id', () => {
+    const queued = addApprovalRequest(initialConsoleState, approval());
+    const unchanged = resolveApproval(queued, 'nope', false);
+    expect(unchanged).toBe(queued);
   });
 });

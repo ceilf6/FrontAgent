@@ -49,6 +49,13 @@ export interface RunTaskResponse {
 }
 
 export interface ApprovalDecisionInput {
+  /**
+   * Run the decision belongs to. Carried explicitly (symmetric with
+   * {@link ApprovalRequestEnvelope}) so the main process can route the decision
+   * to the right run's approval callback without an implicit approvalId->run
+   * lookup — the renderer may have several runs in flight.
+   */
+  runId: string;
   /** The `approvalId` carried by the `ApprovalRequest` being answered. */
   approvalId: string;
   approved: boolean;

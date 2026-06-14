@@ -22,6 +22,13 @@ export interface FetchOptions {
   allowHosts?: string[];
   denyHosts?: string[];
   maxRedirects?: number;
+  /**
+   * Test-only injection seam: overrides the `fetch` implementation used to
+   * issue requests. Defaults to the global `fetch`. Not intended for
+   * production use — when supplied, the `dispatcher: safeDispatcher` option
+   * is still passed but a mock implementation may ignore it.
+   */
+  fetchImpl?: typeof fetch;
 }
 
 export const DEFAULT_TIMEOUT_MS = 15000;
@@ -52,7 +59,7 @@ export function clampLimit(value: unknown, def: number, hardMax: number): number
 const safeDispatcher = new Agent({
   connect: {
     lookup: (hostname, options, callback) => {
-      dns.lookup(hostname, options, (err, address, family) => {
+      dns.lookup(hostname, { ...options, all: false }, (err, address, family) => {
         if (err) {
           callback(err, address as string, family as number);
           return;
@@ -89,6 +96,7 @@ export async function fetchUrl(rawUrl: string, opts: FetchOptions = {}): Promise
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const doFetch = opts.fetchImpl ?? fetch;
 
   try {
     let currentUrl = parseAndValidateUrl(rawUrl, {
@@ -102,7 +110,7 @@ export async function fetchUrl(rawUrl: string, opts: FetchOptions = {}): Promise
     for (;;) {
       let res: Response;
       try {
-        res = await fetch(currentUrl, {
+        res = await doFetch(currentUrl, {
           redirect: 'manual',
           signal: controller.signal,
           headers: { 'user-agent': userAgent },

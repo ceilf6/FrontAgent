@@ -361,6 +361,8 @@ test('CI and contract guard target develop and call named quality scripts', () =
   assert.match(ci, /test -f "\$app\/dist\/renderer\/index\.html"/u);
   assert.match(ci, /node --check "\$app\/dist\/electron\/main\.mjs"/u);
   assert.match(ci, /node --check "\$app\/dist\/electron\/preload\.cjs"/u);
+  // Headless launch smoke: the packaged app boots and wires window.frontagent.
+  assert.match(ci, /FRONTAGENT_SMOKE=1 xvfb-run -a "\$bin" --no-sandbox/u);
   assert.match(ci, /\n\s+ci:\n\s+name:\s+CI\n/u);
   assert.match(ci, /\n\s+needs:\s+\[check,\s*package\]\n/u);
   assert.match(ci, /needs\.check\.result/u);

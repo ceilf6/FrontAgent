@@ -55,16 +55,28 @@ jobs:
       # Assert the packaged app actually contains the renderer + esbuilt
       # main/preload (not just that an output dir exists): `node --check` proves
       # the two bundles are present and valid JS, and the renderer entry HTML is
-      # bundled where main.mjs loads it from. This is where packaging path/base/
-      # missing-file bugs surface. A full packaged-app GUI launch smoke
-      # (xvfb + window.frontagent runtime check) is deferred to the maintainer-led
-      # release Issue alongside installers/signing — see #339.
+      # bundled where main.mjs loads it from.
       - name: Verify desktop package contents (renderer + main + preload)
         run: |
           app=apps/desktop/release/linux-unpacked/resources/app
           test -f "$app/dist/renderer/index.html"
           node --check "$app/dist/electron/main.mjs"
           node --check "$app/dist/electron/preload.cjs"
+
+      # Launch the *packaged* app headlessly (#339 acceptance): proves it boots,
+      # the renderer loads from the packaged dist/, and the sandboxed preload's
+      # contextBridge exposes a wired `window.frontagent`. It only reaches
+      # did-finish-load if main.mjs imported the runtime spine at launch, so this
+      # also validates electron-builder packaged the symlinked workspace deps
+      # correctly. The probe (FRONTAGENT_SMOKE) exits 0/1; xvfb-run propagates it.
+      # --no-sandbox: CI's unpacked chrome-sandbox lacks the SUID bit; the
+      # contextBridge wiring under test is unaffected.
+      - name: Smoke-launch packaged desktop app (xvfb)
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          bin=$(find apps/desktop/release/linux-unpacked -maxdepth 1 -type f -executable | head -1)
+          echo "Launching packaged app: $bin"
+          FRONTAGENT_SMOKE=1 xvfb-run -a "$bin" --no-sandbox
 
   ci:
     name: CI

@@ -28,11 +28,15 @@ export const webFetchSchema = {
       },
       timeoutMs: {
         type: 'number',
-        description: '请求超时时间（毫秒），默认 15000',
+        minimum: 1,
+        maximum: 60000,
+        description: '请求超时时间（毫秒），默认 15000，硬上限 60000',
       },
       maxBytes: {
         type: 'number',
-        description: '响应体最大字节数，超出后截断，默认 2000000',
+        minimum: 1,
+        maximum: 5000000,
+        description: '响应体最大字节数，超出后截断，默认 2000000，硬上限 5000000',
       },
     },
     required: ['url'],

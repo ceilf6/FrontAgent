@@ -342,6 +342,10 @@ importers:
         version: 6.0.3
 
   packages/mcp-web-fetch:
+    dependencies:
+      undici:
+        specifier: ^6.21.0
+        version: 6.26.0
     devDependencies:
       '@types/node':
         specifier: ^25.9.1

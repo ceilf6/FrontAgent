@@ -1,5 +1,3 @@
-import dns from 'node:dns';
-
 export class UrlSafetyError extends Error {
   constructor(message: string) {
     super(message);
@@ -157,34 +155,10 @@ export function parseAndValidateUrl(
 }
 
 /**
- * Resolves the given hostname via DNS and throws UrlSafetyError if any
- * resolved address is private. If the host is already a literal IP
- * address, it is validated directly without performing DNS lookups.
+ * Returns true if the given resolved connection address (IPv4 or IPv6,
+ * without brackets) is private, loopback, link-local, or otherwise
+ * unsafe to connect to.
  */
-export async function assertResolvedHostSafe(host: string): Promise<void> {
-  const bare = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
-
-  // Literal IPv4
-  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(bare)) {
-    if (isPrivateIpv4(bare)) {
-      throw new UrlSafetyError(`Host resolves to a private address: ${bare}`);
-    }
-    return;
-  }
-
-  // Literal IPv6
-  if (bare.includes(':')) {
-    if (isPrivateIpv6(bare)) {
-      throw new UrlSafetyError(`Host resolves to a private address: ${bare}`);
-    }
-    return;
-  }
-
-  const results = await dns.promises.lookup(host, { all: true });
-  for (const { address, family } of results) {
-    const isPrivate = family === 6 ? isPrivateIpv6(address) : isPrivateIpv4(address);
-    if (isPrivate) {
-      throw new UrlSafetyError(`Host resolves to a private address: ${host} -> ${address}`);
-    }
-  }
+export function isConnectionAddressBlocked(address: string): boolean {
+  return isPrivateIpv4(address) || isPrivateIpv6(address);
 }

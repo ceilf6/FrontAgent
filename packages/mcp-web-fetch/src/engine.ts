@@ -1,5 +1,7 @@
+import dns from 'node:dns';
+import { Agent } from 'undici';
 import { htmlToText } from './html-to-text.js';
-import { assertResolvedHostSafe, parseAndValidateUrl } from './url-safety.js';
+import { isConnectionAddressBlocked, parseAndValidateUrl, UrlSafetyError } from './url-safety.js';
 
 export interface FetchResult {
   url: string;
@@ -22,21 +24,66 @@ export interface FetchOptions {
   maxRedirects?: number;
 }
 
-const DEFAULT_TIMEOUT_MS = 15000;
-const DEFAULT_MAX_BYTES = 2_000_000;
+export const DEFAULT_TIMEOUT_MS = 15000;
+export const DEFAULT_MAX_BYTES = 2_000_000;
+export const HARD_MAX_TIMEOUT_MS = 60_000;
+export const HARD_MAX_BYTES = 5_000_000;
 const DEFAULT_MAX_REDIRECTS = 5;
+const HARD_MAX_REDIRECTS = 10;
 const DEFAULT_USER_AGENT = 'frontagent-mcp-web-fetch/2.1.1 (+https://github.com/frontagent)';
+
+/**
+ * Clamps a caller-supplied numeric limit to a safe, bounded integer.
+ *
+ * Returns `def` for any non-finite, non-numeric, zero, or negative input.
+ * Fractional values are floored. Values above `hardMax` are capped to
+ * `hardMax`, regardless of what the caller requested.
+ */
+export function clampLimit(value: unknown, def: number, hardMax: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return def;
+  return Math.min(Math.floor(value), hardMax);
+}
+
+/**
+ * Undici dispatcher whose DNS lookup validates the resolved address at
+ * connection time, closing the TOCTOU gap between SSRF pre-validation
+ * (parseAndValidateUrl) and the actual network connection.
+ */
+const safeDispatcher = new Agent({
+  connect: {
+    lookup: (hostname, options, callback) => {
+      dns.lookup(hostname, options, (err, address, family) => {
+        if (err) {
+          callback(err, address as string, family as number);
+          return;
+        }
+        const resolved = address as string;
+        if (isConnectionAddressBlocked(resolved)) {
+          callback(
+            new UrlSafetyError(`Blocked private address ${resolved} for host ${hostname}`),
+            resolved,
+            family as number,
+          );
+          return;
+        }
+        callback(null, resolved, family as number);
+      });
+    },
+  },
+});
 
 /**
  * Fetch a URL and return cleaned, readable text along with metadata.
  *
- * Performs SSRF-safety validation (URL shape + DNS resolution) on every
- * hop of the redirect chain before issuing any network request.
+ * Performs SSRF-safety validation (URL shape) on every hop of the
+ * redirect chain before issuing any network request, and routes all
+ * requests through a dispatcher that validates the resolved connection
+ * address at connect time (closing the DNS-rebinding TOCTOU gap).
  */
 export async function fetchUrl(rawUrl: string, opts: FetchOptions = {}): Promise<FetchResult> {
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
-  const maxRedirects = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
+  const timeoutMs = clampLimit(opts.timeoutMs, DEFAULT_TIMEOUT_MS, HARD_MAX_TIMEOUT_MS);
+  const maxBytes = clampLimit(opts.maxBytes, DEFAULT_MAX_BYTES, HARD_MAX_BYTES);
+  const maxRedirects = clampLimit(opts.maxRedirects, DEFAULT_MAX_REDIRECTS, HARD_MAX_REDIRECTS);
   const format = opts.format ?? 'text';
   const userAgent = opts.userAgent ?? DEFAULT_USER_AGENT;
 
@@ -53,15 +100,14 @@ export async function fetchUrl(rawUrl: string, opts: FetchOptions = {}): Promise
     let redirectCount = 0;
 
     for (;;) {
-      await assertResolvedHostSafe(currentUrl.hostname);
-
       let res: Response;
       try {
         res = await fetch(currentUrl, {
           redirect: 'manual',
           signal: controller.signal,
           headers: { 'user-agent': userAgent },
-        });
+          dispatcher: safeDispatcher,
+        } as RequestInit);
       } catch (err) {
         if (controller.signal.aborted) {
           throw new Error(`Request timed out after ${timeoutMs}ms: ${currentUrl}`);

@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 export class UrlSafetyError extends Error {
   constructor(message: string) {
     super(message);
@@ -41,34 +43,110 @@ export function isPrivateIpv4(ip: string): boolean {
 }
 
 /**
+ * Parses an IPv6 address string into its 8 16-bit hextets.
+ *
+ * Strips a zone id (e.g. "%eth0") and surrounding brackets, expands the
+ * "::" zero-run shorthand, and converts an embedded dotted-quad IPv4
+ * tail (e.g. "::ffff:127.0.0.1") into two trailing hextets.
+ *
+ * Returns null if `addr` is not a valid IPv6 address per `net.isIP`, or
+ * if it is otherwise malformed.
+ */
+export function expandIpv6(addr: string): number[] | null {
+  let normalized = addr.trim().toLowerCase();
+
+  // Strip surrounding brackets, e.g. "[::1]"
+  if (normalized.startsWith('[') && normalized.endsWith(']')) {
+    normalized = normalized.slice(1, -1);
+  }
+
+  // Strip zone id, e.g. "fe80::1%eth0"
+  const zoneIndex = normalized.indexOf('%');
+  if (zoneIndex !== -1) {
+    normalized = normalized.slice(0, zoneIndex);
+  }
+
+  if (isIP(normalized) !== 6) return null;
+
+  // If the address ends with a dotted-quad IPv4 tail (e.g.
+  // "::ffff:127.0.0.1"), convert it into two hex groups first.
+  const lastColon = normalized.lastIndexOf(':');
+  const tail = normalized.slice(lastColon + 1);
+  if (tail.includes('.')) {
+    const octets = tail.split('.');
+    if (octets.length !== 4) return null;
+    const nums: number[] = [];
+    for (const o of octets) {
+      if (!/^\d{1,3}$/.test(o)) return null;
+      const n = Number(o);
+      if (n < 0 || n > 255) return null;
+      nums.push(n);
+    }
+    const hi = ((nums[0] << 8) | nums[1]).toString(16);
+    const lo = ((nums[2] << 8) | nums[3]).toString(16);
+    normalized = `${normalized.slice(0, lastColon + 1)}${hi}:${lo}`;
+  }
+
+  const parts = normalized.split('::');
+  if (parts.length > 2) return null;
+
+  const head = parts[0].length > 0 ? parts[0].split(':') : [];
+  const tailGroups = parts.length === 2 && parts[1].length > 0 ? parts[1].split(':') : [];
+
+  let groups: string[];
+  if (parts.length === 2) {
+    const missing = 8 - (head.length + tailGroups.length);
+    if (missing < 0) return null;
+    groups = [...head, ...Array(missing).fill('0'), ...tailGroups];
+  } else {
+    groups = head;
+  }
+
+  if (groups.length !== 8) return null;
+
+  const hextets: number[] = [];
+  for (const g of groups) {
+    if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+    hextets.push(parseInt(g, 16));
+  }
+
+  return hextets;
+}
+
+/**
  * Returns true if the given IPv6 address is loopback, unique-local,
- * link-local, unspecified, or an IPv4-mapped address whose embedded
- * IPv4 address is private.
+ * link-local, unspecified, IPv4-mapped/IPv4-compatible with a private
+ * embedded IPv4 address, or otherwise reserved for local use.
  */
 export function isPrivateIpv6(ip: string): boolean {
-  const normalized = ip.toLowerCase().trim();
+  const h = expandIpv6(ip);
+  if (!h) return false;
 
-  // Unspecified
-  if (normalized === '::') return true;
-  // Loopback
-  if (normalized === '::1') return true;
+  const isZero = (n: number) => n === 0;
 
-  // IPv4-mapped: ::ffff:x.x.x.x
-  const v4MappedMatch = normalized.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (v4MappedMatch) {
-    return isPrivateIpv4(v4MappedMatch[1]);
+  // Unspecified ::
+  if (h.every(isZero)) return true;
+
+  // Loopback ::1
+  if (h.slice(0, 7).every(isZero) && h[7] === 1) return true;
+
+  // IPv4-mapped ::ffff:a.b.c.d
+  if (h.slice(0, 5).every(isZero) && h[5] === 0xffff) {
+    const v4 = `${h[6] >> 8}.${h[6] & 0xff}.${h[7] >> 8}.${h[7] & 0xff}`;
+    return isPrivateIpv4(v4);
   }
 
-  // fc00::/7 (Unique Local Address) -> first 7 bits are 1111 110x
-  // i.e. first hex group's value, when masked, falls in 0xfc00-0xfdff
-  const firstGroup = normalized.split(':')[0];
-  if (/^[0-9a-f]{1,4}$/.test(firstGroup)) {
-    const value = parseInt(firstGroup, 16);
-    // fc00::/7 => top 7 bits of first 16-bit group are 1111110
-    if ((value & 0xfe00) === 0xfc00) return true;
-    // fe80::/10 (link-local) => top 10 bits are 1111111010
-    if ((value & 0xffc0) === 0xfe80) return true;
+  // IPv4-compatible (deprecated) ::a.b.c.d
+  if (h.slice(0, 6).every(isZero)) {
+    const v4 = `${h[6] >> 8}.${h[6] & 0xff}.${h[7] >> 8}.${h[7] & 0xff}`;
+    return isPrivateIpv4(v4);
   }
+
+  // fc00::/7 (Unique Local Address) -> top 7 bits are 1111110
+  if ((h[0] & 0xfe00) === 0xfc00) return true;
+
+  // fe80::/10 (link-local) -> top 10 bits are 1111111010
+  if ((h[0] & 0xffc0) === 0xfe80) return true;
 
   return false;
 }

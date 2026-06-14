@@ -27,10 +27,22 @@ describe('isPrivateIpv6', () => {
     expect(isPrivateIpv6('::1')).toBe(true);
     expect(isPrivateIpv6('fe80::1')).toBe(true);
     expect(isPrivateIpv6('fc00::1')).toBe(true);
+    expect(isPrivateIpv6('::')).toBe(true);
+  });
+
+  it('returns true for IPv4-mapped/compatible addresses with private embedded IPv4, in dotted and hex hextet forms', () => {
+    expect(isPrivateIpv6('::ffff:127.0.0.1')).toBe(true);
+    expect(isPrivateIpv6('::ffff:7f00:1')).toBe(true);
+    expect(isPrivateIpv6('::ffff:0a00:1')).toBe(true);
+    expect(isPrivateIpv6('::ffff:192.168.1.1')).toBe(true);
+    expect(isPrivateIpv6('0:0:0:0:0:ffff:127.0.0.1')).toBe(true);
+    expect(isPrivateIpv6('0:0:0:0:0:ffff:7f00:1')).toBe(true);
   });
 
   it('returns false for public addresses', () => {
     expect(isPrivateIpv6('2606:4700::1')).toBe(false);
+    expect(isPrivateIpv6('2606:4700:4700::1111')).toBe(false);
+    expect(isPrivateIpv6('2001:4860:4860::8888')).toBe(false);
   });
 });
 
@@ -80,5 +92,15 @@ describe('parseAndValidateUrl', () => {
     ).toThrow(UrlSafetyError);
     const url = parseAndValidateUrl('https://example.com/', { allowHosts: ['example.com'] });
     expect(url.hostname).toBe('example.com');
+  });
+
+  it('rejects IPv4-mapped IPv6 literals that resolve to private addresses', () => {
+    expect(() => parseAndValidateUrl('http://[::ffff:7f00:1]/')).toThrow(UrlSafetyError);
+    expect(() => parseAndValidateUrl('http://[::ffff:0a00:1]/')).toThrow(UrlSafetyError);
+  });
+
+  it('accepts a public IPv6 literal', () => {
+    const url = parseAndValidateUrl('https://[2606:4700:4700::1111]/');
+    expect(url).toBeInstanceOf(URL);
   });
 });

@@ -1,3 +1,4 @@
+import type { LookupAddress, LookupOptions } from 'node:dns';
 import dns from 'node:dns';
 import { Agent } from 'undici';
 import { htmlToText } from './html-to-text.js';
@@ -52,30 +53,46 @@ export function clampLimit(value: unknown, def: number, hardMax: number): number
 }
 
 /**
+ * DNS lookup used by the safe undici dispatcher. Resolves the hostname and
+ * rejects (via UrlSafetyError) if the resolved address is private/loopback/
+ * link-local — enforced at CONNECTION time so the validated address is the
+ * one actually connected to (DNS-rebinding-safe). Exported for direct testing.
+ */
+export function safeLookup(
+  hostname: string,
+  options: LookupOptions,
+  callback: (
+    err: NodeJS.ErrnoException | null,
+    address: string | LookupAddress[],
+    family?: number,
+  ) => void,
+): void {
+  dns.lookup(hostname, { ...options, all: false }, (err, address, family) => {
+    if (err) {
+      callback(err, address, family);
+      return;
+    }
+    const resolved = address as string;
+    if (isConnectionAddressBlocked(resolved)) {
+      callback(
+        new UrlSafetyError(`Blocked private address ${resolved} for host ${hostname}`),
+        resolved,
+        family,
+      );
+      return;
+    }
+    callback(null, resolved, family);
+  });
+}
+
+/**
  * Undici dispatcher whose DNS lookup validates the resolved address at
  * connection time, closing the TOCTOU gap between SSRF pre-validation
  * (parseAndValidateUrl) and the actual network connection.
  */
 const safeDispatcher = new Agent({
   connect: {
-    lookup: (hostname, options, callback) => {
-      dns.lookup(hostname, { ...options, all: false }, (err, address, family) => {
-        if (err) {
-          callback(err, address as string, family as number);
-          return;
-        }
-        const resolved = address as string;
-        if (isConnectionAddressBlocked(resolved)) {
-          callback(
-            new UrlSafetyError(`Blocked private address ${resolved} for host ${hostname}`),
-            resolved,
-            family as number,
-          );
-          return;
-        }
-        callback(null, resolved, family as number);
-      });
-    },
+    lookup: safeLookup,
   },
 });
 

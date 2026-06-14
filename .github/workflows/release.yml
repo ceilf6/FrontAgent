@@ -4,7 +4,8 @@ name: Release Desktop
 # and attaches them to the GitHub Release on version tags (Issue #341).
 #
 # Triggers:
-#   - push tag `v*`     → build all 3 OS zips AND attach them to the tag's Release
+#   - push tag `v*`     → build all 3 OS zips, then a single publish job attaches
+#                         them to the tag's GitHub Release
 #   - pull_request      → build all 3 OS zips as workflow artifacts (no publish),
 #                         so the release path is verified on the PR that changes it
 #   - workflow_dispatch → manual build (artifacts only), for ad-hoc verification
@@ -18,6 +19,10 @@ on:
       - '.github/workflows/release.yml'
       - 'pnpm-lock.yaml'
   workflow_dispatch:
+
+# Least privilege by default; only the publish job widens to write Releases.
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -38,8 +43,14 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # electron-builder produces the per-platform zip (see electron-builder.yml
-      # target: zip). --publish never: assets are attached below, not by builder.
+      # Build the desktop package AND its workspace deps (core/shared/runtime-node)
+      # via turbo's dependency graph, so the desktop tsc build resolves their
+      # types — a desktop-only build can't, since the spine isn't prebuilt on CI.
+      - name: Build desktop and workspace deps
+        run: pnpm exec turbo build --filter=@frontagent/desktop
+
+      # electron-builder produces the per-platform zip (electron-builder.yml
+      # target: zip). --publish never: assets are attached by the publish job.
       - name: Build desktop zip
         run: pnpm --filter @frontagent/desktop run release
 
@@ -50,9 +61,22 @@ jobs:
           path: apps/desktop/release/*.zip
           if-no-files-found: error
 
-      # Only real version tags publish to the GitHub Release.
-      - name: Attach zip to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+  publish:
+    # A single job attaches every platform's zip to the Release, so the three
+    # matrix builds never race to create/update the same Release. Tags only.
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all platform zips
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-zips
+          merge-multiple: true
+
+      - name: Attach zips to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: apps/desktop/release/*.zip
+          files: dist-zips/*.zip

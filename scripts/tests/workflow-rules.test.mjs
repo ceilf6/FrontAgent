@@ -408,11 +408,16 @@ test('desktop release workflow publishes per-platform zips on version tags', () 
   assert.match(release, /tags:\s*\['v\*'\]/u);
   assert.match(release, /pull_request:/u);
   assert.match(release, /workflow_dispatch:/u);
-  // Build the zip on all three desktop OSes.
+  // Build the zip on all three desktop OSes, building the workspace spine first.
   assert.match(release, /os:\s*\[ubuntu-latest,\s*macos-latest,\s*windows-latest\]/u);
+  assert.match(release, /pnpm exec turbo build --filter=@frontagent\/desktop/u);
   assert.match(release, /pnpm --filter @frontagent\/desktop run release/u);
   assert.match(release, /actions\/upload-artifact/u);
-  // Attach to the GitHub Release only on real version tags.
+  // A single publish job (needs: build) attaches all zips on tags, with explicit
+  // write permission — the matrix builds never race to write the same Release.
+  assert.match(release, /permissions:\s*\n\s*contents:\s*write/u);
+  assert.match(release, /needs:\s*build/u);
+  assert.match(release, /actions\/download-artifact/u);
   assert.match(release, /softprops\/action-gh-release/u);
   assert.match(release, /if:\s*startsWith\(github\.ref,\s*'refs\/tags\/'\)/u);
 

@@ -26,6 +26,11 @@ files:
 # The JS runtime spine has no native node addons, so skip the electron-ABI
 # rebuild: keeps CI fast and frees the runner from a native build toolchain.
 npmRebuild: false
+# Keep the packaged app unpacked (no app.asar) for this verification slice: CI
+# asserts the packaged renderer + main/preload directly with `test -f` /
+# `node --check`, and an unpacked tree is trivially inspectable. asar packing is
+# part of the deferred maintainer-led release hardening (with installers/signing).
+asar: false
 linux:
   target: AppImage
 mac:

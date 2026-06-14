@@ -52,8 +52,19 @@ jobs:
       - name: Package desktop app (unsigned --dir)
         run: pnpm --filter @frontagent/desktop package
 
-      - name: Verify desktop package produced an app
-        run: test -d apps/desktop/release/linux-unpacked
+      # Assert the packaged app actually contains the renderer + esbuilt
+      # main/preload (not just that an output dir exists): `node --check` proves
+      # the two bundles are present and valid JS, and the renderer entry HTML is
+      # bundled where main.mjs loads it from. This is where packaging path/base/
+      # missing-file bugs surface. A full packaged-app GUI launch smoke
+      # (xvfb + window.frontagent runtime check) is deferred to the maintainer-led
+      # release Issue alongside installers/signing — see #339.
+      - name: Verify desktop package contents (renderer + main + preload)
+        run: |
+          app=apps/desktop/release/linux-unpacked/resources/app
+          test -f "$app/dist/renderer/index.html"
+          node --check "$app/dist/electron/main.mjs"
+          node --check "$app/dist/electron/preload.cjs"
 
   ci:
     name: CI

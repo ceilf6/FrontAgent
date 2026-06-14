@@ -355,9 +355,12 @@ test('CI and contract guard target develop and call named quality scripts', () =
   assert.match(ci, /\n\s+package:\n/u);
   assert.match(ci, /run: pnpm build\n/u);
   // The package job also packages the Electron desktop app (unsigned --dir),
-  // run via pnpm so electron-builder detects pnpm + the workspace spine.
+  // run via pnpm so electron-builder detects pnpm + the workspace spine, then
+  // asserts the packaged renderer + main/preload are present and valid.
   assert.match(ci, /run: pnpm --filter @frontagent\/desktop package\n/u);
-  assert.match(ci, /test -d apps\/desktop\/release\/linux-unpacked/u);
+  assert.match(ci, /test -f "\$app\/dist\/renderer\/index\.html"/u);
+  assert.match(ci, /node --check "\$app\/dist\/electron\/main\.mjs"/u);
+  assert.match(ci, /node --check "\$app\/dist\/electron\/preload\.cjs"/u);
   assert.match(ci, /\n\s+ci:\n\s+name:\s+CI\n/u);
   assert.match(ci, /\n\s+needs:\s+\[check,\s*package\]\n/u);
   assert.match(ci, /needs\.check\.result/u);
@@ -382,6 +385,8 @@ test('desktop app has an unsigned electron-builder packaging path', () => {
   // rebuild so CI needs no native toolchain.
   assert.match(config, /npmRebuild:\s*false/u);
   assert.match(config, /output:\s*release/u);
+  // Unpacked (no asar) so CI verifies the packaged files directly.
+  assert.match(config, /asar:\s*false/u);
   // Packages the renderer + esbuilt main/preload produced by `build`.
   assert.match(config, /dist\/\*\*/u);
 });

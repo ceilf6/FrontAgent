@@ -16,6 +16,7 @@ export function App({ bridge }: { bridge: FrontAgentBridge }) {
   const running = launching || state.status === 'running' || state.status === 'planning';
 
   useEffect(() => {
+    if (view !== 'console') return;
     let active = true;
     bridge
       .getSettings()
@@ -26,7 +27,7 @@ export function App({ bridge }: { bridge: FrontAgentBridge }) {
     return () => {
       active = false;
     };
-  }, [bridge]);
+  }, [bridge, view]);
 
   return (
     <div className="shell">

@@ -399,6 +399,34 @@ test('desktop app has an unsigned electron-builder packaging path', () => {
   assert.match(config, /dist\/\*\*/u);
 });
 
+test('desktop release workflow publishes per-platform zips on version tags', () => {
+  const release = readFileSync('.github/workflows/release.yml', 'utf8');
+  const pkg = JSON.parse(readFileSync('apps/desktop/package.json', 'utf8'));
+  const config = readFileSync('apps/desktop/electron-builder.yml', 'utf8');
+
+  // Triggers: version tags publish; pull_request/dispatch build artifacts only.
+  assert.match(release, /tags:\s*\['v\*'\]/u);
+  assert.match(release, /pull_request:/u);
+  assert.match(release, /workflow_dispatch:/u);
+  // Build the zip on all three desktop OSes.
+  assert.match(release, /os:\s*\[ubuntu-latest,\s*macos-latest,\s*windows-latest\]/u);
+  assert.match(release, /pnpm --filter @frontagent\/desktop run release/u);
+  assert.match(release, /actions\/upload-artifact/u);
+  // Attach to the GitHub Release only on real version tags.
+  assert.match(release, /softprops\/action-gh-release/u);
+  assert.match(release, /if:\s*startsWith\(github\.ref,\s*'refs\/tags\/'\)/u);
+
+  // The release build emits unsigned per-platform zips with stable asset names.
+  assert.equal(pkg.scripts.release, 'pnpm run build && electron-builder --publish never');
+  assert.match(
+    config,
+    /artifactName:\s*frontagent-desktop-\$\{version\}-\$\{os\}-\$\{arch\}\.\$\{ext\}/u,
+  );
+  assert.match(config, /linux:\s*\n\s*target:\s*zip/u);
+  assert.match(config, /mac:\s*\n\s*target:\s*zip/u);
+  assert.match(config, /win:\s*\n\s*target:\s*zip/u);
+});
+
 test('PR template contains enforced GitNexus summary fields', () => {
   const template = readFileSync('.github/PULL_REQUEST_TEMPLATE.md', 'utf8');
 

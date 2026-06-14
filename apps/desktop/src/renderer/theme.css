@@ -783,10 +783,12 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
-/* These inputs reset the default outline on :focus with no replacement; restore
-   a visible ring for keyboard focus (equal specificity, declared later wins). */
-.field input:focus-visible,
-.setting-group input:focus-visible {
+/* Field controls reset the default outline on :focus with no replacement; restore
+   a visible ring for keyboard focus (equal specificity, declared later wins).
+   :is(input, textarea, select) so any control inside a field is covered, not just
+   today's text inputs. (The main composer textarea keeps its amber border/glow.) */
+.field :is(input, textarea, select):focus-visible,
+.setting-group :is(input, textarea, select):focus-visible {
   outline: 2px solid var(--amber);
   outline-offset: 1px;
 }

@@ -1,16 +1,24 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { RunTaskRequest } from '../../ipc/contract.js';
 
 export function TaskComposer({
   disabled,
   onRun,
+  defaultWorkspacePath,
 }: {
   disabled: boolean;
   onRun: (req: RunTaskRequest) => void;
+  defaultWorkspacePath?: string;
 }) {
   const [task, setTask] = useState('');
   const [workspacePath, setWorkspacePath] = useState('');
   const [browserUrl, setBrowserUrl] = useState('');
+
+  useEffect(() => {
+    if (defaultWorkspacePath) {
+      setWorkspacePath((cur) => (cur === '' ? defaultWorkspacePath : cur));
+    }
+  }, [defaultWorkspacePath]);
 
   const canRun = task.trim().length > 0 && workspacePath.trim().length > 0;
 

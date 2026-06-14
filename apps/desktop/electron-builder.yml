@@ -12,6 +12,9 @@
 # formats so that work has a home, but `--dir` ignores them.
 appId: ai.frontagent.desktop
 productName: FrontAgent
+# Pin the Linux executable name so CI launches a known binary deterministically
+# (the linux-unpacked root also holds helper executables like chrome-sandbox).
+executableName: frontagent
 directories:
   output: release
 # Built by `pnpm --filter @frontagent/desktop build` before packaging:

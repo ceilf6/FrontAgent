@@ -361,8 +361,12 @@ test('CI and contract guard target develop and call named quality scripts', () =
   assert.match(ci, /test -f "\$app\/dist\/renderer\/index\.html"/u);
   assert.match(ci, /node --check "\$app\/dist\/electron\/main\.mjs"/u);
   assert.match(ci, /node --check "\$app\/dist\/electron\/preload\.cjs"/u);
-  // Headless launch smoke: the packaged app boots and wires window.frontagent.
+  // Headless launch smoke: launch a deterministic binary (not the first `find`
+  // hit) and assert the packaged app boots and wires window.frontagent.
+  assert.match(ci, /bin=apps\/desktop\/release\/linux-unpacked\/frontagent/u);
+  assert.match(ci, /test -x "\$bin"/u);
   assert.match(ci, /FRONTAGENT_SMOKE=1 xvfb-run -a "\$bin" --no-sandbox/u);
+  assert.doesNotMatch(ci, /find apps\/desktop\/release.*head -1/u);
   assert.match(ci, /\n\s+ci:\n\s+name:\s+CI\n/u);
   assert.match(ci, /\n\s+needs:\s+\[check,\s*package\]\n/u);
   assert.match(ci, /needs\.check\.result/u);
@@ -389,6 +393,8 @@ test('desktop app has an unsigned electron-builder packaging path', () => {
   assert.match(config, /output:\s*release/u);
   // Unpacked (no asar) so CI verifies the packaged files directly.
   assert.match(config, /asar:\s*false/u);
+  // Deterministic Linux binary name for the CI smoke launch.
+  assert.match(config, /executableName:\s*frontagent/u);
   // Packages the renderer + esbuilt main/preload produced by `build`.
   assert.match(config, /dist\/\*\*/u);
 });

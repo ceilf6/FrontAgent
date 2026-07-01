@@ -295,6 +295,17 @@ describe('SecurityManager', () => {
       expect(result.reasonCode).toBe('unknown_tool_requires_approval');
       expect(result.riskLevel).toBe('medium');
     });
+
+    it('asks for approval for web_fetch by default', () => {
+      const result = security.evaluate({
+        toolName: 'web_fetch',
+        args: { url: 'https://docs.example.com/api' },
+        projectRoot,
+      });
+      expect(result.decision).toBe('ask');
+      expect(result.reasonCode).toBe('unknown_tool_requires_approval');
+      expect(result.riskLevel).toBe('medium');
+    });
   });
 
   // -------------------------------------------------------------------------

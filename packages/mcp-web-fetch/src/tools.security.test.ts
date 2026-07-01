@@ -56,15 +56,15 @@ describe('mcp-web-fetch SSRF guards (no network)', () => {
   });
 
   it('exposes allowed_domains and blocked_domains schema parameters', () => {
-    expect(webFetchSchema.inputSchema.properties.allowed_domains).toEqual({
+    expect(webFetchSchema.inputSchema.properties.allowed_domains).toMatchObject({
       type: 'array',
       items: { type: 'string' },
-      description: '可选允许域名列表；映射到底层引擎 allowHosts，仅允许抓取这些主机名。',
+      minItems: 1,
     });
-    expect(webFetchSchema.inputSchema.properties.blocked_domains).toEqual({
+    expect(webFetchSchema.inputSchema.properties.blocked_domains).toMatchObject({
       type: 'array',
       items: { type: 'string' },
-      description: '可选阻止域名列表；映射到底层引擎 denyHosts，拒绝抓取这些主机名。',
+      minItems: 1,
     });
     expect(webFetchSchema.inputSchema.required).toEqual(['url']);
   });
@@ -105,6 +105,27 @@ describe('mcp-web-fetch SSRF guards (no network)', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toMatch(/denylist|blocked|denied/i);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('rejects an empty allowed_domains list before fetch', async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(() => {
+      throw new Error('network attempted');
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const result = await handleWebFetchTool('web_fetch', {
+        url: 'https://example.com/',
+        allowed_domains: [],
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/allowed_domains.*at least one domain/i);
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       globalThis.fetch = originalFetch;

@@ -41,11 +41,13 @@ export const webFetchSchema = {
       allowed_domains: {
         type: 'array',
         items: { type: 'string' },
+        minItems: 1,
         description: '可选允许域名列表；映射到底层引擎 allowHosts，仅允许抓取这些主机名。',
       },
       blocked_domains: {
         type: 'array',
         items: { type: 'string' },
+        minItems: 1,
         description: '可选阻止域名列表；映射到底层引擎 denyHosts，拒绝抓取这些主机名。',
       },
     },
@@ -66,12 +68,28 @@ export async function handleWebFetchTool(
   try {
     switch (toolName) {
       case 'web_fetch': {
+        const allowHosts = args.allowed_domains as string[] | undefined;
+        const denyHosts = args.blocked_domains as string[] | undefined;
+
+        if (Array.isArray(allowHosts) && allowHosts.length === 0) {
+          return {
+            success: false,
+            error: 'allowed_domains must contain at least one domain when provided',
+          };
+        }
+        if (Array.isArray(denyHosts) && denyHosts.length === 0) {
+          return {
+            success: false,
+            error: 'blocked_domains must contain at least one domain when provided',
+          };
+        }
+
         const data = await fetchUrl(args.url as string, {
           format: args.format as 'text' | 'html' | undefined,
           timeoutMs: args.timeoutMs as number | undefined,
           maxBytes: args.maxBytes as number | undefined,
-          allowHosts: args.allowed_domains as string[] | undefined,
-          denyHosts: args.blocked_domains as string[] | undefined,
+          allowHosts,
+          denyHosts,
         });
         return { success: true, data };
       }

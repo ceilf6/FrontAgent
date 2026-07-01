@@ -202,6 +202,24 @@ export function createOnPhaseError(
 
 // PLACEHOLDER_PHASE_COMPLETE
 
+function createMissingDependencyInstallCommand(
+  packageManager: string | undefined,
+  packages: string[],
+): string {
+  const packageList = packages.join(' ');
+
+  switch (packageManager) {
+    case 'pnpm':
+      return `pnpm add ${packageList}`;
+    case 'yarn':
+      return `yarn add ${packageList}`;
+    case 'bun':
+      return `bun add ${packageList}`;
+    default:
+      return `npm install ${packageList}`;
+  }
+}
+
 export function createOnPhaseComplete(
   deps: StepCallbackDeps,
   task: AgentTask,
@@ -267,13 +285,15 @@ export function createOnPhaseComplete(
         deps.debugLog(
           `[Agent] Found ${missingDeps.length} missing npm dependencies: ${missingDeps.join(', ')}`,
         );
+        const packageManager = deps.contextManager.getContext(task.id)?.collectedContext
+          .filesenseNavigation?.summary?.packageManager;
         errors.push({
           step: {
             stepId: 'install-missing-deps',
             description: `安装缺失的依赖: ${missingDeps.join(', ')}`,
             action: 'run_command' as const,
             tool: 'run_command',
-            params: { command: `npm install ${missingDeps.join(' ')}` },
+            params: { command: createMissingDependencyInstallCommand(packageManager, missingDeps) },
             dependencies: [],
             validation: [],
             status: 'failed' as const,

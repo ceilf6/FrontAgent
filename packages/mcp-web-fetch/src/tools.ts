@@ -38,6 +38,16 @@ export const webFetchSchema = {
         maximum: 5000000,
         description: '响应体最大字节数，超出后截断，默认 2000000，硬上限 5000000',
       },
+      allowed_domains: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '可选允许域名列表；映射到底层引擎 allowHosts，仅允许抓取这些主机名。',
+      },
+      blocked_domains: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '可选阻止域名列表；映射到底层引擎 denyHosts，拒绝抓取这些主机名。',
+      },
     },
     required: ['url'],
   },
@@ -60,6 +70,8 @@ export async function handleWebFetchTool(
           format: args.format as 'text' | 'html' | undefined,
           timeoutMs: args.timeoutMs as number | undefined,
           maxBytes: args.maxBytes as number | undefined,
+          allowHosts: args.allowed_domains as string[] | undefined,
+          denyHosts: args.blocked_domains as string[] | undefined,
         });
         return { success: true, data };
       }

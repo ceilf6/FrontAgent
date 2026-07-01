@@ -176,6 +176,36 @@ describe('Planner LLM-based plan generation', () => {
     expect(createStep).toBeDefined();
   });
 
+  it('preserves LLM-planned web_fetch actions and URL params', async () => {
+    const planner = createPlanner({ useLLM: true });
+    mockLLMGeneratePlan(planner, async () => ({
+      summary: '查阅官方文档',
+      steps: [
+        {
+          description: '抓取 API 文档',
+          action: 'web_fetch',
+          tool: 'web_fetch',
+          phase: '阶段1-分析',
+          params: defaultParams({ url: 'https://docs.example.com/api' }),
+          reasoning: '确认外部 API 行为',
+          needsCodeGeneration: false,
+        },
+      ],
+      risks: [],
+      alternatives: [],
+    }));
+
+    const result = await planner.plan(createTask({ type: 'create' }), emptyContext(), []);
+
+    const webFetchStep = result.plan!.steps.find((s) => s.action === 'web_fetch');
+    expect(result.needsMoreContext).toBe(false);
+    expect(webFetchStep).toMatchObject({
+      action: 'web_fetch',
+      tool: 'web_fetch',
+      params: expect.objectContaining({ url: 'https://docs.example.com/api' }),
+    });
+  });
+
   it('injects project instructions into the planning prompt context', async () => {
     const planner = createPlanner({ useLLM: true });
     const calls: Array<{ context: string }> = [];
@@ -341,6 +371,44 @@ describe('Planner step ordering and dependencies', () => {
     expect(readStep).toBeDefined();
     expect(searchStep).toBeDefined();
     expect(searchStep!.dependencies).not.toContain(readStep!.stepId);
+  });
+
+  it('allows web_fetch to share the read-only planning dependency policy', async () => {
+    const planner = createPlanner({ useLLM: true });
+    mockLLMGeneratePlan(planner, async () => ({
+      summary: '查阅资料并分析代码',
+      steps: [
+        {
+          description: '抓取官方文档',
+          action: 'web_fetch',
+          tool: 'web_fetch',
+          phase: '阶段1-分析',
+          params: defaultParams({ url: 'https://docs.example.com/api' }),
+          reasoning: '确认外部 API 行为',
+          needsCodeGeneration: false,
+        },
+        {
+          description: '搜索本地调用',
+          action: 'search_code',
+          tool: 'search_code',
+          phase: '阶段1-分析',
+          params: defaultParams({ query: 'createClient', maxResults: 10 }),
+          reasoning: '定位本地调用方式',
+          needsCodeGeneration: false,
+        },
+      ],
+      risks: [],
+      alternatives: [],
+    }));
+
+    const result = await planner.plan(createTask({ type: 'create' }), emptyContext(), []);
+
+    const steps = result.plan!.steps;
+    const webFetchStep = steps.find((s) => s.action === 'web_fetch');
+    const searchStep = steps.find((s) => s.action === 'search_code');
+    expect(webFetchStep).toBeDefined();
+    expect(searchStep).toBeDefined();
+    expect(searchStep!.dependencies).not.toContain(webFetchStep!.stepId);
   });
 
   it('generates correct dependencies for modify task (rule-based)', async () => {

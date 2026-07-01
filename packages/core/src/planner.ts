@@ -335,7 +335,7 @@ export class Planner {
   }
 
   private isReadOnlyPlanningAction(action: ExecutionStep['action']): boolean {
-    return ['read_file', 'search_code', 'list_directory', 'get_ast'].includes(action);
+    return ['read_file', 'search_code', 'list_directory', 'get_ast', 'web_fetch'].includes(action);
   }
 
   /**
@@ -355,6 +355,7 @@ export class Planner {
       browser_click: 'browser_click',
       browser_type: 'browser_type',
       browser_screenshot: 'browser_screenshot',
+      web_fetch: 'web_fetch',
     };
 
     return actionMap[action] ?? 'read_file';

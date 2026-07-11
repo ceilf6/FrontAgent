@@ -5,6 +5,7 @@
 </div>
 
 [![npm version](https://badge.fury.io/js/frontagent.svg)](https://www.npmjs.com/package/frontagent)
+[![npm total downloads](https://img.shields.io/npm/dt/frontagent)](https://www.npmjs.com/package/frontagent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org)
 
@@ -1296,6 +1297,19 @@ pnpm clean
 - [MuseAI](https://github.com/yejiming/MuseAI) - Local AI companion, text adventure, and interactive fiction app.
 - [RedBox](https://github.com/Jamailar/RedBox) - Local AI creation workspace for Xiaohongshu creators.
 - [1flowbase](https://github.com/taichuy/1flowbase) - Virtual model gateway for publishing multi-model workflows as OpenAI/Claude-compatible endpoints, with trace, token, latency, and cost visibility.
+
+## Download Stats (verifiable)
+
+<!-- npm-downloads:start -->
+**Cumulative npm downloads since 2026-01-14: 2447** (updated 2026-07-10, via GitHub Action)
+<!-- npm-downloads:end -->
+
+Verify it yourself against the public npm registry API:
+
+```bash
+# macOS:  date -u -v-1d +%F   |  Linux:  date -u -d yesterday +%F
+curl -s "https://api.npmjs.org/downloads/point/2026-01-14:$(date -u -v-1d +%F 2>/dev/null || date -u -d yesterday +%F)/frontagent" | jq
+```
 
 ## Contributing
 

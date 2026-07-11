@@ -72,6 +72,9 @@ for (const task of tasks) {
       llmBackend: backend,
       runLog: false,
       filterConsole: true,
+      // 评测工作区是 /tmp 下的隔离沙箱副本：覆写等 ask 级安全决策一律放行，
+      // 否则 balanced 模式下 bugfix/refactor 的文件覆写会被静默拒绝
+      onApprovalRequest: async () => true,
       ...ARM_OPTIONS[ARM],
       onEvent: (e) => {
         events[e.type] = (events[e.type] ?? 0) + 1;
@@ -86,6 +89,8 @@ for (const task of tasks) {
   const usageAfter = getUsageTally();
   const checkResults = runError ? [] : runChecks(task.checks, { workspace: ws, resultText });
   const pass = !runError && checkResults.length > 0 && checkResults.every((c) => c.ok);
+  const llmCalls = usageAfter.calls - usageBefore.calls;
+  const llmFailures = usageAfter.failures - usageBefore.failures;
   const record = {
     taskId: task.id,
     category: task.category,
@@ -97,13 +102,19 @@ for (const task of tasks) {
     checks: checkResults,
     events,
     elapsedMs: Math.round(performance.now() - t0),
-    llmCalls: usageAfter.calls - usageBefore.calls,
+    llmCalls,
+    llmFailures,
     inputTokens: usageAfter.inputTokens - usageBefore.inputTokens,
     outputTokens: usageAfter.outputTokens - usageBefore.outputTokens,
   };
   appendFileSync(OUT, `${JSON.stringify(record)}\n`);
   console.log(
-    `[${ARM}] ${task.id}: ${pass ? 'PASS' : 'FAIL'} (${record.elapsedMs}ms, ${record.llmCalls} calls, events=${JSON.stringify(events)})`,
+    `[${ARM}] ${task.id}: ${pass ? 'PASS' : 'FAIL'} (${record.elapsedMs}ms, ${llmCalls} calls, ${llmFailures} failures, events=${JSON.stringify(events)})`,
   );
+  // 后端一次成功调用都没有 = 环境坏了（登录态过期等），继续跑只会产出降级噪音
+  if (llmCalls === 0) {
+    console.error(`[${ARM}] ${task.id} 零成功 LLM 调用（失败 ${llmFailures} 次）——判定后端环境异常，中止本臂评测`);
+    process.exit(2);
+  }
 }
 console.log('done. total usage:', JSON.stringify(getUsageTally()));

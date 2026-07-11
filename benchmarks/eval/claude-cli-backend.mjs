@@ -3,9 +3,14 @@ import { spawn } from 'node:child_process';
 const MODEL = process.env.EVAL_MODEL ?? 'claude-haiku-4-5';
 const CALL_TIMEOUT_MS = Number(process.env.EVAL_LLM_TIMEOUT_MS ?? 180000);
 
-const tally = { calls: 0, inputTokens: 0, outputTokens: 0 };
+const tally = { calls: 0, failures: 0, inputTokens: 0, outputTokens: 0 };
 export function getUsageTally() {
   return { ...tally };
+}
+
+function recordFailure(error) {
+  tally.failures += 1;
+  console.error(`[claude-cli-backend] call failed (#${tally.failures}): ${String(error?.message ?? error).slice(0, 200)}`);
 }
 
 function renderPrompt(messages, system) {
@@ -25,7 +30,9 @@ function callClaude(prompt) {
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error('claude CLI timeout'));
+      const err = new Error('claude CLI timeout');
+      recordFailure(err);
+      reject(err);
     }, CALL_TIMEOUT_MS);
     child.stdout.on('data', (d) => {
       stdout += d;
@@ -35,20 +42,31 @@ function callClaude(prompt) {
     });
     child.on('error', (e) => {
       clearTimeout(timer);
+      recordFailure(e);
       reject(e);
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (code !== 0) return reject(new Error(`claude exit ${code}: ${stderr.slice(0, 300)}`));
+      if (code !== 0) {
+        const err = new Error(`claude exit ${code}: ${stderr.slice(0, 300)}`);
+        recordFailure(err);
+        return reject(err);
+      }
       try {
         const parsed = JSON.parse(stdout);
         tally.calls += 1;
         tally.inputTokens += parsed.usage?.input_tokens ?? 0;
         tally.outputTokens += parsed.usage?.output_tokens ?? 0;
-        if (parsed.is_error) return reject(new Error(`claude error result: ${String(parsed.result).slice(0, 300)}`));
+        if (parsed.is_error) {
+          const err = new Error(`claude error result: ${String(parsed.result).slice(0, 300)}`);
+          recordFailure(err);
+          return reject(err);
+        }
         resolvePromise(String(parsed.result ?? ''));
       } catch (e) {
-        reject(new Error(`bad CLI JSON: ${String(e)}; head=${stdout.slice(0, 200)}`));
+        const err = new Error(`bad CLI JSON: ${String(e)}; head=${stdout.slice(0, 200)}`);
+        recordFailure(err);
+        reject(err);
       }
     });
     child.stdin.end(prompt);

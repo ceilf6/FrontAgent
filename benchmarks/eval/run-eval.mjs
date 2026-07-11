@@ -47,9 +47,13 @@ function setupWorkspace(taskId) {
   return ws;
 }
 
-const tasks = JSON.parse(readFileSync(join(HERE, 'tasks.json'), 'utf8')).filter((t) =>
-  SCOPE === 'smoke' ? t.smoke : true,
-);
+// --tasks smoke|all|<taskId>（单任务用于诊断探针）
+const tasks = JSON.parse(readFileSync(join(HERE, 'tasks.json'), 'utf8')).filter((t) => {
+  if (SCOPE === 'smoke') return t.smoke;
+  if (SCOPE === 'all') return true;
+  return t.id === SCOPE;
+});
+if (tasks.length === 0) throw new Error(`--tasks ${SCOPE} 未匹配任何任务`);
 
 console.log(`arm=${ARM} scope=${SCOPE} tasks=${tasks.length} out=${OUT}`);
 const backend = createClaudeCliBackend();
@@ -61,6 +65,7 @@ for (const task of tasks) {
   const usageBefore = getUsageTally();
   let resultText = '';
   let agentSuccess = null;
+  let agentError = null;
   let validationCount = null;
   let runError = null;
   try {
@@ -72,6 +77,9 @@ for (const task of tasks) {
       llmBackend: backend,
       runLog: false,
       filterConsole: true,
+      // 外部 RAG 仓库（默认拉 ceilf6/Lab）与夹具无关：检索噪音混入 query 上下文
+      // 且消耗 token，评测两臂一律关闭
+      disableRag: true,
       // 评测工作区是 /tmp 下的隔离沙箱副本：覆写等 ask 级安全决策一律放行，
       // 否则 balanced 模式下 bugfix/refactor 的文件覆写会被静默拒绝
       onApprovalRequest: async () => true,
@@ -82,6 +90,7 @@ for (const task of tasks) {
     });
     resultText = result?.output ?? '';
     agentSuccess = result?.success ?? null;
+    agentError = result?.error ? String(result.error).slice(0, 300) : null;
     validationCount = result?.validations?.length ?? null;
   } catch (error) {
     runError = String(error).slice(0, 400);
@@ -97,8 +106,10 @@ for (const task of tasks) {
     arm: ARM,
     pass,
     agentSuccess,
+    agentError,
     validationCount,
     runError,
+    resultHead: resultText.slice(0, 200),
     checks: checkResults,
     events,
     elapsedMs: Math.round(performance.now() - t0),

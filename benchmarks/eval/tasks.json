@@ -6,8 +6,17 @@
     "task": "Button 组件接受哪些 props？逐个说明类型与用途。",
     "type": "query",
     "checks": [
-      { "kind": "result_contains", "pattern": "label" },
-      { "kind": "result_contains", "pattern": "onClick" }
+      {
+        "kind": "result_contains",
+        "pattern": "label"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "onClick"
+      }
+    ],
+    "files": [
+      "src/components/Button.tsx"
     ]
   },
   {
@@ -17,9 +26,18 @@
     "task": "列出 src 下的目录结构，说明每个目录的职责。",
     "type": "query",
     "checks": [
-      { "kind": "result_contains", "pattern": "components" },
-      { "kind": "result_contains", "pattern": "hooks" },
-      { "kind": "result_contains", "pattern": "utils" }
+      {
+        "kind": "result_contains",
+        "pattern": "components"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "hooks"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "utils"
+      }
     ]
   },
   {
@@ -29,8 +47,17 @@
     "task": "TodoList 组件如何渲染列表项？列表项的 key 用的是什么？",
     "type": "query",
     "checks": [
-      { "kind": "result_contains", "pattern": "key" },
-      { "kind": "result_contains", "pattern": "item" }
+      {
+        "kind": "result_contains",
+        "pattern": "key"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "item"
+      }
+    ],
+    "files": [
+      "src/components/TodoList.tsx"
     ]
   },
   {
@@ -40,8 +67,17 @@
     "task": "useToggle hook 返回什么？内部状态是怎么切换的？",
     "type": "query",
     "checks": [
-      { "kind": "result_contains", "pattern": "toggle" },
-      { "kind": "result_contains", "pattern": "useState" }
+      {
+        "kind": "result_contains",
+        "pattern": "toggle"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "useState"
+      }
+    ],
+    "files": [
+      "src/hooks/useToggle.ts"
     ]
   },
   {
@@ -51,8 +87,17 @@
     "task": "App 组件直接使用了哪些子组件？",
     "type": "query",
     "checks": [
-      { "kind": "result_contains", "pattern": "Button" },
-      { "kind": "result_contains", "pattern": "TodoList" }
+      {
+        "kind": "result_contains",
+        "pattern": "Button"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "TodoList"
+      }
+    ],
+    "files": [
+      "src/App.tsx"
     ]
   },
   {
@@ -62,8 +107,17 @@
     "task": "formatDate 函数的输入和输出分别是什么类型和格式？",
     "type": "query",
     "checks": [
-      { "kind": "result_contains", "pattern": "Date" },
-      { "kind": "result_contains", "pattern": "string|字符串" }
+      {
+        "kind": "result_contains",
+        "pattern": "Date"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "string|字符串"
+      }
+    ],
+    "files": [
+      "src/utils/formatDate.ts"
     ]
   },
   {
@@ -73,7 +127,13 @@
     "task": "这个项目的 tsconfig 开启了哪些编译选项？strict 开了吗？",
     "type": "query",
     "checks": [
-      { "kind": "result_contains", "pattern": "strict" }
+      {
+        "kind": "result_contains",
+        "pattern": "strict"
+      }
+    ],
+    "files": [
+      "tsconfig.json"
     ]
   },
   {
@@ -83,8 +143,17 @@
     "task": "clamp 函数是做什么的？三个参数分别是什么含义？",
     "type": "query",
     "checks": [
-      { "kind": "result_contains", "pattern": "min" },
-      { "kind": "result_contains", "pattern": "max" }
+      {
+        "kind": "result_contains",
+        "pattern": "min"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "max"
+      }
+    ],
+    "files": [
+      "src/utils/clamp.ts"
     ]
   },
   {
@@ -94,8 +163,14 @@
     "task": "项目里有哪些测试文件？分别测试什么？",
     "type": "query",
     "checks": [
-      { "kind": "result_contains", "pattern": "formatDate" },
-      { "kind": "result_contains", "pattern": "clamp" }
+      {
+        "kind": "result_contains",
+        "pattern": "formatDate"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "clamp"
+      }
     ]
   },
   {
@@ -105,8 +180,18 @@
     "task": "Button 组件是命名导出还是默认导出？App 呢？",
     "type": "query",
     "checks": [
-      { "kind": "result_contains", "pattern": "命名|named" },
-      { "kind": "result_contains", "pattern": "默认|default" }
+      {
+        "kind": "result_contains",
+        "pattern": "命名|named"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "默认|default"
+      }
+    ],
+    "files": [
+      "src/components/Button.tsx",
+      "src/App.tsx"
     ]
   },
   {
@@ -115,11 +200,22 @@
     "smoke": true,
     "task": "创建一个 useDebounce hook，接受 value 与 delayMs，返回防抖后的值，放在 src/hooks/useDebounce.ts。",
     "type": "create",
-    "files": ["src/hooks/useDebounce.ts"],
+    "files": [
+      "src/hooks/useDebounce.ts"
+    ],
     "checks": [
-      { "kind": "file_exists", "path": "src/hooks/useDebounce.ts" },
-      { "kind": "file_contains", "path": "src/hooks/useDebounce.ts", "pattern": "export function useDebounce" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_exists",
+        "path": "src/hooks/useDebounce.ts"
+      },
+      {
+        "kind": "file_contains",
+        "path": "src/hooks/useDebounce.ts",
+        "pattern": "export function useDebounce"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -128,11 +224,22 @@
     "smoke": false,
     "task": "创建一个 Card 组件（src/components/Card.tsx），接受 title 字符串与 children，渲染标题和内容区。",
     "type": "create",
-    "files": ["src/components/Card.tsx"],
+    "files": [
+      "src/components/Card.tsx"
+    ],
     "checks": [
-      { "kind": "file_exists", "path": "src/components/Card.tsx" },
-      { "kind": "file_contains", "path": "src/components/Card.tsx", "pattern": "export function Card" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_exists",
+        "path": "src/components/Card.tsx"
+      },
+      {
+        "kind": "file_contains",
+        "path": "src/components/Card.tsx",
+        "pattern": "export function Card"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -141,11 +248,22 @@
     "smoke": false,
     "task": "创建纯函数 capitalize（src/utils/capitalize.ts）：首字母大写、其余不变，空串原样返回。",
     "type": "create",
-    "files": ["src/utils/capitalize.ts"],
+    "files": [
+      "src/utils/capitalize.ts"
+    ],
     "checks": [
-      { "kind": "file_exists", "path": "src/utils/capitalize.ts" },
-      { "kind": "file_contains", "path": "src/utils/capitalize.ts", "pattern": "export function capitalize" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_exists",
+        "path": "src/utils/capitalize.ts"
+      },
+      {
+        "kind": "file_contains",
+        "path": "src/utils/capitalize.ts",
+        "pattern": "export function capitalize"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -154,11 +272,22 @@
     "smoke": false,
     "task": "创建 useLocalStorage hook（src/hooks/useLocalStorage.ts）：读写 localStorage 并保持 state 同步，值用 JSON 序列化。",
     "type": "create",
-    "files": ["src/hooks/useLocalStorage.ts"],
+    "files": [
+      "src/hooks/useLocalStorage.ts"
+    ],
     "checks": [
-      { "kind": "file_exists", "path": "src/hooks/useLocalStorage.ts" },
-      { "kind": "file_contains", "path": "src/hooks/useLocalStorage.ts", "pattern": "export function useLocalStorage" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_exists",
+        "path": "src/hooks/useLocalStorage.ts"
+      },
+      {
+        "kind": "file_contains",
+        "path": "src/hooks/useLocalStorage.ts",
+        "pattern": "export function useLocalStorage"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -167,11 +296,22 @@
     "smoke": false,
     "task": "创建 Badge 组件（src/components/Badge.tsx）：variant 属性为 'info' | 'success' | 'warning' 联合类型，渲染带对应 className 的 span。",
     "type": "create",
-    "files": ["src/components/Badge.tsx"],
+    "files": [
+      "src/components/Badge.tsx"
+    ],
     "checks": [
-      { "kind": "file_exists", "path": "src/components/Badge.tsx" },
-      { "kind": "file_contains", "path": "src/components/Badge.tsx", "pattern": "variant" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_exists",
+        "path": "src/components/Badge.tsx"
+      },
+      {
+        "kind": "file_contains",
+        "path": "src/components/Badge.tsx",
+        "pattern": "variant"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -180,11 +320,22 @@
     "smoke": false,
     "task": "创建纯函数 formatCurrency（src/utils/formatCurrency.ts）：数字金额格式化为带千分位、两位小数的字符串，如 1234.5 → \"1,234.50\"。",
     "type": "create",
-    "files": ["src/utils/formatCurrency.ts"],
+    "files": [
+      "src/utils/formatCurrency.ts"
+    ],
     "checks": [
-      { "kind": "file_exists", "path": "src/utils/formatCurrency.ts" },
-      { "kind": "file_contains", "path": "src/utils/formatCurrency.ts", "pattern": "export function formatCurrency" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_exists",
+        "path": "src/utils/formatCurrency.ts"
+      },
+      {
+        "kind": "file_contains",
+        "path": "src/utils/formatCurrency.ts",
+        "pattern": "export function formatCurrency"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -193,11 +344,22 @@
     "smoke": false,
     "task": "创建 Spinner 加载指示器组件（src/components/Spinner.tsx），可选 size 属性（'small' | 'large'，默认 'small'）。",
     "type": "create",
-    "files": ["src/components/Spinner.tsx"],
+    "files": [
+      "src/components/Spinner.tsx"
+    ],
     "checks": [
-      { "kind": "file_exists", "path": "src/components/Spinner.tsx" },
-      { "kind": "file_contains", "path": "src/components/Spinner.tsx", "pattern": "export function Spinner" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_exists",
+        "path": "src/components/Spinner.tsx"
+      },
+      {
+        "kind": "file_contains",
+        "path": "src/components/Spinner.tsx",
+        "pattern": "export function Spinner"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -206,11 +368,22 @@
     "smoke": false,
     "task": "创建 useInterval hook（src/hooks/useInterval.ts）：按 delayMs 周期执行回调，组件卸载时清理定时器。",
     "type": "create",
-    "files": ["src/hooks/useInterval.ts"],
+    "files": [
+      "src/hooks/useInterval.ts"
+    ],
     "checks": [
-      { "kind": "file_exists", "path": "src/hooks/useInterval.ts" },
-      { "kind": "file_contains", "path": "src/hooks/useInterval.ts", "pattern": "useEffect" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_exists",
+        "path": "src/hooks/useInterval.ts"
+      },
+      {
+        "kind": "file_contains",
+        "path": "src/hooks/useInterval.ts",
+        "pattern": "useEffect"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -219,11 +392,22 @@
     "smoke": false,
     "task": "创建纯函数 slugify（src/utils/slugify.ts）：字符串转 URL slug——小写、空白变连字符、去掉非字母数字连字符字符。",
     "type": "create",
-    "files": ["src/utils/slugify.ts"],
+    "files": [
+      "src/utils/slugify.ts"
+    ],
     "checks": [
-      { "kind": "file_exists", "path": "src/utils/slugify.ts" },
-      { "kind": "file_contains", "path": "src/utils/slugify.ts", "pattern": "export function slugify" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_exists",
+        "path": "src/utils/slugify.ts"
+      },
+      {
+        "kind": "file_contains",
+        "path": "src/utils/slugify.ts",
+        "pattern": "export function slugify"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -232,11 +416,22 @@
     "smoke": true,
     "task": "创建受控 Checkbox 组件（src/components/Checkbox.tsx）：checked 布尔与 onChange 回调，带 label 文本。",
     "type": "create",
-    "files": ["src/components/Checkbox.tsx"],
+    "files": [
+      "src/components/Checkbox.tsx"
+    ],
     "checks": [
-      { "kind": "file_exists", "path": "src/components/Checkbox.tsx" },
-      { "kind": "file_contains", "path": "src/components/Checkbox.tsx", "pattern": "onChange" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_exists",
+        "path": "src/components/Checkbox.tsx"
+      },
+      {
+        "kind": "file_contains",
+        "path": "src/components/Checkbox.tsx",
+        "pattern": "onChange"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -245,10 +440,22 @@
     "smoke": true,
     "task": "src/utils/formatDate.ts 输出的月份不对（2026-07-11 被格式化成 2026-06-11），修复它并保证现有测试通过。",
     "type": "modify",
-    "files": ["src/utils/formatDate.ts"],
+    "files": [
+      "src/utils/formatDate.ts"
+    ],
     "checks": [
-      { "kind": "cmd", "argv": ["npx", "vitest", "run", "src/utils/formatDate.test.ts"] },
-      { "kind": "typecheck" }
+      {
+        "kind": "cmd",
+        "argv": [
+          "npx",
+          "vitest",
+          "run",
+          "src/utils/formatDate.test.ts"
+        ]
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -257,10 +464,22 @@
     "smoke": false,
     "task": "src/utils/clamp.ts 在值大于上界时返回了错误的边界，修复并保证现有测试通过。",
     "type": "modify",
-    "files": ["src/utils/clamp.ts"],
+    "files": [
+      "src/utils/clamp.ts"
+    ],
     "checks": [
-      { "kind": "cmd", "argv": ["npx", "vitest", "run", "src/utils/clamp.test.ts"] },
-      { "kind": "typecheck" }
+      {
+        "kind": "cmd",
+        "argv": [
+          "npx",
+          "vitest",
+          "run",
+          "src/utils/clamp.test.ts"
+        ]
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -269,10 +488,22 @@
     "smoke": false,
     "task": "src/utils/pluralize.ts 对单数（count 为 1）也加了 s，修复并保证现有测试通过。",
     "type": "modify",
-    "files": ["src/utils/pluralize.ts"],
+    "files": [
+      "src/utils/pluralize.ts"
+    ],
     "checks": [
-      { "kind": "cmd", "argv": ["npx", "vitest", "run", "src/utils/pluralize.test.ts"] },
-      { "kind": "typecheck" }
+      {
+        "kind": "cmd",
+        "argv": [
+          "npx",
+          "vitest",
+          "run",
+          "src/utils/pluralize.test.ts"
+        ]
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -281,10 +512,22 @@
     "smoke": false,
     "task": "src/utils/truncate.ts 截断长度差一位（maxLength=3 时留了 4 个字符），修复并保证现有测试通过。",
     "type": "modify",
-    "files": ["src/utils/truncate.ts"],
+    "files": [
+      "src/utils/truncate.ts"
+    ],
     "checks": [
-      { "kind": "cmd", "argv": ["npx", "vitest", "run", "src/utils/truncate.test.ts"] },
-      { "kind": "typecheck" }
+      {
+        "kind": "cmd",
+        "argv": [
+          "npx",
+          "vitest",
+          "run",
+          "src/utils/truncate.test.ts"
+        ]
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -293,10 +536,22 @@
     "smoke": false,
     "task": "src/utils/parseQuery.ts 没有对 URL 编码的值解码（hello%20world 应变为 hello world），修复并保证现有测试通过。",
     "type": "modify",
-    "files": ["src/utils/parseQuery.ts"],
+    "files": [
+      "src/utils/parseQuery.ts"
+    ],
     "checks": [
-      { "kind": "cmd", "argv": ["npx", "vitest", "run", "src/utils/parseQuery.test.ts"] },
-      { "kind": "typecheck" }
+      {
+        "kind": "cmd",
+        "argv": [
+          "npx",
+          "vitest",
+          "run",
+          "src/utils/parseQuery.test.ts"
+        ]
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -305,10 +560,18 @@
     "smoke": true,
     "task": "TodoList 在 items 为空时应渲染一行「暂无待办」提示而不是空 ul，重构组件实现。",
     "type": "modify",
-    "files": ["src/components/TodoList.tsx"],
+    "files": [
+      "src/components/TodoList.tsx"
+    ],
     "checks": [
-      { "kind": "file_contains", "path": "src/components/TodoList.tsx", "pattern": "暂无待办" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_contains",
+        "path": "src/components/TodoList.tsx",
+        "pattern": "暂无待办"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -317,10 +580,18 @@
     "smoke": false,
     "task": "给 Button 组件增加可选的 disabled 布尔属性并透传到 button 元素。",
     "type": "modify",
-    "files": ["src/components/Button.tsx"],
+    "files": [
+      "src/components/Button.tsx"
+    ],
     "checks": [
-      { "kind": "file_contains", "path": "src/components/Button.tsx", "pattern": "disabled" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_contains",
+        "path": "src/components/Button.tsx",
+        "pattern": "disabled"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -329,11 +600,23 @@
     "smoke": false,
     "task": "把 TodoList 里的列表项抽成独立的 ListItem 组件（src/components/ListItem.tsx），TodoList 改为使用它。",
     "type": "modify",
-    "files": ["src/components/TodoList.tsx", "src/components/ListItem.tsx"],
+    "files": [
+      "src/components/TodoList.tsx",
+      "src/components/ListItem.tsx"
+    ],
     "checks": [
-      { "kind": "file_exists", "path": "src/components/ListItem.tsx" },
-      { "kind": "file_contains", "path": "src/components/TodoList.tsx", "pattern": "ListItem" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_exists",
+        "path": "src/components/ListItem.tsx"
+      },
+      {
+        "kind": "file_contains",
+        "path": "src/components/TodoList.tsx",
+        "pattern": "ListItem"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -342,11 +625,23 @@
     "smoke": false,
     "task": "App 组件的 h1 文案改为可配置的 title 属性，默认值保持 \"Eval Fixture\"。",
     "type": "modify",
-    "files": ["src/App.tsx"],
+    "files": [
+      "src/App.tsx"
+    ],
     "checks": [
-      { "kind": "file_contains", "path": "src/App.tsx", "pattern": "title" },
-      { "kind": "file_contains", "path": "src/App.tsx", "pattern": "Eval Fixture" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_contains",
+        "path": "src/App.tsx",
+        "pattern": "title"
+      },
+      {
+        "kind": "file_contains",
+        "path": "src/App.tsx",
+        "pattern": "Eval Fixture"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   },
   {
@@ -355,10 +650,18 @@
     "smoke": false,
     "task": "用 React.memo 包裹 Button 组件的导出，避免父组件重渲染时的无谓渲染。",
     "type": "modify",
-    "files": ["src/components/Button.tsx"],
+    "files": [
+      "src/components/Button.tsx"
+    ],
     "checks": [
-      { "kind": "file_contains", "path": "src/components/Button.tsx", "pattern": "memo" },
-      { "kind": "typecheck" }
+      {
+        "kind": "file_contains",
+        "path": "src/components/Button.tsx",
+        "pattern": "memo"
+      },
+      {
+        "kind": "typecheck"
+      }
     ]
   }
 ]

@@ -1,6 +1,6 @@
 // 架构消融评测编排器。
 // 用法：node benchmarks/eval/run-eval.mjs --arm full|ablation [--tasks smoke|all] [--out benchmarks/eval/out]
-import { appendFileSync, cpSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
@@ -48,12 +48,21 @@ function setupWorkspace(taskId) {
 }
 
 // --tasks smoke|all|<taskId>（单任务用于诊断探针）
-const tasks = JSON.parse(readFileSync(join(HERE, 'tasks.json'), 'utf8')).filter((t) => {
+const scoped = JSON.parse(readFileSync(join(HERE, 'tasks.json'), 'utf8')).filter((t) => {
   if (SCOPE === 'smoke') return t.smoke;
   if (SCOPE === 'all') return true;
   return t.id === SCOPE;
 });
-if (tasks.length === 0) throw new Error(`--tasks ${SCOPE} 未匹配任何任务`);
+if (scoped.length === 0) throw new Error(`--tasks ${SCOPE} 未匹配任何任务`);
+
+// 断点续跑：OUT 里已有记录的任务跳过（中断后重新执行同一命令即接续）
+const done = new Set(
+  existsSync(OUT)
+    ? readFileSync(OUT, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).taskId)
+    : [],
+);
+const tasks = scoped.filter((t) => !done.has(t.id));
+if (done.size > 0) console.log(`resume: 跳过已完成 ${done.size} 条（${[...done].join(', ')}）`);
 
 console.log(`arm=${ARM} scope=${SCOPE} tasks=${tasks.length} out=${OUT}`);
 const backend = createClaudeCliBackend();

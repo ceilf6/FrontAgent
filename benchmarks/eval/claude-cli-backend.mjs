@@ -1,4 +1,9 @@
 import { spawn } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
+
+// 空目录作为 CLI 工作目录：阻断 Claude Code 对宿主仓库 CLAUDE.md/项目上下文的注入
+const CLI_CWD = '/tmp/frontagent-eval/claude-cli-cwd';
+mkdirSync(CLI_CWD, { recursive: true });
 
 const MODEL = process.env.EVAL_MODEL ?? 'claude-haiku-4-5';
 const CALL_TIMEOUT_MS = Number(process.env.EVAL_LLM_TIMEOUT_MS ?? 180000);
@@ -24,8 +29,22 @@ function renderPrompt(messages, system) {
 
 function callClaude(prompt) {
   return new Promise((resolvePromise, reject) => {
-    const args = ['-p', '--model', MODEL, '--output-format', 'json', '--max-turns', '1'];
-    const child = spawn('claude', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    // 纯文本生成后端：禁用全部工具，否则「列目录」类 prompt 会诱发 tool_use
+    // 并在 --max-turns 1 下报 error_max_turns
+    const args = [
+      '-p',
+      '--model',
+      MODEL,
+      '--output-format',
+      'json',
+      '--max-turns',
+      '1',
+      '--disallowedTools',
+      '*',
+      '--system-prompt',
+      '你是一次性文本生成后端：只依据提示词中给出的信息直接作答，没有任何工具可用，不要尝试读取文件或执行命令。',
+    ];
+    const child = spawn('claude', args, { stdio: ['pipe', 'pipe', 'pipe'], cwd: CLI_CWD });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
@@ -48,7 +67,9 @@ function callClaude(prompt) {
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code !== 0) {
-        const err = new Error(`claude exit ${code}: ${stderr.slice(0, 300)}`);
+        const err = new Error(
+          `claude exit ${code}: stderr=${stderr.slice(0, 300)} stdoutHead=${stdout.slice(0, 200)} promptChars=${prompt.length}`,
+        );
         recordFailure(err);
         return reject(err);
       }

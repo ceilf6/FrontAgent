@@ -1297,6 +1297,19 @@ pnpm clean
 - [RedBox](https://github.com/Jamailar/RedBox) - Local AI creation workspace for Xiaohongshu creators.
 - [1flowbase](https://github.com/taichuy/1flowbase) - Virtual model gateway for publishing multi-model workflows as OpenAI/Claude-compatible endpoints, with trace, token, latency, and cost visibility.
 
+## Ablation Benchmark (reproducible)
+
+A frozen 30-task benchmark measures whether SDD constraints and the hallucination guard actually improve first-pass success. It runs on an isolated fixture project with machine-checkable acceptance (`tsc --noEmit`, `vitest`, file assertions), two arms, and resume-on-interrupt.
+
+```bash
+pnpm build
+node benchmarks/eval/run-eval.mjs --arm full --tasks all       # SDD on
+node benchmarks/eval/run-eval.mjs --arm ablation --tasks all   # SDD off
+node benchmarks/eval/report.mjs benchmarks/eval/out
+```
+
+Latest results: [`benchmarks/results/`](benchmarks/results/). **The current findings are negative and actionable**: SDD showed no measurable effect on first-pass rate, and the hallucination guard recorded zero interceptions while syntactically invalid files still landed on disk. Three root causes are documented in the report and tracked as issues.
+
 ## Contributing
 
 Welcome to contribute! Submit issues, bugs, or suggestions:

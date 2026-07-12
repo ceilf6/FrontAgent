@@ -548,3 +548,14 @@ test('agent prompts describe the OSS Harness review loop', () => {
     assert.match(prompt, /maintainers decide merge readiness/u);
   }
 });
+
+test('README exposes the verifiable npm downloads counter with its marker block', () => {
+  const readme = readFileSync('README.md', 'utf8');
+
+  assert.match(readme, /## Download Stats \(verifiable\)/u);
+  // Marker comments are the GitHub Action's substitution anchors — do not rename.
+  assert.match(readme, /<!-- npm-downloads:start -->/u);
+  assert.match(readme, /<!-- npm-downloads:end -->/u);
+  // The reader can verify the number against the public registry API.
+  assert.match(readme, /api\.npmjs\.org\/downloads\/point/u);
+});

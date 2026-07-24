@@ -217,4 +217,47 @@ describe('HallucinationGuard', () => {
     const result = await guard.validateCode('{ invalid json', 'json');
     expect(result.pass).toBe(false);
   });
+
+  it('honors disabled file existence checks on the fast path', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabledChecks: {
+        fileExistence: false,
+        syntaxValidity: false,
+        importValidity: false,
+        sddCompliance: false,
+      },
+    });
+
+    const result = await guard.validateFilePath('ghost.ts', true);
+    expect(result).toEqual(
+      expect.objectContaining({
+        pass: true,
+        type: 'file_existence',
+      }),
+    );
+  });
+
+  it('honors disabled syntax and import checks on the fast path', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabledChecks: {
+        fileExistence: false,
+        syntaxValidity: false,
+        importValidity: false,
+        sddCompliance: false,
+      },
+    });
+
+    const result = await guard.validateCode(
+      "import { missing } from './missing';\nexport const broken = {",
+      'typescript',
+      'src/broken.ts',
+    );
+    expect(result).toEqual({
+      pass: true,
+      results: [],
+      blockedBy: undefined,
+    });
+  });
 });

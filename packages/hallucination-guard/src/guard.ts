@@ -146,6 +146,16 @@ export class HallucinationGuard {
    * 快速验证文件路径
    */
   async validateFilePath(path: string, shouldExist = true): Promise<HallucinationCheckResult> {
+    if (!this.enabledChecks.fileExistence) {
+      return {
+        pass: true,
+        type: 'file_existence',
+        severity: 'info',
+        message: 'File existence check is disabled',
+        details: { path, shouldExist },
+      };
+    }
+
     return checkFileExistence({
       path,
       projectRoot: this.config.projectRoot,
@@ -164,11 +174,17 @@ export class HallucinationGuard {
     const results: HallucinationCheckResult[] = [];
 
     // 语法检查
-    const syntaxCheck = await checkSyntaxValidity({ code, language, filePath });
-    results.push(syntaxCheck);
+    if (this.enabledChecks.syntaxValidity) {
+      const syntaxCheck = await checkSyntaxValidity({ code, language, filePath });
+      results.push(syntaxCheck);
+    }
 
     // 导入检查（仅 TS/JS）
-    if ((language === 'typescript' || language === 'javascript') && filePath) {
+    if (
+      this.enabledChecks.importValidity &&
+      (language === 'typescript' || language === 'javascript') &&
+      filePath
+    ) {
       const importChecks = await checkAllImports(code, filePath, this.config.projectRoot);
       results.push(...importChecks);
     }

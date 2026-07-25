@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **mcp-web-fetch**: Exposed optional `allowed_domains` and `blocked_domains` on the `web_fetch` MCP tool schema, mapped to the engine's existing `allowHosts`/`denyHosts` host filters. The agent can now pass domain restrictions aligned with Anthropic web fetch semantics, enabling least-privilege fetches without changing SSRF defaults.
+
 ## [2.1.1] - 2026-06-09
 
 ### Changed

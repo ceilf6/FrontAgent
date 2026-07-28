@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **mcp-web-fetch**: Exposed optional `allowed_domains` and `blocked_domains` on the `web_fetch` MCP tool schema, mapped to the engine's existing `allowHosts`/`denyHosts` host filters. The agent can now pass domain restrictions aligned with Anthropic web fetch semantics, enabling least-privilege fetches without changing SSRF defaults.
+- **mcp-web-fetch**: Exposed optional `allowed_domains` and `blocked_domains` on the `web_fetch` MCP tool schema, mapped to the engine's existing `allowHosts`/`denyHosts` host filters, and threaded them through the planner's `STEP_PARAMS_SCHEMA` so the agent can actually pass domain restrictions end-to-end (previously stripped before reaching the handler). Matching is by exact hostname (subdomains must be listed individually; empty arrays disable the filter). Enables least-privilege fetches without changing SSRF defaults.
 
 ## [2.1.1] - 2026-06-09
 

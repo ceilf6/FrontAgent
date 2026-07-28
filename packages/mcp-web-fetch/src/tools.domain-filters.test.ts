@@ -10,7 +10,7 @@ describe('mcp-web-fetch domain filters (no network)', () => {
     expect((props.blocked_domains as { type: string }).type).toBe('array');
   });
 
-  it('blocked_domains rejects the listed host', async () => {
+  it('blocked_domains rejects the listed host (exact match)', async () => {
     const result = await handleWebFetchTool('web_fetch', {
       url: 'https://example.com/',
       blocked_domains: ['example.com'],
@@ -30,12 +30,29 @@ describe('mcp-web-fetch domain filters (no network)', () => {
     expect(result.error).toMatch(/not in allow list/i);
   });
 
-  it('omitting both filters preserves existing behavior (SSRF guard still applies)', async () => {
+  it('empty arrays disable the filters instead of denying all (SSRF guard still applies)', async () => {
     const result = await handleWebFetchTool('web_fetch', {
       url: 'http://127.0.0.1/',
+      allowed_domains: [],
+      blocked_domains: [],
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/private|blocked|loopback|safety|denied/i);
+    // Not "denied"/"not in allow list" — empty arrays must not turn into a deny-all.
+    expect(result.error).not.toMatch(/denied|not in allow list/i);
+    expect(result.error).toMatch(/private|blocked|loopback|safety/i);
+  });
+
+  it('non-array filter input is normalized away instead of crashing the engine', async () => {
+    const result = await handleWebFetchTool('web_fetch', {
+      url: 'http://127.0.0.1/',
+      // A bare string is a plausible model mistake; must not throw ".some is not a function".
+      allowed_domains: 'example.com',
+      blocked_domains: 42,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).not.toMatch(/is not a function|\.some/i);
+    expect(result.error).toMatch(/private|blocked|loopback|safety/i);
   });
 });

@@ -5,6 +5,7 @@
 </div>
 
 [![npm version](https://badge.fury.io/js/frontagent.svg)](https://www.npmjs.com/package/frontagent)
+[![npm total downloads](https://img.shields.io/npm/dt/frontagent)](https://www.npmjs.com/package/frontagent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org)
 
@@ -1309,6 +1310,19 @@ node benchmarks/eval/report.mjs benchmarks/eval/out
 ```
 
 Latest results: [`benchmarks/results/`](benchmarks/results/). **The current findings are negative and actionable**: SDD showed no measurable effect on first-pass rate, and the hallucination guard recorded zero interceptions while syntactically invalid files still landed on disk. Three root causes are documented in the report and tracked as issues.
+
+## Download Stats (verifiable)
+
+<!-- npm-downloads:start -->
+**Cumulative npm downloads since 2026-01-14: 2447** (updated 2026-07-10, via GitHub Action)
+<!-- npm-downloads:end -->
+
+Verify it yourself against the public npm registry API:
+
+```bash
+# macOS:  date -u -v-1d +%F   |  Linux:  date -u -d yesterday +%F
+curl -s "https://api.npmjs.org/downloads/point/2026-01-14:$(date -u -v-1d +%F 2>/dev/null || date -u -d yesterday +%F)/frontagent" | jq
+```
 
 ## Contributing
 

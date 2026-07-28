@@ -549,6 +549,20 @@ test('agent prompts describe the OSS Harness review loop', () => {
   }
 });
 
+test('README documents the reproducible ablation benchmark and its negative findings', () => {
+  const readme = readFileSync('README.md', 'utf8');
+
+  // The benchmark is discoverable and reproducible from the README.
+  assert.match(readme, /## Ablation Benchmark \(reproducible\)/u);
+  assert.match(readme, /benchmarks\/eval\/run-eval\.mjs --arm full/u);
+  assert.match(readme, /benchmarks\/eval\/run-eval\.mjs --arm ablation/u);
+  assert.match(readme, /benchmarks\/eval\/report\.mjs/u);
+
+  // Findings are stated honestly rather than advertised as a win.
+  assert.match(readme, /negative and actionable/u);
+  assert.match(readme, /zero interceptions/u);
+});
+
 test('README exposes the verifiable npm downloads counter with its marker block', () => {
   const readme = readFileSync('README.md', 'utf8');
 

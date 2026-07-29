@@ -35,13 +35,13 @@ const STEP_PARAMS_SCHEMA = z
     changeDescription: z.string().describe('要做的修改描述（不适用时填空字符串）'),
     allowed_domains: z
       .array(z.string())
-      .optional()
+      .nullish()
       .describe(
         '可选域名白名单，仅 web_fetch 适用，其他动作留空数组或省略。精确主机名匹配，子域需逐条列出；空数组视为不启用',
       ),
     blocked_domains: z
       .array(z.string())
-      .optional()
+      .nullish()
       .describe(
         '可选域名黑名单，仅 web_fetch 适用，其他动作留空数组或省略。精确主机名匹配，优先级高于 allowed_domains；空数组视为不启用',
       ),
@@ -137,11 +137,11 @@ export const ErrorRecoveryPlanSchema = z.object({
             changeDescription: z.string().describe('要做的修改描述（不适用时填空字符串）'),
             allowed_domains: z
               .array(z.string())
-              .optional()
+              .nullish()
               .describe('可选域名白名单，仅 web_fetch 适用，可省略'),
             blocked_domains: z
               .array(z.string())
-              .optional()
+              .nullish()
               .describe('可选域名黑名单，仅 web_fetch 适用，可省略'),
           })
           .describe('工具参数'),

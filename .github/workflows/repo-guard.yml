@@ -16,20 +16,31 @@ permissions:
 
 jobs:
   guard:
+    # 除仓库成员外,显式加白的触发人(NanluQingshi / HaveNiceDa)也可触发评审,
+    # 含他们从 fork 提交的 PR;fork checkout 仅作为只读评审数据,不执行其代码。
     if: >
       github.actor != 'dependabot[bot]' &&
       (
         (
           github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository
+          (
+            github.event.pull_request.head.repo.full_name == github.repository ||
+            contains(fromJSON('["NanluQingshi","HaveNiceDa"]'), github.event.pull_request.user.login)
+          )
         ) ||
         (
           github.event_name == 'issues' &&
-          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+          (
+            contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association) ||
+            contains(fromJSON('["NanluQingshi","HaveNiceDa"]'), github.event.issue.user.login)
+          )
         ) ||
         (
           github.event_name == 'issue_comment' &&
-          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+          (
+            contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) ||
+            contains(fromJSON('["NanluQingshi","HaveNiceDa"]'), github.event.comment.user.login)
+          )
         )
       )
     # REPO_GUARD_RUNNER 指向自托管 runner(如 repo-guard-claude)时,

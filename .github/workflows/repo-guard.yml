@@ -1,7 +1,11 @@
 name: Repo Guard
 
+# PR 用 pull_request_target 而非 pull_request:白名单里的外部贡献者从 fork 提 PR 时,
+# pull_request 会卡在首次贡献者批准、且只发只读 token(评审无法发布)。
+# target 事件安全的前提:本 workflow 从不执行 PR 代码——运行时来自 ceilf6/repo-guard@main,
+# checkout 的 PR head(固定 sha)仅作只读评审数据,且 job 级 if 门禁来自 base 分支、PR 改不了。
 on:
-  pull_request:
+  pull_request_target:
     branches: [develop]
     types: [opened, synchronize, reopened, ready_for_review]
   issues:
@@ -22,7 +26,7 @@ jobs:
       github.actor != 'dependabot[bot]' &&
       (
         (
-          github.event_name == 'pull_request' &&
+          github.event_name == 'pull_request_target' &&
           (
             github.event.pull_request.head.repo.full_name == github.repository ||
             contains(fromJSON('["NanluQingshi","HaveNiceDa"]'), github.event.pull_request.user.login)
@@ -50,9 +54,9 @@ jobs:
     steps:
       # PR 评审的工作目录:checkout 即评审数据,凭据不落盘。
       - uses: actions/checkout@v4
-        if: github.event_name == 'pull_request' || (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+        if: github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && github.event.issue.pull_request)
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || format('refs/pull/{0}/head', github.event.issue.number) }}
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || format('refs/pull/{0}/head', github.event.issue.number) }}
           persist-credentials: false
       - uses: ceilf6/repo-guard@main
         with:

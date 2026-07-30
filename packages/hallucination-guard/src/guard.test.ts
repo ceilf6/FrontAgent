@@ -260,4 +260,47 @@ describe('HallucinationGuard', () => {
       blockedBy: undefined,
     });
   });
+
+  it('still blocks paths outside project root when fileExistence is disabled', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabledChecks: {
+        fileExistence: false,
+        syntaxValidity: false,
+        importValidity: false,
+        sddCompliance: false,
+      },
+    });
+
+    const result = await guard.validateFilePath('../outside.ts', true);
+    expect(result.pass).toBe(false);
+    expect(result.severity).toBe('block');
+    expect(result.message).toContain('outside project root');
+  });
+
+  it('still runs import checks when only syntaxValidity is disabled', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabledChecks: { syntaxValidity: false },
+    });
+
+    const result = await guard.validateCode(
+      "import { missing } from './missing';\nexport const ok = 1;",
+      'typescript',
+      'src/ok.ts',
+    );
+    expect(result.pass).toBe(false);
+    expect(result.results.some((r) => r.type === 'import_validity' && !r.pass)).toBe(true);
+  });
+
+  it('still runs syntax checks when only importValidity is disabled', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabledChecks: { importValidity: false },
+    });
+
+    const result = await guard.validateCode('export const broken = {', 'typescript', 'src/x.ts');
+    expect(result.pass).toBe(false);
+    expect(result.results.some((r) => r.type === 'syntax_validity' && !r.pass)).toBe(true);
+  });
 });

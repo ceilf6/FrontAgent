@@ -3,6 +3,7 @@
  * 整合所有检查，验证 Agent 输出
  */
 
+import { resolve } from 'node:path';
 import type { AgentAction } from '@frontagent/sdd';
 import type {
   ActionType,
@@ -12,6 +13,7 @@ import type {
 } from '@frontagent/shared';
 import { checkFileExistence } from './checks/file-existence.js';
 import { checkAllImports, extractImports } from './checks/import-validity.js';
+import { isInsidePath } from './checks/path-containment.js';
 import { checkSDDCompliance } from './checks/sdd-compliance.js';
 import { checkSyntaxValidity } from './checks/syntax-validity.js';
 
@@ -147,6 +149,17 @@ export class HallucinationGuard {
    */
   async validateFilePath(path: string, shouldExist = true): Promise<HallucinationCheckResult> {
     if (!this.enabledChecks.fileExistence) {
+      // 包含性判断是安全边界而非幻觉检查，禁用 fileExistence 时仍需生效
+      const resolvedRoot = resolve(this.config.projectRoot);
+      if (!isInsidePath(resolve(resolvedRoot, path), resolvedRoot)) {
+        return {
+          pass: false,
+          type: 'file_existence',
+          severity: 'block',
+          message: `Security violation: Path "${path}" is outside project root`,
+          details: { path, projectRoot: this.config.projectRoot },
+        };
+      }
       return {
         pass: true,
         type: 'file_existence',

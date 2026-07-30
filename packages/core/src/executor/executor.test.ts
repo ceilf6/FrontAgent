@@ -458,6 +458,60 @@ describe('Executor', () => {
       }
     });
 
+    it('executes read_file on a missing path only when fileExistence is disabled', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-guard-readfile-'));
+      try {
+        const readStep = () =>
+          makeStep({
+            action: 'read_file',
+            tool: 'read_file',
+            params: { path: 'src/ghost.ts' },
+          });
+        const registerFiles = (executor: Executor, callTool: ReturnType<typeof vi.fn>) => {
+          executor.registerMCPClient('files', {
+            callTool,
+            listTools: vi.fn().mockResolvedValue([]),
+          });
+          executor.registerToolMapping('read_file', 'files');
+        };
+
+        const disabledGuard = new HallucinationGuard({
+          projectRoot,
+          enabledChecks: {
+            fileExistence: false,
+            importValidity: false,
+            syntaxValidity: false,
+            sddCompliance: false,
+          },
+        });
+        const disabledExecutor = new Executor(
+          makeConfig({ projectRoot, hallucinationGuard: disabledGuard }),
+        );
+        const disabledCallTool = vi.fn().mockResolvedValue({ success: true, content: 'data' });
+        registerFiles(disabledExecutor, disabledCallTool);
+
+        const disabledResult = await disabledExecutor.executeStep(
+          readStep(),
+          makeExecutionContext(),
+        );
+        expect(disabledCallTool).toHaveBeenCalledWith('read_file', { path: 'src/ghost.ts' });
+        expect(disabledResult.stepResult.success).toBe(true);
+
+        const enabledGuard = new HallucinationGuard({ projectRoot });
+        const enabledExecutor = new Executor(
+          makeConfig({ projectRoot, hallucinationGuard: enabledGuard }),
+        );
+        const enabledCallTool = vi.fn().mockResolvedValue({ success: true, content: 'data' });
+        registerFiles(enabledExecutor, enabledCallTool);
+
+        const enabledResult = await enabledExecutor.executeStep(readStep(), makeExecutionContext());
+        expect(enabledCallTool).not.toHaveBeenCalled();
+        expect(enabledResult.stepResult.output).toEqual(expect.objectContaining({ skipped: true }));
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
     it('returns validation result structure', async () => {
       const executor = new Executor(makeConfig());
       const step = makeStep({

@@ -52,12 +52,12 @@ Use FrontAgent when you need a frontend AI agent that can:
 
 ## Current Release Snapshot
 
-The repository is currently aligned on `frontagent@2.1.1` for both the npm CLI package and the VS Code extension.
+The repository is currently aligned on `frontagent@2.2.0` for both the npm CLI package and the VS Code extension.
 
 - Runtime requirements: Node.js `>=20.0.0`; VS Code extension engine `^1.120.0`.
-- Build output: `pnpm build` builds the monorepo, bundles the CLI, syncs the VS Code version, and packages `apps/vscode/frontagent-2.1.1.vsix`.
+- Build output: `pnpm build` builds the monorepo, bundles the CLI, syncs the VS Code version, and packages `apps/vscode/frontagent-2.2.0.vsix`.
 - Quality gates: `pnpm quality:predev`, `pnpm quality:precommit`, `pnpm quality:ci`, and `pnpm quality:local` combine contract checks, linting, typechecking, tests, workflow tests, and build verification.
-- v2.1.1 focus: smaller agent/executor/context/Filesense/memory/runtime/webview modules, hardened VS Code webview nonce generation, restored GitNexus contract checks, and expanded focused tests.
+- v2.2.0 focus: the Electron desktop client, headless non-interactive CLI mode, session resume, lifecycle hooks, declarative permission rules, context zone budgets, the mcp-web-fetch adapter, and CLI/guard correctness fixes.
 
 ## Three Ways to Use FrontAgent
 

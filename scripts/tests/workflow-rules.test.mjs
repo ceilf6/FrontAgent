@@ -526,7 +526,10 @@ test('Claude Harness workflow has a single portable entrypoint', () => {
 test('repo guard remains advisory and training-camp workflows are absent', () => {
   const repoGuard = readFileSync('.github/workflows/repo-guard.yml', 'utf8');
 
-  assert.match(repoGuard, /runs-on:\s+ubuntu-latest/u);
+  assert.match(
+    repoGuard,
+    /runs-on:\s+(?:ubuntu-latest|\$\{\{\s*vars\.REPO_GUARD_RUNNER\s*\|\|\s*'ubuntu-latest'\s*\}\})/u,
+  );
   assert.doesNotMatch(repoGuard, /repo-guard-intranet/u);
   assert.doesNotMatch(repoGuard, /auto-merge|确认合并|认领|score:/u);
   assert.throws(() => readFileSync('.github/workflows/pr-auto-merge.yml', 'utf8'));

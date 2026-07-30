@@ -38,7 +38,7 @@ export const HARD_MAX_TIMEOUT_MS = 60_000;
 export const HARD_MAX_BYTES = 5_000_000;
 const DEFAULT_MAX_REDIRECTS = 5;
 const HARD_MAX_REDIRECTS = 10;
-const DEFAULT_USER_AGENT = 'frontagent-mcp-web-fetch/2.1.1 (+https://github.com/frontagent)';
+const DEFAULT_USER_AGENT = 'frontagent-mcp-web-fetch/2.2.0 (+https://github.com/frontagent)';
 
 /**
  * Clamps a caller-supplied numeric limit to a safe, bounded integer.

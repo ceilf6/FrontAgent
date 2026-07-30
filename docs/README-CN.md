@@ -51,12 +51,12 @@ FrontAgent 是一个开源前端 AI 编程 Agent，面向真实前端工程场�
 
 ## 当前发布快照
 
-当前仓库的 npm CLI 包与 VS Code 插件均对齐到 `frontagent@2.1.1`。
+当前仓库的 npm CLI 包与 VS Code 插件均对齐到 `frontagent@2.2.0`。
 
 - 运行时要求：Node.js `>=20.0.0`；VS Code 插件 engine 为 `^1.120.0`。
-- 构建产物：`pnpm build` 会构建 monorepo、打包 CLI、同步 VS Code 版本，并生成 `apps/vscode/frontagent-2.1.1.vsix`。
+- 构建产物：`pnpm build` 会构建 monorepo、打包 CLI、同步 VS Code 版本，并生成 `apps/vscode/frontagent-2.2.0.vsix`。
 - 质量门禁：`pnpm quality:predev`、`pnpm quality:precommit`、`pnpm quality:ci` 和 `pnpm quality:local` 会组合执行 contract 检查、lint、typecheck、测试、workflow 测试与构建验证。
-- v2.1.1 重点：拆小 agent/executor/context/Filesense/memory/runtime/webview 模块，加固 VS Code webview nonce 生成，恢复 GitNexus contract checks，并扩展 focused tests。
+- v2.2.0 重点：Electron 桌面客户端、headless 非交互 CLI、会话恢复、生命周期 hooks、声明式权限规则、上下文分区预算、mcp-web-fetch 适配包，以及 CLI/guard 正确性修复。
 
 ## 三种使用方式
 

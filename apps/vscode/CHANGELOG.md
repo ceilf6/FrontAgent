@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.0
+
+- Aligned the extension package with the FrontAgent `2.2.0` release.
+- Bundled runtime migrated to the AI SDK v5 line; the OpenAI provider now explicitly targets the Chat Completions endpoint for OpenAI-compatible base URLs.
+- Inherited the guard, planner, session-resume, and lifecycle-hook fixes from the 2.2.0 core packages.
+- Kept the minimum VS Code engine requirement at `^1.120.0`.
+- Build output now packages the `frontagent-2.2.0.vsix` artifact through the root `pnpm build` script.
+
 ## 2.1.1
 
 - Aligned the extension package with the FrontAgent `2.1.1` release.

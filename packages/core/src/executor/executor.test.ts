@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { HallucinationGuard } from '@frontagent/hallucination-guard';
 import type { AgentTask, ExecutionStep } from '@frontagent/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { ExecutorActionSkill } from '../skills/index.js';
@@ -404,6 +408,108 @@ describe('Executor', () => {
       );
       expect(result.validation).toEqual({ pass: true, results: [] });
       expect(result.needsRollback).toBe(false);
+    });
+
+    it('honors a fully disabled hallucination guard on the executor validation path', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-disabled-guard-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const disabledGuard = new HallucinationGuard({
+          projectRoot,
+          enabledChecks: {
+            fileExistence: false,
+            importValidity: false,
+            syntaxValidity: false,
+            sddCompliance: false,
+          },
+        });
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: disabledGuard,
+          }),
+        );
+        const invalidContent = "import { missing } from './missing';\nexport const broken = {";
+        const callTool = vi.fn().mockResolvedValue({ success: true, content: invalidContent });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('create_file', 'files');
+
+        const result = await executor.executeStep(
+          makeStep({
+            action: 'create_file',
+            tool: 'create_file',
+            params: { path: 'src/broken.ts', content: invalidContent },
+          }),
+          makeExecutionContext(),
+        );
+
+        expect(callTool).toHaveBeenCalledWith('create_file', {
+          path: 'src/broken.ts',
+          content: invalidContent,
+        });
+        expect(result.stepResult.success).toBe(true);
+        expect(result.validation).toEqual({ pass: true, results: [], blockedBy: undefined });
+        expect(result.needsRollback).toBe(false);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('executes read_file on a missing path only when fileExistence is disabled', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-guard-readfile-'));
+      try {
+        const readStep = () =>
+          makeStep({
+            action: 'read_file',
+            tool: 'read_file',
+            params: { path: 'src/ghost.ts' },
+          });
+        const registerFiles = (executor: Executor, callTool: ReturnType<typeof vi.fn>) => {
+          executor.registerMCPClient('files', {
+            callTool,
+            listTools: vi.fn().mockResolvedValue([]),
+          });
+          executor.registerToolMapping('read_file', 'files');
+        };
+
+        const disabledGuard = new HallucinationGuard({
+          projectRoot,
+          enabledChecks: {
+            fileExistence: false,
+            importValidity: false,
+            syntaxValidity: false,
+            sddCompliance: false,
+          },
+        });
+        const disabledExecutor = new Executor(
+          makeConfig({ projectRoot, hallucinationGuard: disabledGuard }),
+        );
+        const disabledCallTool = vi.fn().mockResolvedValue({ success: true, content: 'data' });
+        registerFiles(disabledExecutor, disabledCallTool);
+
+        const disabledResult = await disabledExecutor.executeStep(
+          readStep(),
+          makeExecutionContext(),
+        );
+        expect(disabledCallTool).toHaveBeenCalledWith('read_file', { path: 'src/ghost.ts' });
+        expect(disabledResult.stepResult.success).toBe(true);
+
+        const enabledGuard = new HallucinationGuard({ projectRoot });
+        const enabledExecutor = new Executor(
+          makeConfig({ projectRoot, hallucinationGuard: enabledGuard }),
+        );
+        const enabledCallTool = vi.fn().mockResolvedValue({ success: true, content: 'data' });
+        registerFiles(enabledExecutor, enabledCallTool);
+
+        const enabledResult = await enabledExecutor.executeStep(readStep(), makeExecutionContext());
+        expect(enabledCallTool).not.toHaveBeenCalled();
+        expect(enabledResult.stepResult.output).toEqual(expect.objectContaining({ skipped: true }));
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
     });
 
     it('returns validation result structure', async () => {

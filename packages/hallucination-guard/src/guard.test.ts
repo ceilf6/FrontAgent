@@ -217,4 +217,90 @@ describe('HallucinationGuard', () => {
     const result = await guard.validateCode('{ invalid json', 'json');
     expect(result.pass).toBe(false);
   });
+
+  it('honors disabled file existence checks on the fast path', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabledChecks: {
+        fileExistence: false,
+        syntaxValidity: false,
+        importValidity: false,
+        sddCompliance: false,
+      },
+    });
+
+    const result = await guard.validateFilePath('ghost.ts', true);
+    expect(result).toEqual(
+      expect.objectContaining({
+        pass: true,
+        type: 'file_existence',
+      }),
+    );
+  });
+
+  it('honors disabled syntax and import checks on the fast path', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabledChecks: {
+        fileExistence: false,
+        syntaxValidity: false,
+        importValidity: false,
+        sddCompliance: false,
+      },
+    });
+
+    const result = await guard.validateCode(
+      "import { missing } from './missing';\nexport const broken = {",
+      'typescript',
+      'src/broken.ts',
+    );
+    expect(result).toEqual({
+      pass: true,
+      results: [],
+      blockedBy: undefined,
+    });
+  });
+
+  it('still blocks paths outside project root when fileExistence is disabled', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabledChecks: {
+        fileExistence: false,
+        syntaxValidity: false,
+        importValidity: false,
+        sddCompliance: false,
+      },
+    });
+
+    const result = await guard.validateFilePath('../outside.ts', true);
+    expect(result.pass).toBe(false);
+    expect(result.severity).toBe('block');
+    expect(result.message).toContain('outside project root');
+  });
+
+  it('still runs import checks when only syntaxValidity is disabled', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabledChecks: { syntaxValidity: false },
+    });
+
+    const result = await guard.validateCode(
+      "import { missing } from './missing';\nexport const ok = 1;",
+      'typescript',
+      'src/ok.ts',
+    );
+    expect(result.pass).toBe(false);
+    expect(result.results.some((r) => r.type === 'import_validity' && !r.pass)).toBe(true);
+  });
+
+  it('still runs syntax checks when only importValidity is disabled', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabledChecks: { importValidity: false },
+    });
+
+    const result = await guard.validateCode('export const broken = {', 'typescript', 'src/x.ts');
+    expect(result.pass).toBe(false);
+    expect(result.results.some((r) => r.type === 'syntax_validity' && !r.pass)).toBe(true);
+  });
 });

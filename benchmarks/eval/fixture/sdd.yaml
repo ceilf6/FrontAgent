@@ -1,0 +1,65 @@
+# FrontAgent SDD 配置文件（评测夹具冻结版）
+# 规格驱动开发 - Agent 行为约束
+
+version: "1.0"
+
+project:
+  name: "eval-fixture"
+  type: "react-spa"
+  description: "架构消融评测的冻结夹具工程"
+
+# 技术栈约束
+tech_stack:
+  framework: "react"
+  version: "^18.0.0"
+  language: "typescript"
+  styling: "css"
+  state_management: "none"
+  forbidden_packages:
+    - "jquery"
+    - "moment"
+
+# 目录结构约束
+directory_structure:
+  src/components:
+    pattern: "PascalCase"
+    max_lines: 300
+  src/hooks:
+    pattern: "use*.ts"
+  src/utils:
+    pattern: "camelCase"
+    must_be_pure: true
+
+# 模块边界约束
+module_boundaries:
+  - from: "src/components/*"
+    can_import:
+      - "src/hooks/*"
+      - "src/utils/*"
+    cannot_import:
+      - "src/api/*"
+
+# 命名规范
+naming_conventions:
+  components: "PascalCase"
+  hooks: "camelCase with 'use' prefix"
+  utils: "camelCase"
+  constants: "SCREAMING_SNAKE_CASE"
+
+# 代码质量约束
+code_quality:
+  max_function_lines: 50
+  max_file_lines: 300
+  max_parameters: 4
+  forbidden_patterns:
+    - "any"
+    - "// @ts-ignore"
+    - "console.log"
+
+# 修改安全边界
+modification_rules:
+  protected_files:
+    - "package.json"
+    - "tsconfig.json"
+  protected_directories:
+    - "node_modules"

@@ -1,0 +1,27 @@
+packages/core/src/executor/executor.test.ts
+  s_e1ac909e3cbc41::t_83fff9ebb386db 1,8,667-804
+packages/core/src/executor/executor.ts
+  s_e1ac909e3cbc41::t_5995a0430e8dff 24-26,147,180-206,225,228-232,244,560-607,612,625
+packages/core/src/agent/agent.ts
+  s_e1ac909e3cbc41::t_e02e844f539296 118-120
+packages/core/src/executor/types.ts
+  s_e1ac909e3cbc41::t_b15ee75c7fe94c 11,42-46,74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "a2a4e0c81dfed0ddf639f5c4a09bea92488554c9",
+  "prompts": {},
+  "sessions": {
+    "s_e1ac909e3cbc41": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a08c08ba7b47a8974",
+        "model": "unknown"
+      },
+      "human_author": "wangjinghong.ceilf6 <wangjinghong.ceilf6@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}

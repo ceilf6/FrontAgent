@@ -1,0 +1,25 @@
+benchmarks/results/2026-07-31-smoke/ablation.jsonl
+  s_e1ac909e3cbc41::t_39986d7442202b 1-5
+benchmarks/results/2026-07-31-smoke/full.jsonl
+  s_e1ac909e3cbc41::t_e5dd3c0f20bb33 1-5
+benchmarks/results/2026-07-31-validation-telemetry.md
+  s_e1ac909e3cbc41::t_308c98d0b56afc 1-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "97f46ac7f066a344d56269c25aa7f5927a103ac8",
+  "prompts": {},
+  "sessions": {
+    "s_e1ac909e3cbc41": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a08c08ba7b47a8974",
+        "model": "unknown"
+      },
+      "human_author": "wangjinghong.ceilf6 <wangjinghong.ceilf6@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}

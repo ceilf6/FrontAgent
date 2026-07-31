@@ -1,0 +1,23 @@
+packages/core/src/agent/agent.test.ts
+  s_e1ac909e3cbc41::t_42023e882507b9 218-251
+packages/core/src/agent/agent.ts
+  s_e1ac909e3cbc41::t_f949e51962f571 173,176-190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0eddf2186a17ab55e473beb449e407e1671f7b0c",
+  "prompts": {},
+  "sessions": {
+    "s_e1ac909e3cbc41": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a08c08ba7b47a8974",
+        "model": "unknown"
+      },
+      "human_author": "wangjinghong.ceilf6 <wangjinghong.ceilf6@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}

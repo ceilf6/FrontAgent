@@ -215,6 +215,40 @@ describe('createAgent', () => {
   });
 });
 
+describe('code quality sub-agent isolation contract', () => {
+  const llm = { provider: 'anthropic' as const, model: 'claude-3-5-sonnet-20241022' };
+  const backend = {
+    name: 'stub',
+    generateText: async () => '',
+    generateObject: async () => ({}),
+  } as unknown as NonNullable<Parameters<typeof createAgent>[0]['llm']>['backend'];
+
+  function isolationOf(agent: ReturnType<typeof createAgent>): string {
+    const sub = (agent as unknown as { codeQualitySubAgent?: object }).codeQualitySubAgent;
+    return sub?.constructor.name ?? 'none';
+  }
+
+  it('uses process isolation when no custom backend is injected', () => {
+    const agent = createAgent({ projectRoot: '/test', llm: { ...llm, apiKey: 'k' } });
+    expect(isolationOf(agent)).toBe('ProcessIsolatedCodeQualitySubAgent');
+  });
+
+  it('falls back to in-process isolation when a custom llm backend is injected', () => {
+    // backend 是函数集合，JSON 传不过进程边界；进程隔离会静默丢弃它并改打真实 provider
+    const agent = createAgent({ projectRoot: '/test', llm: { ...llm, backend } });
+    expect(isolationOf(agent)).toBe('CodeQualitySubAgent');
+  });
+
+  it('keeps process isolation when LLM review is disabled, since no backend is needed', () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { ...llm, backend },
+      subAgents: { codeQualityEvaluator: { enableLLMReview: false } },
+    });
+    expect(isolationOf(agent)).toBe('ProcessIsolatedCodeQualitySubAgent');
+  });
+});
+
 describe('registerWebTools routing contract', () => {
   it('routes web_fetch and the browser tools to the web client', () => {
     const spy = vi.spyOn(Executor.prototype, 'registerToolMapping');

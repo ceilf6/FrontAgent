@@ -170,8 +170,23 @@ export class FrontAgent {
     const codeQualityConfig = config.subAgents?.codeQualityEvaluator;
     const enableCodeQualitySubAgent = codeQualityConfig?.enabled ?? true;
     if (enableCodeQualitySubAgent) {
-      const isolationMode = codeQualityConfig?.isolationMode ?? 'process';
+      const requestedIsolationMode = codeQualityConfig?.isolationMode ?? 'process';
       const enableLLMReview = codeQualityConfig?.enableLLMReview ?? true;
+
+      // 注入的 backend 是一组函数，随 JSON 越不过进程边界：worker 会静默丢掉它、
+      // 改用 provider 直连，调用方指定的路由意图被违背且 LLM 评审静默退化为规则评审。
+      // 故有 backend 时降级为 in-process 隔离——该分支直接复用 this.llmService。
+      const backendBlocksProcessIsolation = Boolean(config.llm?.backend) && enableLLMReview;
+      const isolationMode =
+        requestedIsolationMode === 'process' && backendBlocksProcessIsolation
+          ? 'inProcess'
+          : requestedIsolationMode;
+
+      if (isolationMode !== requestedIsolationMode) {
+        this.debugWarn(
+          '[FrontAgent] codeQualityEvaluator: custom llm.backend cannot cross a process boundary; falling back to in-process isolation so the injected backend is honored.',
+        );
+      }
 
       if (isolationMode === 'process') {
         this.codeQualitySubAgent = new ProcessIsolatedCodeQualitySubAgent({

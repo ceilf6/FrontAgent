@@ -144,7 +144,7 @@ export class Executor {
         }
 
         const errorMsg = preValidation.blockedBy?.join('; ') || '';
-        this.config.emitEvent?.({ type: 'validation_failed', result: preValidation });
+        this.emitValidationFailed(preValidation);
         return trace.finish({
           stepResult: {
             success: false,
@@ -189,7 +189,7 @@ export class Executor {
       );
       if (!contentValidation.pass) {
         const errorMsg = contentValidation.blockedBy?.join('; ') || '';
-        this.config.emitEvent?.({ type: 'validation_failed', result: contentValidation });
+        this.emitValidationFailed(contentValidation);
         if (this.config.debug) {
           console.log(`[Executor] Blocked write before disk: ${errorMsg}`);
         }
@@ -226,7 +226,8 @@ export class Executor {
       );
 
       if (!postValidation.pass) {
-        this.config.emitEvent?.({ type: 'validation_failed', result: postValidation });
+        this.emitValidationFailed(postValidation);
+        // 回滚不看事件口径：工具失败但已产生快照时同样要把落盘撤销
         await this.rollbackFailedWrite(toolResult);
       }
 
@@ -581,6 +582,17 @@ export class Executor {
 
     const language = detectLanguage(path);
     return language ? { path, content, language } : null;
+  }
+
+  /**
+   * 只有「至少一项真实检查判定失败」才算校验失败。
+   * validateAfterExecution 在工具自身报错时返回 results 为空的失败结果——那是工具失败，
+   * 不是校验拦截；两者混在同一事件里会让 validation_failed 无法当作拦截数使用。
+   */
+  private emitValidationFailed(validation: ValidationResult): void {
+    if (validation.results.some((result) => !result.pass)) {
+      this.config.emitEvent?.({ type: 'validation_failed', result: validation });
+    }
   }
 
   /**

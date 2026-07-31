@@ -747,7 +747,15 @@ describe('Executor', () => {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
             validateCode: vi.fn().mockResolvedValue({
               pass: false,
-              results: [],
+              // 真实 guard 失败时 results 必有判失败项——事件口径依赖它
+              results: [
+                {
+                  pass: false,
+                  type: 'syntax_validity',
+                  severity: 'block',
+                  message: 'Syntax errors found in src/a.ts',
+                },
+              ],
               blockedBy: ['Syntax errors found in src/a.ts'],
             }),
           } as unknown as ExecutorConfig['hallucinationGuard'],
@@ -799,6 +807,46 @@ describe('Executor', () => {
         'rollback_started',
         'rollback_completed',
       ]);
+    });
+
+    it('does not emit validation_failed when only the tool itself failed', async () => {
+      const events: AgentEvent[] = [];
+      // 内容本身没问题：失败只来自工具
+      const validateCode = vi.fn().mockResolvedValue({ pass: true, results: [] });
+      const executor = new Executor(
+        makeConfig({
+          hallucinationGuard: {
+            validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
+            validateCode,
+          } as unknown as ExecutorConfig['hallucinationGuard'],
+          emitEvent: (event) => events.push(event),
+          getFileSystemFacts: () => ({
+            existingFiles: new Set<string>(),
+            existingDirectories: new Set(['src']),
+            nonExistentPaths: new Set<string>(),
+            directoryContents: new Map<string, string[]>(),
+          }),
+        }),
+      );
+      // 工具自身报错（磁盘满、权限等），没有任何检查判失败
+      const callTool = vi
+        .fn()
+        .mockResolvedValue({ success: false, error: 'EACCES: permission denied' });
+      executor.registerMCPClient('files', {
+        callTool,
+        listTools: vi.fn().mockResolvedValue([]),
+      });
+      executor.registerToolMapping('create_file', 'files');
+
+      const result = await executor.executeStep(
+        makeStep({ params: { path: 'src/a.ts', content: 'export const a = 1;' } }),
+        makeExecutionContext(),
+      );
+
+      expect(result.stepResult.success).toBe(false);
+      expect(result.stepResult.error).toContain('EACCES');
+      // 步骤失败但没有拦截：validation_failed 必须保持为 0，否则拦截数不可用
+      expect(events.map((event) => event.type)).not.toContain('validation_failed');
     });
   });
 

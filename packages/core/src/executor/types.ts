@@ -8,7 +8,7 @@ import type {
   SecurityDecision,
 } from '@frontagent/shared';
 import type { LLMService } from '../llm.js';
-import type { AgentLifecycleHooks } from '../types.js';
+import type { AgentEvent, AgentLifecycleHooks } from '../types.js';
 
 export interface MCPClient {
   callTool(name: string, args: Record<string, unknown>): Promise<unknown>;
@@ -39,6 +39,11 @@ export interface ExecutorConfig {
   /** 用户选择"始终允许"时的规则持久化回调 */
   onPersistAllowRule?: (rule: string) => void;
   onSecurityDecision?: (decision: SecurityDecision) => void;
+  /**
+   * 执行器侧事件出口：校验拦截与回滚只在此上报。
+   * 缺省时校验是否生效在遥测层不可观测（issue #388）。
+   */
+  emitEvent?: (event: AgentEvent) => void;
   /** 生命周期 hooks：preToolUse 可拦截调用，postToolUse 仅观察 */
   lifecycleHooks?: AgentLifecycleHooks;
   trace?: ExecutorTraceConfig;
@@ -66,6 +71,7 @@ export interface ExecutorTraceStage {
     | 'validate_params'
     | 'validate_before'
     | 'prepare_tool_params'
+    | 'validate_content'
     | 'call_tool'
     | 'validate_after'
     | 'handle_tool_result'

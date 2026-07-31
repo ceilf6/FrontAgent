@@ -1,6 +1,10 @@
-import type { ExecutionStep } from '@frontagent/shared';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { AgentTask, ExecutionStep } from '@frontagent/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { Executor } from '../executor.js';
+import type { AgentEvent } from '../types.js';
 import { createAgent } from './agent.js';
 import { generateOutput } from './answer-generation.js';
 
@@ -212,6 +216,49 @@ describe('createAgent', () => {
     const executorSnap = agent.getExecutorSkillSnapshot();
     expect(plannerSnap.taskSkills).toBeInstanceOf(Array);
     expect(executorSnap.actionSkills).toBeInstanceOf(Array);
+  });
+});
+
+describe('executor event forwarding contract', () => {
+  it('surfaces executor validation_failed on the agent event stream', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-agent-events-'));
+    try {
+      mkdirSync(join(projectRoot, 'src'), { recursive: true });
+      const agent = createAgent({
+        projectRoot,
+        llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+      });
+      const events: AgentEvent[] = [];
+      agent.addEventListener((event) => events.push(event));
+
+      const callTool = vi.fn().mockResolvedValue({ success: true });
+      agent.registerMCPClient('files', { callTool, listTools: async () => [] });
+      agent.registerToolMapping('create_file', 'files');
+
+      // 执行器的校验事件必须经 emitEvent 汇入 agent 的事件流，
+      // 否则「校验是否拦截」在遥测层不可观测（issue #388）
+      const executor = (agent as unknown as { executor: Executor }).executor;
+      const result = await executor.executeStep(
+        makeStep({
+          action: 'create_file',
+          tool: 'create_file',
+          params: {
+            path: 'src/Card.tsx',
+            content: '```tsx\nexport const Card = () => null;\n```\n',
+          },
+        }),
+        {
+          task: { id: 't1', type: 'create', description: 'test' } as AgentTask,
+          collectedContext: { files: new Map<string, string>() },
+        },
+      );
+
+      expect(callTool).not.toHaveBeenCalled();
+      expect(result.stepResult.error).toContain('Pre-write validation failed');
+      expect(events.map((event) => event.type)).toContain('validation_failed');
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 });
 

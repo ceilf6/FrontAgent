@@ -115,6 +115,9 @@ export class FrontAgent {
       onSecurityDecision: (decision) => {
         this.emit({ type: 'security_decision', decision });
       },
+      emitEvent: (event) => {
+        this.emit(event);
+      },
       executionEngine: config.execution?.engine,
       langGraph: config.execution?.langGraph,
       maxRecoveryAttempts: config.execution?.maxRecoveryAttempts,

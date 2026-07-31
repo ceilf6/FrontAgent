@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HallucinationGuard } from '@frontagent/hallucination-guard';
 import type { AgentTask, ExecutionStep } from '@frontagent/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { ExecutorActionSkill } from '../skills/index.js';
+import type { AgentEvent } from '../types.js';
 import { createExecutor, Executor } from './executor.js';
 import { ExecutorToolCallHandler } from './tool-call-handler.js';
 import type { ExecutorCollectedContext, ExecutorConfig } from './types.js';
@@ -660,6 +661,144 @@ describe('Executor', () => {
           tool: 'read_file',
         }),
       );
+    });
+  });
+
+  describe('write validation', () => {
+    it('blocks invalid content before the write tool runs', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-prewrite-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const events: AgentEvent[] = [];
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+            emitEvent: (event) => events.push(event),
+          }),
+        );
+        const callTool = vi.fn().mockResolvedValue({ success: true });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('create_file', 'files');
+
+        // 评测失败清单里的真实样本：markdown 围栏被当作代码写进 .tsx（tsc 报 TS1127）
+        const fencedContent = '```tsx\nexport const Card = () => null;\n```\n';
+        const result = await executor.executeStep(
+          makeStep({
+            action: 'create_file',
+            tool: 'create_file',
+            params: { path: 'src/Card.tsx', content: fencedContent },
+          }),
+          makeExecutionContext(),
+        );
+
+        expect(callTool).not.toHaveBeenCalled();
+        expect(existsSync(join(projectRoot, 'src/Card.tsx'))).toBe(false);
+        expect(result.stepResult.success).toBe(false);
+        expect(result.stepResult.error).toContain('Pre-write validation failed');
+        expect(result.needsRollback).toBe(false);
+        expect(events).toEqual([expect.objectContaining({ type: 'validation_failed' })]);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('validates create_file content once instead of twice', async () => {
+      const validateCode = vi.fn().mockResolvedValue({ pass: true, results: [] });
+      const executor = new Executor(
+        makeConfig({
+          hallucinationGuard: {
+            validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
+            validateCode,
+          } as unknown as ExecutorConfig['hallucinationGuard'],
+          getFileSystemFacts: () => ({
+            existingFiles: new Set<string>(),
+            existingDirectories: new Set(['src']),
+            nonExistentPaths: new Set<string>(),
+            directoryContents: new Map<string, string[]>(),
+          }),
+        }),
+      );
+      const callTool = vi.fn().mockResolvedValue({ success: true });
+      executor.registerMCPClient('files', {
+        callTool,
+        listTools: vi.fn().mockResolvedValue([]),
+      });
+      executor.registerToolMapping('create_file', 'files');
+
+      const result = await executor.executeStep(
+        makeStep({ params: { path: 'src/a.ts', content: 'export const a = 1;' } }),
+        makeExecutionContext(),
+      );
+
+      expect(validateCode).toHaveBeenCalledTimes(1);
+      expect(callTool).toHaveBeenCalledTimes(1);
+      expect(result.stepResult.success).toBe(true);
+    });
+
+    it('rolls back a written patch when post-write validation fails', async () => {
+      const events: AgentEvent[] = [];
+      const executor = new Executor(
+        makeConfig({
+          hallucinationGuard: {
+            validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
+            validateCode: vi.fn().mockResolvedValue({
+              pass: false,
+              results: [],
+              blockedBy: ['Syntax errors found in src/a.ts'],
+            }),
+          } as unknown as ExecutorConfig['hallucinationGuard'],
+          emitEvent: (event) => events.push(event),
+          // SecurityManager 把 rollback 归为「需审批」，非交互运行会直接拒绝；
+          // 自动回滚要真正落地必须有这条 allow 规则（见 PR follow-up）
+          security: { permissions: { allow: ['rollback'] } },
+        }),
+      );
+      const callTool = vi.fn().mockImplementation((tool: string) => {
+        if (tool === 'rollback') {
+          return Promise.resolve({ success: true, message: 'rolled back' });
+        }
+        return Promise.resolve({
+          success: true,
+          content: 'export const a = {',
+          snapshotId: 'snap-1',
+        });
+      });
+      executor.registerMCPClient('files', {
+        callTool,
+        listTools: vi.fn().mockResolvedValue([]),
+      });
+      executor.registerToolMapping('apply_patch', 'files');
+      executor.registerToolMapping('rollback', 'files');
+
+      const result = await executor.executeStep(
+        makeStep({
+          action: 'apply_patch',
+          tool: 'apply_patch',
+          // 非空 patches：走直传路径，避免落进 apply_patch 技能的 LLM 代码生成分支
+          params: {
+            path: 'src/a.ts',
+            patches: [
+              { operation: 'replace', startLine: 1, endLine: 1, content: 'export const a = {' },
+            ],
+          },
+        }),
+        makeExecutionContext({
+          collectedContext: { files: new Map([['src/a.ts', 'export const a = 1;']]) },
+        }),
+      );
+
+      expect(callTool).toHaveBeenCalledWith('rollback', { snapshotId: 'snap-1' });
+      expect(result.stepResult.success).toBe(false);
+      expect(result.needsRollback).toBe(true);
+      expect(events.map((event) => event.type)).toEqual([
+        'validation_failed',
+        'rollback_started',
+        'rollback_completed',
+      ]);
     });
   });
 

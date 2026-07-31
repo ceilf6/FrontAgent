@@ -21,6 +21,9 @@ import type {
   PhaseExecutionGroup,
 } from './types.js';
 
+/** 会把内容写到磁盘的动作——校验必须发生在调用它们之前 */
+const WRITE_ACTIONS = ['apply_patch', 'create_file'];
+
 export class Executor {
   private config: ExecutorConfig;
   private mcpClients: Map<string, MCPClient> = new Map();
@@ -141,6 +144,7 @@ export class Executor {
         }
 
         const errorMsg = preValidation.blockedBy?.join('; ') || '';
+        this.config.emitEvent?.({ type: 'validation_failed', result: preValidation });
         return trace.finish({
           stepResult: {
             success: false,
@@ -173,6 +177,33 @@ export class Executor {
         }),
       );
 
+      const writeContent = this.resolveWriteContent(step, toolParams);
+      const contentValidation = await trace.withStage('validate_content', () =>
+        writeContent
+          ? this.config.hallucinationGuard.validateCode(
+              writeContent.content,
+              writeContent.language,
+              writeContent.path,
+            )
+          : Promise.resolve<ValidationResult>({ pass: true, results: [] }),
+      );
+      if (!contentValidation.pass) {
+        const errorMsg = contentValidation.blockedBy?.join('; ') || '';
+        this.config.emitEvent?.({ type: 'validation_failed', result: contentValidation });
+        if (this.config.debug) {
+          console.log(`[Executor] Blocked write before disk: ${errorMsg}`);
+        }
+        return trace.finish({
+          stepResult: {
+            success: false,
+            error: `Pre-write validation failed: ${errorMsg}`,
+            duration: Date.now() - startTime,
+          },
+          validation: contentValidation,
+          needsRollback: false,
+        });
+      }
+
       const toolResult = await trace.withStage('call_tool', () =>
         this.callTool(step.tool, toolParams),
       );
@@ -191,8 +222,13 @@ export class Executor {
       }
 
       const postValidation = await trace.withStage('validate_after', () =>
-        this.validateAfterExecution(step, toolResult, toolParams),
+        this.validateAfterExecution(step, toolResult, toolParams, Boolean(writeContent)),
       );
+
+      if (!postValidation.pass) {
+        this.config.emitEvent?.({ type: 'validation_failed', result: postValidation });
+        await this.rollbackFailedWrite(toolResult);
+      }
 
       const stepResult: StepResult = {
         success: postValidation.pass,
@@ -205,7 +241,7 @@ export class Executor {
       return trace.finish({
         stepResult,
         validation: postValidation,
-        needsRollback: !postValidation.pass && step.validation.some((v) => v.required),
+        needsRollback: !postValidation.pass,
       });
     } catch (error) {
       trace.markCatchIfEmpty(error);
@@ -521,10 +557,59 @@ export class Executor {
     };
   }
 
+  /**
+   * 解析出「写盘前即可确定的完整文件内容」；返回 null 表示该步骤无法前置校验
+   * （如 apply_patch 只给补丁片段，最终内容要落盘后才知道）。
+   */
+  private resolveWriteContent(
+    step: ExecutionStep,
+    toolParams: Record<string, unknown>,
+  ): {
+    path: string;
+    content: string;
+    language: 'typescript' | 'javascript' | 'json' | 'yaml';
+  } | null {
+    if (!WRITE_ACTIONS.includes(step.action)) {
+      return null;
+    }
+
+    const path = (toolParams.path ?? step.params.path) as string | undefined;
+    const content = (toolParams.content ?? step.params.content) as string | undefined;
+    if (!path || typeof content !== 'string') {
+      return null;
+    }
+
+    const language = detectLanguage(path);
+    return language ? { path, content, language } : null;
+  }
+
+  /**
+   * 撤销已落盘的写入。快照由写工具在改动前创建，回滚是把它恢复回去；
+   * 没有快照（工具未写盘或不支持快照）时无事可做。
+   */
+  private async rollbackFailedWrite(toolResult: unknown): Promise<void> {
+    if (typeof toolResult !== 'object' || toolResult === null) {
+      return;
+    }
+    const snapshotId = (toolResult as { snapshotId?: string }).snapshotId;
+    if (!snapshotId) {
+      return;
+    }
+
+    this.config.emitEvent?.({ type: 'rollback_started', snapshotId });
+    const result = await this.rollback(snapshotId);
+    if (result.success) {
+      this.config.emitEvent?.({ type: 'rollback_completed', snapshotId });
+    } else {
+      this.debugWarn(`[Executor] Rollback failed for snapshot ${snapshotId}: ${result.message}`);
+    }
+  }
+
   private async validateAfterExecution(
     step: ExecutionStep,
     result: unknown,
     toolParams?: Record<string, unknown>,
+    contentValidatedBeforeWrite = false,
   ): Promise<ValidationResult> {
     if (typeof result === 'object' && result !== null) {
       const resultObj = result as { success?: boolean; error?: string };
@@ -537,7 +622,7 @@ export class Executor {
       }
     }
 
-    if (['apply_patch', 'create_file'].includes(step.action)) {
+    if (!contentValidatedBeforeWrite && WRITE_ACTIONS.includes(step.action)) {
       const content =
         (result as { content?: string })?.content ??
         (toolParams?.content as string | undefined) ??

@@ -1,0 +1,27 @@
+packages/mcp-filesense/src/engine.test.ts
+  s_e1ac909e3cbc41::t_0da3c3be9e3181 184-214
+packages/mcp-filesense/src/engine.ts
+  s_e1ac909e3cbc41::t_17a3ff0b4a2612 636-644
+packages/mcp-filesense/src/tools.security.test.ts
+  s_e1ac909e3cbc41::t_fbf3b97fa8b6e5 126-142
+packages/mcp-filesense/src/tools.ts
+  s_e1ac909e3cbc41::t_5238402af279e0 178-179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "80e35bc104027d318365b614c291b1543014b86c",
+  "prompts": {},
+  "sessions": {
+    "s_e1ac909e3cbc41": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a08c08ba7b47a8974",
+        "model": "unknown"
+      },
+      "human_author": "wangjinghong.ceilf6 <wangjinghong.ceilf6@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}

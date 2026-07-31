@@ -633,6 +633,15 @@ export async function navigate(
   options: NavigateOptions = {},
 ): Promise<NavigateResult> {
   const startedAt = Date.now();
+  // navigate is classified as a read-only tool by the executor's SecurityManager,
+  // so it is auto-allowed without write approval. Honouring writeMode:'workspace'
+  // here would hand a read-classified tool an unapproved write primitive.
+  const writeMode = options.writeMode ?? 'none';
+  if (writeMode === 'workspace') {
+    throw new Error(
+      "filesense navigate is read-only and cannot write workspace indexes (writeMode: 'workspace'). Use filesense_sync to write FILES.json.",
+    );
+  }
   const depth = options.depth ?? 2;
   const maxEntries = options.maxEntries ?? 300;
   const timeoutMs = options.timeoutMs ?? 3000;

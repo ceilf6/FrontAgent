@@ -175,7 +175,8 @@ export const filesenseNavigateSchema = {
       writeMode: {
         type: 'string',
         enum: ['cache', 'workspace', 'none'],
-        description: '写入模式。当前 navigate 默认 none/cache 语义，不写业务目录。',
+        description:
+          "写入模式，默认 none。navigate 是只读工具：none/cache 均不写盘；'workspace' 会被拒绝，写索引请用 filesense_sync。",
       },
     },
     required: [] as string[],

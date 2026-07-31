@@ -181,6 +181,37 @@ describe('Filesense Engine', () => {
       .catch(() => false);
     expect(indexExists).toBe(false);
   });
+
+  it('navigate rejects writeMode workspace instead of silently ignoring it', async () => {
+    await fs.writeFile(path.join(TEST_DIR, 'package.json'), '{}');
+
+    await expect(navigate(TEST_DIR, { paths: ['.'], writeMode: 'workspace' })).rejects.toThrow(
+      /read-only/u,
+    );
+
+    const indexExists = await fs
+      .access(path.join(TEST_DIR, 'FILES.json'))
+      .then(() => true)
+      .catch(() => false);
+    expect(indexExists).toBe(false);
+  });
+
+  it('navigate treats writeMode none and cache as read-only', async () => {
+    await fs.writeFile(path.join(TEST_DIR, 'package.json'), '{"scripts":{"dev":"vite"}}');
+    await fs.mkdir(path.join(TEST_DIR, 'src'));
+    await fs.writeFile(path.join(TEST_DIR, 'src', 'main.tsx'), 'export const main = 1;');
+
+    for (const writeMode of ['none', 'cache'] as const) {
+      const result = await navigate(TEST_DIR, { paths: ['.'], depth: 1, writeMode });
+      expect(result.summary.packageManager).toBe('node');
+
+      const indexExists = await fs
+        .access(path.join(TEST_DIR, 'FILES.json'))
+        .then(() => true)
+        .catch(() => false);
+      expect(indexExists).toBe(false);
+    }
+  });
 });
 
 describe('loadConfig', () => {

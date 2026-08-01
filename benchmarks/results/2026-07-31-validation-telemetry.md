@@ -123,7 +123,7 @@
 分支产生的是另外三种文案（`executor.ts` 的 "file … does not exist (confirmed by
 previous directory listing)"、"failed to auto-read file …" 与 "error reading file …"）。
 
-两种归类会给出**相反**的结论：
+三条候选路径的上报口径不同：
 
 | 若实为 | 在 `1a54e25` 新口径下 | 本轮该行应记 |
 |---|---|---|
@@ -133,8 +133,17 @@ previous directory listing)"、"failed to auto-read file …" 与 "error reading
 
 补上第三行很重要：`executor-skills.ts:242` 的抛错发生在 `executeStep` 的 try 内，
 落到 catch 后构造的 `validation` 同样是 `results: []`——**与「纯工具失败」同一归宿**。
-也就是说三条候选路径里有两条都不会上报，「两种归类结论相反」这个说法被我高估了；
-真正不确定的只剩「是否为执行前结构性拦截」这一种。结论不变：真·内容拦截两臂均为 0。
+也就是说三条候选路径里有两条都不会上报；初版说的「两种归类结论相反」是我高估了。
+
+**而第三支其实也能排除**：两条 ablation 失败任务的 `agentError` 是 404 改写文案，
+`formatRunError`（`run.ts:90`）只在原始错误含 `not found` / `404` 时才改写；
+而上面列出的三条 `validateBeforeExecution` 文案没有一条含这两个 token。
+即观测到的错误串与「执行前结构性拦截」不相容。
+
+**这条推理有两个前提，达不到「确证」**：① 依赖 `543b791` 的 emit 覆盖 catch 路径；
+② 依赖 `agentError` 确实是 `formatRunError` 的输出。JSONL 只存了事件计数、没存
+`ValidationResult` 负载，所以严格说无法确证该 event 与该 step 同源。
+故此处仍不下定论，只把倾向写明。**结论不变：真·内容拦截两臂均为 0。**
 
 本轮 JSONL 只保存了事件计数，没有保存 `ValidationResult` 负载，
 **因此无法在已提交数据内判定属于哪一类**，此处不下结论。
@@ -217,13 +226,15 @@ TodoList.tsx    guard.validateCode pass = true | blockedBy = null
 > 7 月 ablation 同 5 条任务合计 1,939,021 ms，其中 `refactor-todolist-empty` 一条就占
 > **919,701 ms（47.4%）**，且 `llmFailures: 3`——那是重试降级的耗时，不是任务本身的成本。
 > 本轮同一任务 332,539 ms、0 失败。按本轮量级替换该条后，比值由 0.886 变为 **1.271**，
-> ablation 30 条估算从 ≈114 min 变为 ≈163 min。故下表的合计以**区间**给出。
+> ablation 30 条估算从 ≈114 min 变为 ≈149 min（**基数与比值必须同口径**——
+用剔除后的比值去乘仍含该条的基数会把那笔重试耗时双计，初版的 163 min 就是这么来的）。
+故下表的合计以**区间**给出。
 
 据此的全量估算：
 
 | 项 | full | ablation | 双臂合计 |
 |---|---|---|---|
-| 30 条耗时 | ≈ 135 min | ≈ 114–163 min | **≈ 4.2–5.0 小时** |
+| 30 条耗时 | ≈ 135 min | ≈ 114–149 min | **≈ 4.1–4.7 小时** |
 | 输入 token | ≈ 547K | ≈ 440K | ≈ 987K |
 | 输出 token | ≈ 670K | ≈ 759K | ≈ 1.43M |
 | 费用（haiku-4-5 + cache creation） | | | **≈ $10 量级** |

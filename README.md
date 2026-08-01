@@ -465,6 +465,10 @@ export FRONTAGENT_RAG_WEAVIATE_TIMEOUT_MS="30000"
 export FRONTAGENT_FILESENSE_ENABLED="true"
 export FRONTAGENT_FILESENSE_OUTPUT="summary"       # summary | candidates | verbose
 export FRONTAGENT_FILESENSE_WRITE_MODE="cache"     # cache | workspace | none
+                                                   # Currently a no-op: navigate is read-only, so `cache`
+                                                   # and `none` behave identically and `workspace` is
+                                                   # downgraded during planning. No filesense tool reads
+                                                   # this value; filesense_sync always writes indexes.
 export FRONTAGENT_FILESENSE_MAX_ENTRIES="300"
 export FRONTAGENT_FILESENSE_MAX_BYTES="131072"
 export FRONTAGENT_FILESENSE_TIMEOUT_MS="3000"
@@ -1330,6 +1334,8 @@ node benchmarks/eval/report-filesense.mjs benchmarks/eval/out deep
 ```
 
 Latest results: [`benchmarks/results/`](benchmarks/results/). **The current findings are negative and actionable**: SDD showed no measurable effect on first-pass rate, and the hallucination guard recorded zero interceptions while syntactically invalid files still landed on disk. Three root causes are documented in the report and tracked as issues.
+
+That zero-interception count has since been qualified: [`2026-07-31-validation-telemetry.md`](benchmarks/results/2026-07-31-validation-telemetry.md) shows the event had no emit site anywhere in the repo at the time, so it could not have been anything but zero. A deterministic probe (committed alongside the report, no LLM spend) shows the check was running and failing all along — it just emitted nothing and left the file on disk.
 
 ## Download Stats (verifiable)
 

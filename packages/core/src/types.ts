@@ -162,13 +162,22 @@ export type FilesenseNavigationIntent =
   | 'prepare_create'
   | 'validate_freshness';
 
+export type FilesenseWriteMode = 'cache' | 'workspace' | 'none';
+
 export interface FilesenseConfig {
   /** 是否启用 Filesense 轻量导航（默认 true） */
   enabled?: boolean;
   /** 默认返回形式（默认 summary） */
   output?: 'summary' | 'candidates' | 'verbose';
-  /** 写入模式；navigate 默认不写业务目录（默认 cache） */
-  writeMode?: 'cache' | 'workspace' | 'none';
+  /**
+   * 写入模式（默认 cache）。
+   *
+   * **目前没有任何生效消费者**：唯一读它的工具是 navigate，而 navigate 是只读的——
+   * `cache` 与 `none` 行为完全相同，`workspace` 在规划阶段被降级为 `none`（并打一条 warn）。
+   * `filesense_sync` 不接受该参数、恒写索引。保留该字段是为了不破坏既有配置，
+   * 若将来引入真正的缓存位置概念，此处才会有区分。
+   */
+  writeMode?: FilesenseWriteMode;
   /** 默认最大扫描条目数 */
   maxEntries?: number;
   /** 默认返回字节预算 */
@@ -426,9 +435,21 @@ export interface SubAgentConfig {
   codeQualityEvaluator?: {
     /** 是否启用（默认 true） */
     enabled?: boolean;
-    /** 隔离模式：process 为真实上下文隔离（默认 process） */
+    /**
+     * 隔离模式：process 为真实上下文隔离（默认 process）。
+     * 注意：当调用方注入了自定义 `llm.backend` 且启用 LLM 评审时，
+     * `process` 会被强制降级为 `in_memory`——函数形态的 backend 越不过进程边界，
+     * worker 会静默丢掉它并改用 provider 直连。降级会打一条无条件 warn。
+     */
     isolationMode?: 'in_memory' | 'process';
-    /** process 模式下 worker 超时毫秒（默认 120000） */
+    /**
+     * LLM 评审超时毫秒（默认 120000）。
+     * `process` 模式下是父进程对 worker 的 SIGKILL 上界；
+     * `in_memory` 模式下没有进程可杀，改由进程内 race 约束 **LLM 调用**，
+     * 超时按 LLM 评审失败处理并退回规则评审（会打一条日志，并置
+     * `llmReviewDegraded`）。注意 race 抢占不了同步的规则扫描，
+     * 因此病态正则、OOM 与崩溃在该模式下没有边界。
+     */
     processTimeoutMs?: number;
     /** 是否启用 LLM 评估（默认 true） */
     enableLLMReview?: boolean;
@@ -790,7 +811,18 @@ export type AgentEvent =
   | { type: 'step_failed'; step: ExecutionStep; error: string }
   | { type: 'security_decision'; decision: SecurityDecision }
   | { type: 'stream_token'; token: string; stepId: string }
-  | { type: 'validation_failed'; result: ValidationResult }
+  /**
+   * 校验拦截。`stage` 是必要的判别字段——发射点的含义完全不同：
+   * `pre_execution` 是执行前的结构性拦截，`post_write` 是内容已落盘后才判失败。
+   * 不带 stage 就没法把它们分开计数，「拦截率」这个指标也就无从谈起（issue #388）。
+   */
+  | {
+      type: 'validation_failed';
+      stage: 'pre_execution' | 'post_write';
+      result: ValidationResult;
+      path?: string;
+      stepId?: string;
+    }
   | { type: 'rollback_started'; snapshotId: string }
   | { type: 'rollback_completed'; snapshotId: string }
   | { type: 'task_completed'; result: AgentExecutionResult }

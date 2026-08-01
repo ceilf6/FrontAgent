@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **mcp-filesense**: `filesense_navigate` no longer accepts `writeMode: 'workspace'` — the value is removed from the tool schema and from the exported `NavigateOptions` type, and the engine rejects it at runtime for callers that are not type-checked. navigate is classified as a read-only tool by the executor's `SecurityManager`, so honouring a workspace write there would hand an approval-exempt tool a write primitive. The planner downgrades a configured `workspace` to `none` (warning once) so the navigation phase is not silently dropped. Note that `FRONTAGENT_FILESENSE_WRITE_MODE` currently has no observable effect at any value: `filesense_sync` does not read it and always writes indexes (#403).
+
 ## [2.2.0] - 2026-07-30
 
 ### Added

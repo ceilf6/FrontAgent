@@ -129,6 +129,12 @@ previous directory listing)"、"failed to auto-read file …" 与 "error reading
 |---|---|---|
 | 执行前结构性拦截（`results` 有判失败项） | 仍会上报 | 结构性拦截 2 |
 | 纯工具失败（`validateAfterExecution` 返回 `results: []`） | **不会**上报 | 纯工具失败 2 |
+| **步骤执行期 throw**（`prepareToolParams` 抛错落到 `executeStep` 的 catch，`results: []`） | **不会**上报 | 纯工具失败 2 |
+
+补上第三行很重要：`executor-skills.ts:242` 的抛错发生在 `executeStep` 的 try 内，
+落到 catch 后构造的 `validation` 同样是 `results: []`——**与「纯工具失败」同一归宿**。
+也就是说三条候选路径里有两条都不会上报，「两种归类结论相反」这个说法被我高估了；
+真正不确定的只剩「是否为执行前结构性拦截」这一种。结论不变：真·内容拦截两臂均为 0。
 
 本轮 JSONL 只保存了事件计数，没有保存 `ValidationResult` 负载，
 **因此无法在已提交数据内判定属于哪一类**，此处不下结论。
@@ -207,16 +213,22 @@ TodoList.tsx    guard.validateCode pass = true | blockedBy = null
 | full | 1.109 | 1.251 | 0.988 |
 | ablation | **0.886** | 1.372 | 1.162 |
 
+> **ablation 的耗时比值 <1 是一条异常任务主导的，不要当作「这轮更快」**：
+> 7 月 ablation 同 5 条任务合计 1,939,021 ms，其中 `refactor-todolist-empty` 一条就占
+> **919,701 ms（47.4%）**，且 `llmFailures: 3`——那是重试降级的耗时，不是任务本身的成本。
+> 本轮同一任务 332,539 ms、0 失败。按本轮量级替换该条后，比值由 0.886 变为 **1.271**，
+> ablation 30 条估算从 ≈114 min 变为 ≈163 min。故下表的合计以**区间**给出。
+
 据此的全量估算：
 
 | 项 | full | ablation | 双臂合计 |
 |---|---|---|---|
-| 30 条耗时 | ≈ 135 min | ≈ 114 min | **≈ 4.2 小时** |
+| 30 条耗时 | ≈ 135 min | ≈ 114–163 min | **≈ 4.2–5.0 小时** |
 | 输入 token | ≈ 547K | ≈ 440K | ≈ 987K |
 | 输出 token | ≈ 670K | ≈ 759K | ≈ 1.43M |
 | 费用（haiku-4-5 + cache creation） | | | **≈ $10 量级** |
 
-口径修正后输入 token 比初版高约 30%，但耗时与费用的量级结论不变。
+口径修正后输入 token 比初版高约 30%；耗时给成区间（下界按原比值、上界按剔除 7 月重试降级后的比值），费用的量级结论不变。
 所有输入数字均可从 `benchmarks/results/{full,ablation}.jsonl`（7 月）与
 `2026-07-31-smoke/{full,ablation}.jsonl`（本轮）逐条累加复算。
 

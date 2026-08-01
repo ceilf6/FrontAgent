@@ -17,6 +17,19 @@ const ACTION_ENUM = [
 ] as const;
 
 /**
+ * 计划 schema 里所有非必需字段一律 `.optional()`。
+ *
+ * 上一轮只把 `params` 的 15 个字段放开，`phase` / `reasoning` /
+ * `needsCodeGeneration` / `risks` / `alternatives` 仍是必填——模型照样漏填，
+ * `generateObject` 照样重试耗尽抛错、照样静默退到规则生成、create 任务照样落到
+ * 硬编码的 `src/new-file.ts`（实测 `["steps",0,"phase"] Required`）。
+ * 半修等于没修：只要还有一个必填字段是模型可能省略的，整条链路就会重演。
+ *
+ * 下游对这些字段本来就有兜底（phase 有默认阶段名、needsCodeGeneration 判 falsy、
+ * risks/alternatives 只用于展示），所以放开不改变执行语义。
+ */
+
+/**
  * 工具参数。**每个字段都是可选的**——一个步骤只会用到其中一两个。
  *
  * 曾经全部必填，靠 describe 里的「不适用时填空字符串/false/0」来要求模型补齐。
@@ -56,14 +69,15 @@ export const PlanOutlineSchema = z.object({
         action: z.enum(ACTION_ENUM).describe('执行动作类型'),
         phase: z
           .string()
+          .optional()
           .describe(
             '所属阶段名称（如：阶段1-分析、阶段2-创建、阶段3-安装、阶段4-验证、阶段7-仓库管理）',
           ),
       }),
     )
     .describe('步骤概要列表 - 只需简单描述每个步骤要做什么'),
-  risks: z.array(z.string()).describe('潜在风险（可为空数组）'),
-  alternatives: z.array(z.string()).describe('备选方案（可为空数组）'),
+  risks: z.array(z.string()).optional().describe('潜在风险'),
+  alternatives: z.array(z.string()).optional().describe('备选方案'),
 });
 
 export type PlanOutline = z.infer<typeof PlanOutlineSchema>;
@@ -75,10 +89,10 @@ export const StepExpansionSchema = z.object({
         description: z.string().describe('步骤描述 - 说明要做什么'),
         action: z.enum(ACTION_ENUM).describe('执行动作'),
         tool: z.string().describe('要调用的工具'),
-        phase: z.string().describe('所属阶段名称（与Phase 1中的阶段名称保持一致）'),
+        phase: z.string().optional().describe('所属阶段名称（与Phase 1中的阶段名称保持一致）'),
         params: STEP_PARAMS_SCHEMA,
-        reasoning: z.string().describe('为什么需要这个步骤'),
-        needsCodeGeneration: z.boolean().describe('此步骤是否需要在执行时生成代码，默认false'),
+        reasoning: z.string().optional().describe('为什么需要这个步骤'),
+        needsCodeGeneration: z.boolean().optional().describe('此步骤是否需要在执行时生成代码'),
       }),
     )
     .describe('展开后的详细步骤列表'),
@@ -94,17 +108,18 @@ export const GeneratedPlanSchema = z.object({
         tool: z.string().describe('要调用的工具'),
         phase: z
           .string()
+          .optional()
           .describe(
             '所属阶段名称（如：阶段1-分析、阶段2-创建、阶段3-安装、阶段4-验证、阶段7-仓库管理）',
           ),
         params: STEP_PARAMS_SCHEMA,
-        reasoning: z.string().describe('为什么需要这个步骤'),
-        needsCodeGeneration: z.boolean().describe('此步骤是否需要在执行时生成代码，默认false'),
+        reasoning: z.string().optional().describe('为什么需要这个步骤'),
+        needsCodeGeneration: z.boolean().optional().describe('此步骤是否需要在执行时生成代码'),
       }),
     )
     .describe('执行步骤列表'),
-  risks: z.array(z.string()).describe('潜在风险（可为空数组）'),
-  alternatives: z.array(z.string()).describe('备选方案（可为空数组）'),
+  risks: z.array(z.string()).optional().describe('潜在风险'),
+  alternatives: z.array(z.string()).optional().describe('备选方案'),
 });
 
 export type GeneratedPlan = z.infer<typeof GeneratedPlanSchema>;

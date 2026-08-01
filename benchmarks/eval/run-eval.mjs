@@ -230,6 +230,7 @@ for (const task of tasks) {
   let agentSuccess = null;
   let agentError = null;
   let validationCount = null;
+  let plannerFallbackReason = null;
   let runError = null;
   try {
     const result = await runFrontAgentTask({
@@ -260,6 +261,9 @@ for (const task of tasks) {
     });
     resultText = result?.output ?? '';
     agentSuccess = result?.success ?? null;
+    // 规划降级必须落盘：它表现为「步骤全绿、任务成功、文件写错地方」，
+    // 不记的话这一轮的结果看不出任何异常（issue #417）。
+    plannerFallbackReason = result?.plannerFallbackReason ?? null;
     agentError = result?.error ? String(result.error).slice(0, 300) : null;
     validationCount = result?.validations?.length ?? null;
   } catch (error) {
@@ -289,6 +293,7 @@ for (const task of tasks) {
     agentSuccess,
     agentError,
     validationCount,
+    plannerFallbackReason,
     runError,
     resultHead: resultText.slice(0, 200),
     checks: checkResults,

@@ -16,25 +16,36 @@ const ACTION_ENUM = [
   'web_fetch',
 ] as const;
 
+/**
+ * 工具参数。**每个字段都是可选的**——一个步骤只会用到其中一两个。
+ *
+ * 曾经全部必填，靠 describe 里的「不适用时填空字符串/false/0」来要求模型补齐。
+ * 模型不会那么做：它只填相关字段，于是 zod 对每个缺失字段各报一条 invalid_type，
+ * `generateObject` 重试耗尽后抛错，规划**静默**退到规则生成——而规则生成给
+ * create 任务的路径是硬编码的 `src/new-file.ts`。净效果是一次「步骤全绿、
+ * 任务成功、文件写到错误位置」的运行（issue #417）。
+ *
+ * 让 schema 描述参数的真实形状，比让模型迁就一个不真实的形状可靠得多。
+ */
 const STEP_PARAMS_SCHEMA = z
   .object({
-    path: z.string().describe('文件或目录路径（不适用时填空字符串）'),
-    recursive: z.boolean().describe('是否递归列出子目录，不适用时填false'),
-    query: z.string().describe('文本搜索查询（不适用时填空字符串）'),
-    pattern: z.string().describe('搜索模式（不适用时填空字符串）'),
-    filePattern: z.string().describe('文件 glob 模式（不适用时填空字符串）'),
-    globOnly: z.boolean().describe('是否仅执行 glob 文件发现，不适用时填false'),
-    maxResults: z.number().describe('最大返回结果数，不适用时填0'),
-    directory: z.string().describe('搜索目录（不适用时填空字符串）'),
-    command: z.string().describe('要执行的终端命令（不适用时填空字符串）'),
-    url: z.string().describe('URL（不适用时填空字符串）'),
-    selector: z.string().describe('CSS选择器（不适用时填空字符串）'),
-    text: z.string().describe('输入文本（不适用时填空字符串）'),
-    fullPage: z.boolean().describe('是否全页截图，不适用时填false'),
-    codeDescription: z.string().describe('要生成的代码的描述（不适用时填空字符串）'),
-    changeDescription: z.string().describe('要做的修改描述（不适用时填空字符串）'),
+    path: z.string().optional().describe('文件或目录路径'),
+    recursive: z.boolean().optional().describe('是否递归列出子目录'),
+    query: z.string().optional().describe('文本搜索查询'),
+    pattern: z.string().optional().describe('搜索模式'),
+    filePattern: z.string().optional().describe('文件 glob 模式'),
+    globOnly: z.boolean().optional().describe('是否仅执行 glob 文件发现'),
+    maxResults: z.number().optional().describe('最大返回结果数'),
+    directory: z.string().optional().describe('搜索目录'),
+    command: z.string().optional().describe('要执行的终端命令'),
+    url: z.string().optional().describe('URL'),
+    selector: z.string().optional().describe('CSS选择器'),
+    text: z.string().optional().describe('输入文本'),
+    fullPage: z.boolean().optional().describe('是否全页截图'),
+    codeDescription: z.string().optional().describe('要生成的代码的描述'),
+    changeDescription: z.string().optional().describe('要做的修改描述'),
   })
-  .describe('工具参数 - 所有字段必填，不适用的字符串填空字符串，布尔值填false，数字填0');
+  .describe('工具参数 - 只填该步骤实际用到的字段，其余省略');
 
 export const PlanOutlineSchema = z.object({
   summary: z.string().describe('计划的简要描述'),

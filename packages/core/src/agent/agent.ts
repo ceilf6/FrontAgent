@@ -793,6 +793,8 @@ export class FrontAgent {
             : failedSteps.map((s) => s.result?.error).join('; '),
         duration: Date.now() - startTime,
         validations,
+        // 无条件带出：降级过的计划不该和正常计划长得一样
+        plannerFallbackReason: this.lastLlmFailureError,
       };
 
       this.emitStatus('任务执行完成', '准备输出结果');

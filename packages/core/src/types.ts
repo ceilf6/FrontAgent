@@ -772,6 +772,15 @@ export interface AgentExecutionResult {
   output?: string;
   /** 错误信息 */
   error?: string;
+  /**
+   * LLM 规划失败、已退到规则生成时的原因。
+   *
+   * 必须对所有任务类型可见：规则回退给 create 任务的目标路径是硬编码的
+   * `src/new-file.ts`，于是「规划降级」表现为一次**步骤全绿、报告成功、
+   * 文件写错地方**的运行。此前该原因只在 query 缺答案时才进 `error`，
+   * create/modify 上完全静默（issue #417）。
+   */
+  plannerFallbackReason?: string;
   /** 执行时长（毫秒） */
   duration: number;
   /** 验证结果 */

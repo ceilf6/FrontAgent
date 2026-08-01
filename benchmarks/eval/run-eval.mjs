@@ -2,7 +2,7 @@
 // 用法：node benchmarks/eval/run-eval.mjs --arm full|ablation|no-filesense
 //         [--tasks smoke|all|<taskId>] [--fixture flat|deep] [--out benchmarks/eval/out]
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { runFrontAgentTask } from '../../packages/runtime-node/dist/run.js';
@@ -54,20 +54,39 @@ if (!existsSync(join(FIXTURE, 'node_modules'))) {
 const OUT = join(OUT_DIR, `${ARM}${FIXTURE_KIND === 'deep' ? '-deep' : ''}.jsonl`);
 
 /**
- * filesense 的**全部**配置面都要钉死，不只是 enabled。
+ * 只钉死**忠实的 no-op** 两项。
  *
- * `output` / `writeMode` / `maxEntries` / `maxBytes` / `timeoutMs` 若不写，就取自
- * `FRONTAGENT_FILESENSE_*`，而 `planner-skills.ts` 里配置值会**压过** trigger-policy
- * 的默认预算——报告却把「预算是否截断」当结论印出来。操作者环境里有一个
- * `FRONTAGENT_FILESENSE_MAX_ENTRIES`，那个结论就变成了他机器的属性。
+ * 数值预算刻意不钉：`planner-skills.ts` 里配置值是**替换**而非兜底
+ * （`filesense?.maxEntries ?? decision.maxEntries`），而 trigger-policy 的预算是
+ * 按 intent 分档的——`validate_freshness` 120、`prepare_create` 180、
+ * `understand_structure` 250、`prepare_refactor` 500。统一钉成 300 会把
+ * `prepare_refactor` **收紧**到 300、把 `validate_freshness` 放宽到 300 并让超时翻倍，
+ * 测出来的就不再是产品的出厂策略。而「预算是否被截断」正是报告的结论行。
+ *
+ * 环境确定性改用另一种办法：启动时断言相关环境变量未设（见下）。
+ * 这样既拿到臂间确定性，又保留按 intent 的真实预算。
+ *
+ * `output` / `writeMode` 则可以放心钉：`config.ts` 未设时返回 `undefined`，
+ * 而 `planner-skills.ts` 的兜底恰好就是 `'summary'` / `'cache'`，钉死不改变行为。
  */
 const FILESENSE_PINNED = {
   filesenseOutput: 'summary',
   filesenseWriteMode: 'cache',
-  filesenseMaxEntries: 300,
-  filesenseMaxBytes: 131072,
-  filesenseTimeoutMs: 3000,
 };
+
+// 数值预算必须来自 trigger-policy，不能被环境变量顶替——否则截断结论
+// 变成操作者机器的属性。宁可拒跑，不可产出一个说不清来源的数。
+const BUDGET_ENV_VARS = [
+  'FRONTAGENT_FILESENSE_MAX_ENTRIES',
+  'FRONTAGENT_FILESENSE_MAX_BYTES',
+  'FRONTAGENT_FILESENSE_TIMEOUT_MS',
+];
+const setBudgetVars = BUDGET_ENV_VARS.filter((name) => process.env[name] !== undefined);
+if (setBudgetVars.length > 0) {
+  throw new Error(
+    `以下环境变量会顶替 trigger-policy 的按 intent 预算，使「是否截断」不可归因，请先 unset：\n  ${setBudgetVars.join('\n  ')}`,
+  );
+}
 
 const ARM_OPTIONS = {
   // 对照臂也必须钉死。一臂钉死、一臂随环境，操作者环境里存在该变量就会得到
@@ -141,13 +160,24 @@ function collectEventDetail(details, event) {
     // 这里跨包读 core 的 AgentEvent 字段，`.mjs` 拿不到类型约束。
     // core 一旦改名，entries 会静默变成 0、报告照样出「累计扫描条目 0」——
     // 正是本 harness 要根治的「空结果被当成证据」。宁可吵，不可静默。
-    if (typeof event.entries !== 'number') {
-      // 不能 throw：`Agent.emit` 对监听器异常是 try/catch + debug 级日志
-      // （`agent.ts:307-315`），抛出去只会被静默吞掉——正是本 harness 要防的那种
-      // 「守卫看起来加了、实际没生效」。改为记账，由主循环在写完本条记录后中止本臂。
-      harnessFailures.push(
-        `filesense_navigated.entries 不是数字（实际 ${typeof event.entries}）——core 的事件形状可能已变`,
-      );
+    // 不能 throw：`Agent.emit` 对监听器异常是 try/catch + debug 级日志
+    // （`agent.ts:307-315`），抛出去只会被静默吞掉——正是本 harness 要防的那种
+    // 「守卫看起来加了、实际没生效」。改为记账，由主循环在写记录**之前**中止本臂。
+    //
+    // 每个被采集的字段都要查：只查 entries 的话，truncated 变成 undefined 会被
+    // 当成 false、candidateCount 变成 undefined 会被当成 0，报告照样出「未截断、
+    // 零候选」——同一种静默降级，只是换了个字段。
+    for (const [field, expected] of [
+      ['entries', 'number'],
+      ['elapsedMs', 'number'],
+      ['truncated', 'boolean'],
+      ['candidateCount', 'number'],
+    ]) {
+      if (typeof event[field] !== expected) {
+        harnessFailures.push(
+          `filesense_navigated.${field} 应为 ${expected}，实际 ${typeof event[field]}——core 的事件形状可能已变`,
+        );
+      }
     }
     details.filesense.push({
       intent: event.intent ?? null,
@@ -241,10 +271,11 @@ for (const task of tasks) {
     // 报告器据此断言两臂用的是同一套夹具与任务集——否则会拿 flat 的方法学
     // 去描述 deep 的产物，正是 #410 撤回结论的同一类失真。
     fixture: FIXTURE_KIND,
-    taskSet: TASKS_FILE.split('/').pop(),
-    // 生效的 filesense 配置随记录落盘：没有它，「预算被截断」这个结论
-    // 无法与产生它的预算值对应，报告也就无从校验两臂是否同一套预算。
-    filesenseConfig: {
+    taskSet: basename(TASKS_FILE),
+    // 注意是**请求值**不是生效值：这里回读的是同进程的同一组常量，
+    // 所以报告基于它的一致性校验是构造性结论，不是遥测验证。
+    // 真正的生效值要等 core 在 filesense_navigated 载荷里回显 navigate 参数。
+    filesenseConfigRequested: {
       enabled: ARM_OPTIONS[ARM].filesenseEnabled,
       ...FILESENSE_PINNED,
     },

@@ -30,17 +30,18 @@ if (distinct.length !== 1) {
 }
 const [FIXTURE_KIND, TASK_SET] = distinct[0].split('/');
 
-// 预算配置也必须两臂一致。「预算被截断」是本报告要印的结论之一，
-// 而预算值若随操作者环境浮动，那个结论就成了他机器的属性而不是夹具的属性。
+// 两臂的 filesense 请求配置必须一致。注意这是**构造性**校验：记录里存的是
+// 同进程同一组常量的回读，不是遥测到的生效值。数值预算不在其中——那些来自
+// trigger-policy 的按 intent 分档，harness 在启动时断言相关环境变量未设。
 const budgets = [...fullAll, ...offAll].map((r) =>
-  JSON.stringify({ ...(r.filesenseConfig ?? {}), enabled: undefined }),
+  JSON.stringify({ ...(r.filesenseConfigRequested ?? {}), enabled: undefined }),
 );
 if (new Set(budgets).size !== 1) {
   console.error('两臂的 filesense 预算配置不一致，拒绝出报告——预算差异会污染截断结论。');
   process.exit(1);
 }
-if (!fullAll[0]?.filesenseConfig) {
-  console.error('JSONL 缺少 filesenseConfig 字段——来自旧版 harness，无法确认预算口径，拒绝出报告');
+if (!fullAll[0]?.filesenseConfigRequested) {
+  console.error('JSONL 缺少 filesenseConfigRequested 字段——来自旧版 harness，无法确认预算口径，拒绝出报告');
   process.exit(1);
 }
 if (FIXTURE_KIND === 'unknown') {

@@ -207,6 +207,26 @@ function collectEventDetail(details, event) {
   // `rollback_failed` 随 #402 才进入 AgentEvent 联合类型，在它合入前不会出现。
   // 三者一起记，才能判定「撤销成功」与「拦到了但没撤销掉」——只看 started
   // 分不出这两种，而后者意味着坏文件还在工作区里。
+  // 定位精度：通过率对「找得准不准」不敏感——两臂都能靠 list_directory /
+  // search_code 慢慢摸出来，结果一样、代价不同，而代价才是导航能力的直接体现。
+  //
+  // 路径字段因动作而异（实测）：read_file / list_directory 用 `path`，
+  // search_code 用 `filePattern`（glob 发现）或 `directory`。只认 `path`
+  // 会把 search_code 全漏掉，而那正是 #419 修好后 query 任务的主要探索手段。
+  if (event.type === 'step_completed' || event.type === 'step_failed') {
+    const action = event.step?.action;
+    const params = event.step?.params ?? {};
+    const where = params.path ?? params.directory ?? params.filePattern;
+    if (where) {
+      if (['read_file', 'list_directory', 'search_code'].includes(action)) {
+        details.explored.push({ action, path: String(where) });
+      }
+      if (['create_file', 'apply_patch'].includes(action)) {
+        details.touched.push({ action, path: String(where) });
+      }
+    }
+  }
+
   if (
     event.type === 'rollback_started' ||
     event.type === 'rollback_completed' ||
@@ -223,7 +243,13 @@ function collectEventDetail(details, event) {
 for (const task of tasks) {
   const ws = setupWorkspace(task.id);
   const events = {};
-  const eventDetails = { filesense: [], validationFailed: [], rollback: [] };
+  const eventDetails = {
+    filesense: [],
+    validationFailed: [],
+    rollback: [],
+    explored: [],
+    touched: [],
+  };
   const t0 = performance.now();
   const usageBefore = getUsageTally();
   let resultText = '';
@@ -309,10 +335,15 @@ for (const task of tasks) {
     // list_directory / search_code 慢慢摸出来，结果一样、代价不同，
     // 而代价才是导航能力的直接体现。
     exploredCount: eventDetails.explored.length,
+    // 脱靶 = 探索到了一个**具体目录**且它不在目标目录下。
+    // glob 模式（`**/*Route*.tsx`）不指向具体目录，既不算命中也不算脱靶——
+    // 把它算成脱靶会惩罚「先 glob 再收敛」这条 prompt 明确推荐的流程。
     offTargetExplored: task.targetDirs
-      ? eventDetails.explored.filter((e) => !task.targetDirs.some((d) => e.path.startsWith(d)))
-          .length
+      ? eventDetails.explored.filter(
+          (e) => !e.path.includes('*') && !task.targetDirs.some((d) => e.path.startsWith(d)),
+        ).length
       : null,
+    globExplored: eventDetails.explored.filter((e) => e.path.includes('*')).length,
     elapsedMs: Math.round(performance.now() - t0),
     llmCalls,
     llmFailures,

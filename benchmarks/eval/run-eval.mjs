@@ -1,5 +1,6 @@
 // 架构消融评测编排器。
-// 用法：node benchmarks/eval/run-eval.mjs --arm full|ablation [--tasks smoke|all] [--out benchmarks/eval/out]
+// 用法：node benchmarks/eval/run-eval.mjs --arm full|ablation|no-filesense
+//         [--tasks smoke|all|<taskId>] [--fixture flat|deep] [--out benchmarks/eval/out]
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +10,7 @@ import { createClaudeCliBackend, getUsageTally } from './claude-cli-backend.mjs'
 import { runChecks } from './checks.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const FIXTURE = join(HERE, 'fixture');
+
 const args = Object.fromEntries(
   process.argv
     .slice(2)
@@ -17,11 +18,31 @@ const args = Object.fromEntries(
     .filter(Boolean),
 );
 const ARM = args.arm;
-if (ARM !== 'full' && ARM !== 'ablation') throw new Error('--arm full|ablation 必填');
+const ARM_NAMES = ['full', 'ablation', 'no-filesense'];
+if (!ARM_NAMES.includes(ARM)) throw new Error(`--arm ${ARM_NAMES.join('|')} 必填`);
 const SCOPE = args.tasks ?? 'all';
 const OUT_DIR = resolve(args.out ?? join(HERE, 'out'));
 mkdirSync(OUT_DIR, { recursive: true });
 const OUT = join(OUT_DIR, `${ARM}.jsonl`);
+
+/**
+ * 夹具选择。
+ *
+ * - `flat`（默认，2026-07-12 那轮用的）：14 个源文件、最深 2 层。filesense 的预算闸
+ *   在这个规模上**从不关闸**（实测 src depth=2 maxEntries=180 → 扫 17 条、未截断，
+ *   而全仓一共 18 条），一次 `ls -R` 就能塞进上下文——按构造测不出按需导航的价值。
+ * - `deep`：feature-sliced，236 个源文件 / 188 个目录 / 最深 5 层，且 `format.ts`、
+ *   `Button.tsx`、`useToggle.ts` 各有 24 份散落在不同 feature 下。实测同样预算下
+ *   扫 180 条即截断（全仓 424 条），定位必须靠语义而非文件名。
+ *   噪音模块由 `fixture-deep/generate.mjs` 生成，跑评测前需先执行一次。
+ */
+const FIXTURE_KIND = args.fixture ?? 'flat';
+if (!['flat', 'deep'].includes(FIXTURE_KIND)) throw new Error('--fixture flat|deep');
+const FIXTURE = join(HERE, FIXTURE_KIND === 'deep' ? 'fixture-deep' : 'fixture');
+const TASKS_FILE = join(HERE, FIXTURE_KIND === 'deep' ? 'tasks-deep.json' : 'tasks.json');
+if (FIXTURE_KIND === 'deep' && !existsSync(join(FIXTURE, 'src', 'features', 'catalog'))) {
+  throw new Error('深夹具尚未生成：先跑 node benchmarks/eval/fixture-deep/generate.mjs');
+}
 
 const ARM_OPTIONS = {
   full: { sddPath: 'sdd.yaml' },
@@ -33,6 +54,10 @@ const ARM_OPTIONS = {
       checks: { fileExistence: false, importValidity: false, syntaxValidity: false, sddCompliance: false },
     },
   },
+  // filesense 单独消融：SDD 与 guard 与 full 臂完全相同，唯一变量是导航能力。
+  // 这是回答「filesense 有没有用」的臂——full/ablation 两臂 filesense 都开着，
+  // 它们之间的差异说明不了 filesense 的任何事情。
+  'no-filesense': { sddPath: 'sdd.yaml', filesense: { enabled: false } },
 };
 
 function setupWorkspace(taskId) {
@@ -48,7 +73,7 @@ function setupWorkspace(taskId) {
 }
 
 // --tasks smoke|all|<taskId>（单任务用于诊断探针）
-const scoped = JSON.parse(readFileSync(join(HERE, 'tasks.json'), 'utf8')).filter((t) => {
+const scoped = JSON.parse(readFileSync(TASKS_FILE, 'utf8')).filter((t) => {
   if (SCOPE === 'smoke') return t.smoke;
   if (SCOPE === 'all') return true;
   return t.id === SCOPE;
@@ -67,9 +92,49 @@ if (done.size > 0) console.log(`resume: 跳过已完成 ${done.size} 条（${[..
 console.log(`arm=${ARM} scope=${SCOPE} tasks=${tasks.length} out=${OUT}`);
 const backend = createClaudeCliBackend();
 
+/**
+ * 事件计数不足以回答任何「效果」问题：
+ * - `filesense_navigated` 只计数，就丢掉了 scanned.entries / 预算是否截断 /
+ *   候选数——「省了多少上下文」这个最有说服力的量根本算不出来。
+ * - `validation_failed` 只计数，就分不出「guard 真拦下了坏代码」和「工具自己报错」，
+ *   拦截数是复合值（2026-07-31 遥测报告 §三 因此无法定论）。
+ * 所以除计数外，另存这两类事件的载荷。载荷体积很小，一次跑至多几十条。
+ */
+function collectEventDetail(details, event) {
+  if (event.type === 'filesense_navigated') {
+    details.filesense.push({
+      intent: event.intent ?? null,
+      paths: event.paths ?? [],
+      entries: event.entries,
+      elapsedMs: event.elapsedMs,
+      truncated: event.truncated,
+      candidateCount: event.candidateCount,
+      warnings: event.warnings ?? [],
+    });
+    return;
+  }
+  if (event.type === 'validation_failed') {
+    details.validationFailed.push({
+      // 判失败的检查项：区分「真·内容拦截」与「纯工具失败」的唯一依据
+      failedChecks: (event.result?.results ?? [])
+        .filter((r) => !r.pass)
+        .map((r) => ({ type: r.type, severity: r.severity, message: r.message?.slice(0, 200) })),
+      blockedBy: (event.result?.blockedBy ?? []).map((b) => String(b).slice(0, 200)),
+    });
+    return;
+  }
+  if (event.type === 'rollback_failed') {
+    details.rollbackFailed.push({
+      snapshotId: event.snapshotId,
+      error: String(event.error ?? '').slice(0, 200),
+    });
+  }
+}
+
 for (const task of tasks) {
   const ws = setupWorkspace(task.id);
   const events = {};
+  const eventDetails = { filesense: [], validationFailed: [], rollbackFailed: [] };
   const t0 = performance.now();
   const usageBefore = getUsageTally();
   let resultText = '';
@@ -95,6 +160,7 @@ for (const task of tasks) {
       ...ARM_OPTIONS[ARM],
       onEvent: (e) => {
         events[e.type] = (events[e.type] ?? 0) + 1;
+        collectEventDetail(eventDetails, e);
       },
     });
     resultText = result?.output ?? '';
@@ -121,6 +187,11 @@ for (const task of tasks) {
     resultHead: resultText.slice(0, 200),
     checks: checkResults,
     events,
+    eventDetails,
+    // filesense 导航的汇总量：扫描条目、预算是否被截断——
+    // 「按需供给 vs 全量倾倒」这条主张能不能拿数字说话，全靠这两个字段。
+    filesenseEntries: eventDetails.filesense.reduce((sum, nav) => sum + (nav.entries ?? 0), 0),
+    filesenseTruncated: eventDetails.filesense.some((nav) => nav.truncated),
     elapsedMs: Math.round(performance.now() - t0),
     llmCalls,
     llmFailures,

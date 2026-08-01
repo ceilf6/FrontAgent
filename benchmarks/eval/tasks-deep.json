@@ -1,0 +1,138 @@
+[
+  {
+    "id": "deep-query-route-source",
+    "category": "query",
+    "smoke": true,
+    "task": "这个项目的顶层导航路由表定义在哪个文件里？给出文件路径，并列出它当前包含的所有路径。",
+    "type": "query",
+    "checks": [
+      { "kind": "result_contains", "pattern": "routeTable" },
+      { "kind": "result_contains", "pattern": "/checkout" },
+      { "kind": "result_contains", "pattern": "/catalog" }
+    ]
+  },
+  {
+    "id": "deep-query-structure",
+    "category": "query",
+    "smoke": false,
+    "task": "说明 src 下四个顶层目录各自的职责，以及一个 feature 目录内部的分层约定。",
+    "type": "query",
+    "checks": [
+      { "kind": "result_contains", "pattern": "features" },
+      { "kind": "result_contains", "pattern": "shared" },
+      { "kind": "result_contains", "pattern": "entities" }
+    ]
+  },
+  {
+    "id": "deep-query-format-convention",
+    "category": "query",
+    "smoke": false,
+    "task": "checkout 这个 feature 自己的 format 函数返回什么格式的字符串？注意项目里有多个同名 format。",
+    "type": "query",
+    "checks": [{ "kind": "result_contains", "pattern": "checkout" }]
+  },
+  {
+    "id": "deep-query-shared-lib",
+    "category": "query",
+    "smoke": false,
+    "task": "共享工具库里目前有哪些函数？逐个说明用途。",
+    "type": "query",
+    "checks": [
+      { "kind": "result_contains", "pattern": "clamp" },
+      { "kind": "result_contains", "pattern": "formatDate" },
+      { "kind": "result_contains", "pattern": "pluralize" }
+    ]
+  },
+
+  {
+    "id": "deep-create-shared-truncate",
+    "category": "create",
+    "smoke": true,
+    "task": "在共享工具库（放通用纯函数的那个目录）新增 truncate(text, maxLength) 函数并导出：超长时截断到 maxLength 个字符并追加省略号。放在与既有共享工具相同的目录、遵循相同的文件与导出风格。",
+    "type": "create",
+    "checks": [
+      { "kind": "file_exists", "path": "src/shared/lib/truncate.ts" },
+      { "kind": "file_contains", "path": "src/shared/lib/truncate.ts", "pattern": "truncate" },
+      { "kind": "typecheck" }
+    ]
+  },
+  {
+    "id": "deep-create-checkout-hook",
+    "category": "create",
+    "smoke": false,
+    "task": "给 checkout 这个 feature 新增一个 useCheckoutTotal hook，放在该 feature 自己的 hooks 目录下，遵循该 feature 内既有的分层与命名约定。",
+    "type": "create",
+    "checks": [
+      { "kind": "file_exists", "path": "src/features/checkout/hooks/useCheckoutTotal.ts" },
+      { "kind": "typecheck" }
+    ]
+  },
+  {
+    "id": "deep-create-entity-guard",
+    "category": "create",
+    "smoke": false,
+    "task": "给 coupon 实体新增 isExpired(coupon, now) 判定函数，放在该实体存放类型守卫的那一层，与既有实体守卫风格一致。",
+    "type": "create",
+    "checks": [
+      { "kind": "file_contains", "path": "src/entities/coupon/model/guards.ts", "pattern": "isExpired" },
+      { "kind": "typecheck" }
+    ]
+  },
+
+  {
+    "id": "deep-bugfix-checkout-total",
+    "category": "bugfix",
+    "smoke": true,
+    "task": "结算金额算错了：3 件单价 10 元的商品算出来是 10 而不是 30，数量被忽略了。找到负责计算总额的模块并修复，保证其现有测试通过。",
+    "type": "modify",
+    "checks": [
+      { "kind": "cmd", "argv": ["npx", "vitest", "run", "src/features/checkout/lib/computeTotal.test.ts"] },
+      { "kind": "typecheck" }
+    ]
+  },
+  {
+    "id": "deep-bugfix-cart-merge",
+    "category": "bugfix",
+    "smoke": false,
+    "task": "购物车合并同一 SKU 时数量被覆盖而不是累加（2 件 + 3 件得到 3 件）。找到负责合并的模块并修复，保证其现有测试通过。",
+    "type": "modify",
+    "checks": [
+      { "kind": "cmd", "argv": ["npx", "vitest", "run", "src/features/cart/lib/mergeLines.test.ts"] },
+      { "kind": "typecheck" }
+    ]
+  },
+  {
+    "id": "deep-bugfix-shipping-eta",
+    "category": "bugfix",
+    "smoke": false,
+    "task": "配送时效估算在距离恰好是 500 公里整数倍时多算了一天（1000 公里应为 2 天，实际返回 3）。找到负责估算的模块并修复，保证其现有测试通过。",
+    "type": "modify",
+    "checks": [
+      { "kind": "cmd", "argv": ["npx", "vitest", "run", "src/features/shipping/lib/estimateEta.test.ts"] },
+      { "kind": "typecheck" }
+    ]
+  },
+
+  {
+    "id": "deep-refactor-route-title",
+    "category": "refactor",
+    "smoke": true,
+    "task": "给路由表的每一项增加一个 title 字段（人类可读的页面标题），类型定义与现有数据都要同步更新。",
+    "type": "modify",
+    "checks": [
+      { "kind": "file_contains", "path": "src/app/routes/routeTable.ts", "pattern": "title" },
+      { "kind": "typecheck" }
+    ]
+  },
+  {
+    "id": "deep-refactor-spinner-variant",
+    "category": "refactor",
+    "smoke": false,
+    "task": "给共享的 Spinner 组件增加可选的 variant 属性（'inline' | 'block'），并透传到渲染结果上。",
+    "type": "modify",
+    "checks": [
+      { "kind": "file_contains", "path": "src/shared/ui/Spinner.tsx", "pattern": "variant" },
+      { "kind": "typecheck" }
+    ]
+  }
+]

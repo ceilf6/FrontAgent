@@ -8,6 +8,7 @@ import {
   type AgentSessionSnapshot,
   createAgent,
   type ExecutorStepTrace,
+  type FilesenseConfig,
   type HallucinationGuardConfig,
   type LLMBackend,
 } from '@frontagent/core';
@@ -56,6 +57,15 @@ export interface RunFrontAgentTaskOptions extends RuntimeConfigInput {
   llmBackend?: LLMBackend;
   /** 评测/消融用：覆盖幻觉防控配置（缺省时保持核心默认行为） */
   hallucinationGuard?: HallucinationGuardConfig;
+  /**
+   * 评测/消融用：覆盖 Filesense 导航配置（缺省时沿用 `resolved.filesense`，
+   * 即环境变量与默认值解析出来的那份）。
+   *
+   * 没有这个入口，`filesense.enabled` 虽然在 core 侧是活配置
+   * （`planner-skills.ts` 真读），但从运行时 API 根本够不着——
+   * filesense 消融臂会像 #386 废掉 guard 臂那样，静默退化成「两臂都开着」。
+   */
+  filesense?: FilesenseConfig;
   signal?: AbortSignal;
   /**
    * 显式启用项目内 .frontagent/settings.json 的 hooks（默认关闭）。
@@ -173,7 +183,8 @@ export async function runFrontAgentTask(
     hallucinationGuard: options.hallucinationGuard,
     execution: resolved.execution,
     rag: resolved.rag,
-    filesense: resolved.filesense,
+    // 调用方显式给了就用调用方的（消融臂靠这条），否则沿用解析出来的默认配置
+    filesense: options.filesense ?? resolved.filesense,
     skillContent: {
       builtInSkillRoots: resolveBuiltInSkillRoots(options.builtInSkillRoots),
     },
@@ -443,7 +454,8 @@ export async function planFrontAgentTask(
     hallucinationGuard: options.hallucinationGuard,
     execution: resolved.execution,
     rag: resolved.rag,
-    filesense: resolved.filesense,
+    // 调用方显式给了就用调用方的（消融臂靠这条），否则沿用解析出来的默认配置
+    filesense: options.filesense ?? resolved.filesense,
     skillContent: {
       builtInSkillRoots: resolveBuiltInSkillRoots(options.builtInSkillRoots),
     },

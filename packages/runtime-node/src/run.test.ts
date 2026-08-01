@@ -397,4 +397,30 @@ describe('runFrontAgentTask orchestration', () => {
     });
     expect(captured?.hallucinationGuard).toBeUndefined();
   });
+
+  // 没有这条接线，`filesense.enabled` 在 core 侧虽是活配置，但从运行时 API
+  // 够不着——filesense 消融臂会像 #386 废掉 guard 臂那样静默退化成「两臂都开着」。
+  it('passes filesense config through to the agent (ablation seam)', async () => {
+    let captured: AgentConfig | undefined;
+    await runWith(baseOptions({ filesense: { enabled: false } }), (agent) => {
+      captured = agent.config;
+      agent.emit({ type: 'task_completed', result: SUCCESS_RESULT } as AgentEvent);
+      for (const d of pendingHookDeferreds) d.resolve();
+      agent.resolveExecute(SUCCESS_RESULT);
+    });
+    expect(captured?.filesense).toEqual({ enabled: false });
+  });
+
+  it('falls back to the resolved filesense config when the caller omits it', async () => {
+    let captured: AgentConfig | undefined;
+    await runWith(baseOptions(), (agent) => {
+      captured = agent.config;
+      agent.emit({ type: 'task_completed', result: SUCCESS_RESULT } as AgentEvent);
+      for (const d of pendingHookDeferreds) d.resolve();
+      agent.resolveExecute(SUCCESS_RESULT);
+    });
+    // 省略时不得变成 undefined：那会连环境变量解析出来的配置一起丢掉
+    expect(captured?.filesense).toBeDefined();
+    expect(captured?.filesense?.enabled).not.toBe(false);
+  });
 });

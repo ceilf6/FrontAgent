@@ -157,6 +157,22 @@ console.log(`# FrontAgent 消融评测：filesense 目录导航对一次通过�
 | 触发任务的平均扫描条目 | ${avg(triggered, 'filesenseEntries')} |
 | **预算闸被触发（truncated）的任务数** | **${truncTasks(arms.full).length}** |
 
+## 定位精度（本报告的主指标）
+
+通过率对「找得准不准」不敏感：两臂都能靠 list_directory / search_code 慢慢摸出来，
+**结果相同、代价不同**——而代价才是导航能力的直接体现。下表统计探索类步骤
+（read_file / list_directory / search_code）落在任务声明的 targetDirs 之外的次数。
+targetDirs 由任务自己声明，不是从结果反推的。
+
+| 指标 | filesense 关 | filesense 开 |
+|---|---|---|
+| 平均探索步数 / 任务 | ${avg(arms.off, 'exploredCount')} | ${avg(arms.full, 'exploredCount')} |
+| **平均脱靶探索 / 任务** | **${avg(arms.off, 'offTargetExplored')}** | **${avg(arms.full, 'offTargetExplored')}** |
+| 累计脱靶探索 | ${sum(arms.off, 'offTargetExplored')} | ${sum(arms.full, 'offTargetExplored')} |
+
+> 脱靶数越低说明越少在无关目录里翻找。若两臂脱靶数接近，说明在这个任务集上
+> 目标位置本来就好猜，导航没有可发挥的空间——那是**任务设计**的结论，不是能力的结论。
+
 ## 分类通过率
 
 | 类别 | filesense 关 | filesense 开 | 该类触发导航数 |

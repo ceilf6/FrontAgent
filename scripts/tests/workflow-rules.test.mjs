@@ -566,6 +566,18 @@ test('README documents the reproducible ablation benchmark and its negative find
   assert.match(readme, /zero interceptions/u);
 });
 
+test('README qualifies filesense writeMode so `workspace` is not read as applying to navigate', () => {
+  // navigate is a read-only tool: the engine rejects `workspace` and the planner
+  // downgrades it. Documenting the value without that qualifier is what made the
+  // setting look usable while silently costing the whole navigation phase.
+  for (const path of ['README.md', 'docs/README-CN.md']) {
+    const doc = readFileSync(path, 'utf8');
+    assert.match(doc, /FRONTAGENT_FILESENSE_WRITE_MODE/u);
+    assert.match(doc, /filesense_sync/u);
+    assert.match(doc, /navigate/u);
+  }
+});
+
 test('README exposes the verifiable npm downloads counter with its marker block', () => {
   const readme = readFileSync('README.md', 'utf8');
 

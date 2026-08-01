@@ -185,9 +185,11 @@ describe('Filesense Engine', () => {
   it('navigate rejects writeMode workspace instead of silently ignoring it', async () => {
     await fs.writeFile(path.join(TEST_DIR, 'package.json'), '{}');
 
-    await expect(navigate(TEST_DIR, { paths: ['.'], writeMode: 'workspace' })).rejects.toThrow(
-      /read-only/u,
-    );
+    // 类型层已排除 'workspace'；这里刻意绕过类型，模拟未经类型检查的 MCP args——
+    // 运行期守卫存在的意义正是覆盖这条入口。
+    await expect(
+      navigate(TEST_DIR, { paths: ['.'], writeMode: 'workspace' as never }),
+    ).rejects.toThrow(/read-only/u);
 
     const indexExists = await fs
       .access(path.join(TEST_DIR, 'FILES.json'))

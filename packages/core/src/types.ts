@@ -171,8 +171,11 @@ export interface FilesenseConfig {
   output?: 'summary' | 'candidates' | 'verbose';
   /**
    * 写入模式（默认 cache）。
-   * 仅对 `filesense_sync` 类写索引工具有意义：navigate 是只读工具，
-   * `workspace` 在规划阶段会被降级为 `none` 并打一条 warn。
+   *
+   * **目前没有任何生效消费者**：唯一读它的工具是 navigate，而 navigate 是只读的——
+   * `cache` 与 `none` 行为完全相同，`workspace` 在规划阶段被降级为 `none`（并打一条 warn）。
+   * `filesense_sync` 不接受该参数、恒写索引。保留该字段是为了不破坏既有配置，
+   * 若将来引入真正的缓存位置概念，此处才会有区分。
    */
   writeMode?: FilesenseWriteMode;
   /** 默认最大扫描条目数 */

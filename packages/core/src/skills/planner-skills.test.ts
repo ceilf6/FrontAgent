@@ -101,7 +101,15 @@ describe('phase.filesense-navigate writeMode boundary', () => {
       registry.injectPhaseSteps(createTask, writeSteps, stepFactory, { writeMode: 'workspace' });
     }
 
-    expect(warn.mock.calls.length).toBeLessThanOrEqual(1);
+    // 必须是恰好 1：`<= 1` 在 0 次告警时也通过，钉不住语义；
+    // 而且若降级标志退化成模块级全局变量，下面这条新 registry 的断言会失败。
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    warn.mockClear();
+    buildRegistry().injectPhaseSteps(createTask, writeSteps, stepFactory, {
+      writeMode: 'workspace',
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('injects no navigate step at all when filesense is disabled', () => {

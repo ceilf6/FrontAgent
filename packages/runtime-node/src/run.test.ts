@@ -411,6 +411,25 @@ describe('runFrontAgentTask orchestration', () => {
     expect(captured?.filesense).toEqual({ enabled: false });
   });
 
+  // 部分覆盖必须是合并：整体替换会把 FRONTAGENT_FILESENSE_MAX_ENTRIES 等
+  // 解析出来的兄弟字段一起丢掉，而调用方通常只想改一个字段。
+  it('merges a partial filesense override with the resolved config', async () => {
+    let captured: AgentConfig | undefined;
+    await runWith(
+      // filesenseMaxEntries 走的是配置解析（等价于 FRONTAGENT_FILESENSE_MAX_ENTRIES），
+      // filesense 只覆盖 enabled——整体替换会把前者抹成 undefined
+      baseOptions({ filesenseMaxEntries: 42, filesense: { enabled: false } }),
+      (agent) => {
+        captured = agent.config;
+        agent.emit({ type: 'task_completed', result: SUCCESS_RESULT } as AgentEvent);
+        for (const d of pendingHookDeferreds) d.resolve();
+        agent.resolveExecute(SUCCESS_RESULT);
+      },
+    );
+    expect(captured?.filesense?.enabled).toBe(false);
+    expect(captured?.filesense?.maxEntries).toBe(42);
+  });
+
   it('falls back to the resolved filesense config when the caller omits it', async () => {
     let captured: AgentConfig | undefined;
     await runWith(baseOptions(), (agent) => {

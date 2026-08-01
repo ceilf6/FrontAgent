@@ -23,7 +23,6 @@ if (!ARM_NAMES.includes(ARM)) throw new Error(`--arm ${ARM_NAMES.join('|')} 必�
 const SCOPE = args.tasks ?? 'all';
 const OUT_DIR = resolve(args.out ?? join(HERE, 'out'));
 mkdirSync(OUT_DIR, { recursive: true });
-const OUT = join(OUT_DIR, `${ARM}.jsonl`);
 
 /**
  * 夹具选择。
@@ -31,9 +30,9 @@ const OUT = join(OUT_DIR, `${ARM}.jsonl`);
  * - `flat`（默认，2026-07-12 那轮用的）：14 个源文件、最深 2 层。filesense 的预算闸
  *   在这个规模上**从不关闸**（实测 src depth=2 maxEntries=180 → 扫 17 条、未截断，
  *   而全仓一共 18 条），一次 `ls -R` 就能塞进上下文——按构造测不出按需导航的价值。
- * - `deep`：feature-sliced，236 个源文件 / 188 个目录 / 最深 5 层，且 `format.ts`、
+ * - `deep`：feature-sliced，242 个源文件 / 188 个目录 / 最深 5 层，且 `format.ts`、
  *   `Button.tsx`、`useToggle.ts` 各有 24 份散落在不同 feature 下。实测同样预算下
- *   扫 180 条即截断（全仓 424 条），定位必须靠语义而非文件名。
+ *   扫 180 条即截断（全仓 430 条），定位必须靠语义而非文件名。
  *   噪音模块由 `fixture-deep/generate.mjs` 生成，跑评测前需先执行一次。
  */
 const FIXTURE_KIND = args.fixture ?? 'flat';
@@ -43,6 +42,16 @@ const TASKS_FILE = join(HERE, FIXTURE_KIND === 'deep' ? 'tasks-deep.json' : 'tas
 if (FIXTURE_KIND === 'deep' && !existsSync(join(FIXTURE, 'src', 'features', 'catalog'))) {
   throw new Error('深夹具尚未生成：先跑 node benchmarks/eval/fixture-deep/generate.mjs');
 }
+// 依赖缺失时 setupWorkspace 会建出悬空软链，typecheck / vitest 全部返回非 0，
+// 整臂产出一串 FAIL——而唯一的中止启发式是「零成功 LLM 调用」，此时不会触发。
+// 那就是「失败被记成数据」，必须在跑之前挡掉。
+if (!existsSync(join(FIXTURE, 'node_modules'))) {
+  throw new Error(`夹具依赖未安装：先在 ${FIXTURE} 下装依赖（或建好 node_modules 软链）`);
+}
+
+// 输出文件名带上夹具：两套夹具的任务 id 不冲突，断点续跑的去重只按 taskId，
+// 先跑 flat 再跑 deep 会静默追加进同一个文件，报告会把两套夹具平均成一个数。
+const OUT = join(OUT_DIR, `${ARM}${FIXTURE_KIND === 'deep' ? '-deep' : ''}.jsonl`);
 
 const ARM_OPTIONS = {
   full: { sddPath: 'sdd.yaml' },
@@ -113,6 +122,9 @@ function collectEventDetail(details, event) {
     });
     return;
   }
+  // 注意：`validation_failed` 的 emit 站点由 PR #402 引入，在它合入 develop 之前
+  // 这个数组恒为空。**空数组的含义是「事件未接线」，不是「零拦截」**——
+  // 2026-07-12 报告的缺陷 3 与后续项 3 说的正是这件事。
   if (event.type === 'validation_failed') {
     details.validationFailed.push({
       // 判失败的检查项：区分「真·内容拦截」与「纯工具失败」的唯一依据
@@ -123,10 +135,19 @@ function collectEventDetail(details, event) {
     });
     return;
   }
-  if (event.type === 'rollback_failed') {
-    details.rollbackFailed.push({
+  // `rollback_started` / `rollback_completed` 是既有事件，一定会到；
+  // `rollback_failed` 随 #402 才进入 AgentEvent 联合类型，在它合入前不会出现。
+  // 三者一起记，才能判定「撤销成功」与「拦到了但没撤销掉」——只看 started
+  // 分不出这两种，而后者意味着坏文件还在工作区里。
+  if (
+    event.type === 'rollback_started' ||
+    event.type === 'rollback_completed' ||
+    event.type === 'rollback_failed'
+  ) {
+    details.rollback.push({
+      outcome: event.type.replace('rollback_', ''),
       snapshotId: event.snapshotId,
-      error: String(event.error ?? '').slice(0, 200),
+      error: event.error ? String(event.error).slice(0, 200) : undefined,
     });
   }
 }
@@ -134,7 +155,7 @@ function collectEventDetail(details, event) {
 for (const task of tasks) {
   const ws = setupWorkspace(task.id);
   const events = {};
-  const eventDetails = { filesense: [], validationFailed: [], rollbackFailed: [] };
+  const eventDetails = { filesense: [], validationFailed: [], rollback: [] };
   const t0 = performance.now();
   const usageBefore = getUsageTally();
   let resultText = '';
@@ -179,6 +200,10 @@ for (const task of tasks) {
     taskId: task.id,
     category: task.category,
     arm: ARM,
+    // 报告器据此断言两臂用的是同一套夹具与任务集——否则会拿 flat 的方法学
+    // 去描述 deep 的产物，正是 #410 撤回结论的同一类失真。
+    fixture: FIXTURE_KIND,
+    taskSet: TASKS_FILE.split('/').pop(),
     pass,
     agentSuccess,
     agentError,

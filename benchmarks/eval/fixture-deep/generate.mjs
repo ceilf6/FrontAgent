@@ -27,6 +27,12 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, 'src');
 
+/**
+ * 已提交的手写锚点——tasks-deep.json 真正要动的文件。
+ * 清理生成树时必须绕开它们，否则重跑生成器会把埋好的 bug 一起删掉。
+ */
+const ANCHORED_FEATURES = new Set(['checkout', 'cart', 'shipping']);
+
 /** 特征域名。数量决定广度——是预算闸能否关上的主要杠杆。 */
 const FEATURES = [
   'checkout',
@@ -82,6 +88,22 @@ function write(relPath, content) {
 // ─── 噪音层：每个 feature 一套同构文件 ────────────────────────────────────────
 // 同构是刻意的：`format.ts`、`Button.tsx`、`useToggle.ts` 在 24 个 feature 下各有一份，
 // 仅凭文件名无法判断哪个是目标。
+
+// 先清理上一轮的生成物：不清的话，改动 FEATURES / ENTITIES 后重跑会留下孤儿文件，
+// 条目数与截断行为随之漂移——而这两个数正是这个夹具存在的理由。
+for (const feature of FEATURES) {
+  if (ANCHORED_FEATURES.has(feature)) {
+    // 锚点 feature 只清生成的子目录，保留 lib/ 下已提交的文件
+    for (const sub of ['api', 'model', 'hooks', 'ui']) {
+      rmSync(join(SRC, 'features', feature, sub), { recursive: true, force: true });
+    }
+    continue;
+  }
+  rmSync(join(SRC, 'features', feature), { recursive: true, force: true });
+}
+for (const entity of ENTITIES) {
+  rmSync(join(SRC, 'entities', entity), { recursive: true, force: true });
+}
 
 for (const feature of FEATURES) {
   const F = pascal(feature);

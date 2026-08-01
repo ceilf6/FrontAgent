@@ -7,8 +7,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const dir = process.argv[2] ?? 'benchmarks/eval/out';
+// --fixture deep 的产物落 `<arm>-deep.jsonl`
+const suffix = process.argv[3] === 'deep' ? '-deep' : '';
 const load = (arm) =>
-  readFileSync(join(dir, `${arm}.jsonl`), 'utf8')
+  readFileSync(join(dir, `${arm}${suffix}.jsonl`), 'utf8')
     .trim()
     .split('\n')
     .filter(Boolean)
@@ -17,6 +19,20 @@ const load = (arm) =>
 const withMap = (rows) => new Map(rows.map((r) => [r.taskId, r]));
 const fullAll = load('full');
 const offAll = load('no-filesense');
+
+// 夹具与任务集必须两臂一致，否则「唯一变量是 filesense」这条前提就不成立。
+// 不校验的话，报告会拿一套夹具的方法学去描述另一套的产物——正是 #410 撤回结论的那类失真。
+const provenance = [...fullAll, ...offAll].map((r) => `${r.fixture ?? 'unknown'}/${r.taskSet ?? 'unknown'}`);
+const distinct = [...new Set(provenance)];
+if (distinct.length !== 1) {
+  console.error(`两臂的夹具/任务集不一致，拒绝出报告：${distinct.join(' vs ')}`);
+  process.exit(1);
+}
+const [FIXTURE_KIND, TASK_SET] = distinct[0].split('/');
+if (FIXTURE_KIND === 'unknown') {
+  console.error('JSONL 缺少 fixture/taskSet 字段——来自旧版 harness，无法确认方法学，拒绝出报告');
+  process.exit(1);
+}
 const fullMap = withMap(fullAll);
 const offMap = withMap(offAll);
 
@@ -55,7 +71,8 @@ console.log(`# FrontAgent 消融评测：filesense 目录导航对一次通过�
 
 ## 方法
 
-- **任务集**：冻结的 ${commonIds.length} 条任务（\`benchmarks/eval/tasks.json\`）。
+- **夹具**：\`benchmarks/eval/${FIXTURE_KIND === 'deep' ? 'fixture-deep' : 'fixture'}\`（两臂一致，已从 JSONL 记录校验）。
+- **任务集**：冻结的 ${commonIds.length} 条任务（\`benchmarks/eval/${TASK_SET}\`）。
 - **模型**：\`${process.env.EVAL_MODEL ?? 'claude-haiku-4-5'}\`，经 Claude Code CLI 作纯文本后端。
 - **两臂**：
   - **filesense 开（full）**：默认配置，规划阶段按 \`decideFilesense\` 的触发策略注入导航步骤。

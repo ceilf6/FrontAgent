@@ -58,8 +58,9 @@ export interface RunFrontAgentTaskOptions extends RuntimeConfigInput {
   /** 评测/消融用：覆盖幻觉防控配置（缺省时保持核心默认行为） */
   hallucinationGuard?: HallucinationGuardConfig;
   /**
-   * 评测/消融用：覆盖 Filesense 导航配置（缺省时沿用 `resolved.filesense`，
-   * 即环境变量与默认值解析出来的那份）。
+   * 评测/消融用：覆盖 Filesense 导航配置。
+   * 与已解析的配置**逐字段合并**（调用方的字段优先），因此只覆盖一个字段
+   * 不会丢掉环境变量解析出来的其余字段。
    *
    * 没有这个入口，`filesense.enabled` 虽然在 core 侧是活配置
    * （`planner-skills.ts` 真读），但从运行时 API 根本够不着——
@@ -183,8 +184,9 @@ export async function runFrontAgentTask(
     hallucinationGuard: options.hallucinationGuard,
     execution: resolved.execution,
     rag: resolved.rag,
-    // 调用方显式给了就用调用方的（消融臂靠这条），否则沿用解析出来的默认配置
-    filesense: options.filesense ?? resolved.filesense,
+    // 合并而非整体替换：调用方常常只覆盖一个字段（消融臂只给 enabled: false），
+    // 整体替换会把 FRONTAGENT_FILESENSE_MAX_ENTRIES 等解析出来的兄弟字段一起丢掉。
+    filesense: { ...resolved.filesense, ...options.filesense },
     skillContent: {
       builtInSkillRoots: resolveBuiltInSkillRoots(options.builtInSkillRoots),
     },
@@ -454,8 +456,9 @@ export async function planFrontAgentTask(
     hallucinationGuard: options.hallucinationGuard,
     execution: resolved.execution,
     rag: resolved.rag,
-    // 调用方显式给了就用调用方的（消融臂靠这条），否则沿用解析出来的默认配置
-    filesense: options.filesense ?? resolved.filesense,
+    // 合并而非整体替换：调用方常常只覆盖一个字段（消融臂只给 enabled: false），
+    // 整体替换会把 FRONTAGENT_FILESENSE_MAX_ENTRIES 等解析出来的兄弟字段一起丢掉。
+    filesense: { ...resolved.filesense, ...options.filesense },
     skillContent: {
       builtInSkillRoots: resolveBuiltInSkillRoots(options.builtInSkillRoots),
     },

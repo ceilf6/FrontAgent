@@ -4,9 +4,9 @@
 version: "1.0"
 
 project:
-  name: "eval-fixture"
+  name: "eval-fixture-deep"
   type: "react-spa"
-  description: "架构消融评测的冻结夹具工程"
+  description: "filesense 消融评测的冻结深夹具工程（feature-sliced，236 源文件 / 188 目录）"
 
 # 技术栈约束
 tech_stack:
@@ -19,25 +19,54 @@ tech_stack:
     - "jquery"
     - "moment"
 
-# 目录结构约束
+# 目录结构约束（feature-sliced：app → features → entities → shared 单向依赖）
+# 这里编码的正是 deep-create-* 三条任务在考的「遵循既有分层约定」，
+# 照抄平坦夹具的 src/components|hooks|utils 会让 SDD 对真实目录树毫无约束。
 directory_structure:
-  src/components:
+  src/app:
+    pattern: "camelCase"
+  src/features:
+    pattern: "camelCase"
+  src/features/*/ui:
     pattern: "PascalCase"
     max_lines: 300
-  src/hooks:
+  src/features/*/hooks:
     pattern: "use*.ts"
-  src/utils:
+  src/features/*/lib:
+    pattern: "camelCase"
+    must_be_pure: true
+  src/entities:
+    pattern: "camelCase"
+  src/shared/ui:
+    pattern: "PascalCase"
+    max_lines: 300
+  src/shared/lib:
     pattern: "camelCase"
     must_be_pure: true
 
-# 模块边界约束
+# 模块边界约束：依赖只能向下（app → features → entities → shared），
+# feature 之间不得横向引用——这是「同名文件散布在 24 个 feature 下」时
+# 唯一能判断该用哪一份的结构性依据。
 module_boundaries:
-  - from: "src/components/*"
+  - from: "src/features/*"
     can_import:
-      - "src/hooks/*"
-      - "src/utils/*"
+      - "src/entities/*"
+      - "src/shared/*"
     cannot_import:
-      - "src/api/*"
+      - "src/app/*"
+      - "src/features/*"
+  - from: "src/entities/*"
+    can_import:
+      - "src/shared/*"
+    cannot_import:
+      - "src/features/*"
+      - "src/app/*"
+  - from: "src/shared/*"
+    can_import: []
+    cannot_import:
+      - "src/app/*"
+      - "src/features/*"
+      - "src/entities/*"
 
 # 命名规范
 naming_conventions:

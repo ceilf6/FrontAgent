@@ -25,28 +25,42 @@ import type {
 const WRITE_ACTIONS = ['apply_patch', 'create_file'];
 
 /**
- * 有资格否决写盘的检查。只有语法失败才在列——语法非法的文件落盘没有任何价值，
- * 而 import_validity 对「同一计划里后续步骤才创建的相对模块」与路径别名会误判 block，
- * 把它纳入否决权会让本来能自洽的多文件计划根本写不出第一个文件。
+ * 写盘否决判据：代码文件里出现 markdown 围栏。
+ *
+ * **为什么不用 guard 的 `syntax_validity`**：它是逐行数引号奇偶 + 括号栈的启发式
+ * （`checks/syntax-validity.ts`），对合法代码会误判 block——实测 `"it's fine"`、
+ * 多行模板字符串、JSX 里的撇号全部判失败。把否决写盘的权力交给它，等于让任何
+ * 含撇号的字符串都写不出来，比它要修的缺陷严重得多。
+ *
+ * 围栏判据则是高精度的：以 ``` 开头的行在 .ts/.tsx/.js 里永远不是合法代码，
+ * 而这正是评测里实际观测到的失效形态（TS1127: Invalid character，模型把
+ * markdown 代码块原样当成文件内容写了出来）。宁可只挡确定的那一类，
+ * 也不要用一个会误伤的判据去挡「所有语法错误」。
+ *
+ * 其余校验结论照旧留给写盘后判定，与本 PR 之前的语义一致。
+ * 启发式本身的误判是既有缺陷，跟踪于 issue #413。
  */
-const PRE_WRITE_VETO_CHECKS = new Set(['syntax_validity']);
+function detectMarkdownFence(content: string): { line: number; text: string } | undefined {
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*```/.test(lines[i])) {
+      return { line: i + 1, text: lines[i].trim().slice(0, 40) };
+    }
+  }
+  return undefined;
+}
 
-/**
- * 把完整校验结果收窄成「写盘否决」判定：仅保留有否决资格且判 block 的失败项。
- * 其余失败项照旧留给写盘后判定，语义与本 PR 之前一致。
- */
-function narrowToPreWriteVeto(validation: ValidationResult): ValidationResult {
-  const vetoing = validation.results.filter(
-    (result) =>
-      !result.pass && result.severity === 'block' && PRE_WRITE_VETO_CHECKS.has(result.type),
-  );
-  if (vetoing.length === 0) {
+/** 把围栏检出结果表达成 ValidationResult，好让事件与错误文案与其余校验同形。 */
+function buildFenceVeto(content: string, path: string): ValidationResult {
+  const fence = detectMarkdownFence(content);
+  if (!fence) {
     return { pass: true, results: [] };
   }
+  const message = `Markdown code fence written into ${path} at line ${fence.line}: ${fence.text}`;
   return {
     pass: false,
-    results: vetoing,
-    blockedBy: vetoing.map((result) => result.message ?? result.type),
+    results: [{ pass: false, type: 'syntax_validity', severity: 'block', message }],
+    blockedBy: [message],
   };
 }
 
@@ -246,13 +260,12 @@ export class Executor {
             )
           : Promise.resolve<ValidationResult>({ pass: true, results: [] }),
       );
-      // 只有语法失败才有资格否决写盘。import_validity 对「同一计划里后续步骤才创建的
-      // 相对模块」和路径别名必然判 block——写盘后判定时文件还在磁盘上、后续步骤补齐即可自洽，
-      // 但一旦升级成写盘否决权，这类合法文件就根本不会存在。import 结果继续留给写盘后判定。
-      const contentValidation = narrowToPreWriteVeto(rawContentValidation);
+      const contentValidation = writeContent
+        ? buildFenceVeto(writeContent.content, writeContent.path)
+        : { pass: true, results: [] };
       if (!contentValidation.pass) {
         const errorMsg = contentValidation.blockedBy?.join('; ') || '';
-        this.emitValidationFailed('pre_write', contentValidation, step);
+        this.emitValidationFailed('pre_write', contentValidation, step, writeContent?.path);
         if (this.config.debug) {
           console.log(`[Executor] Blocked write before disk: ${errorMsg}`);
         }
@@ -263,7 +276,10 @@ export class Executor {
             duration: Date.now() - startTime,
           },
           validation: contentValidation,
-          needsRollback: false,
+          // 磁盘上没有残留（writeLeftOnDisk 保持 false），但中止语义必须与其余真实
+          // 检查失败一致：否则计划继续跑，后续针对该文件的 apply_patch 会拿到
+          // 「文件不存在」并被判为可跳过、记成成功——整轮以「零文件产出」呈现为成功。
+          needsRollback: true,
         });
       }
 
@@ -289,18 +305,20 @@ export class Executor {
           step,
           toolResult,
           toolParams,
-          writeContent ? rawContentValidation : undefined,
+          writeContent
+            ? { validation: rawContentValidation, content: writeContent.content }
+            : undefined,
         ),
       );
 
       let rollbackOutcome: { leftOnDisk: boolean; error?: string } = { leftOnDisk: false };
       if (!postValidation.pass) {
         this.emitValidationFailed('post_write', postValidation, step);
-        // 回滚的触发口径必须和写盘否决口径一致。`import_validity` 对「同一计划里
-        // 后续步骤才创建的相对模块」和路径别名必然判 block——那正是上面刻意
-        // 放行落盘的两类内容。若按未收窄的结果回滚，`create` 快照的回滚是
-        // unlinkSync，等于把刚写好的合法文件删掉，与放行它的理由直接矛盾。
-        if (!narrowToPreWriteVeto(postValidation).pass) {
+        // 回滚的触发口径必须和写盘否决口径一致，且同样不能建立在会误判的启发式上：
+        // `create` 快照的回滚是 unlinkSync，误判一次就是删掉一个合法文件。
+        // 只有确定性的围栏入码才触发撤销。
+        const landed = this.readWrittenFile(step.params.path as string | undefined);
+        if (landed !== undefined && !buildFenceVeto(landed, String(step.params.path)).pass) {
           rollbackOutcome = await this.rollbackFailedWrite(toolResult);
         }
       }
@@ -689,13 +707,15 @@ export class Executor {
     stage: 'pre_execution' | 'pre_write' | 'post_write',
     validation: ValidationResult,
     step: ExecutionStep,
+    /** 已解析的写入路径；技能可能改写过 step.params.path */
+    resolvedPath?: string,
   ): void {
     if (validation.results.some((result) => !result.pass)) {
       this.config.emitEvent?.({
         type: 'validation_failed',
         stage,
         result: validation,
-        path: step.params.path as string | undefined,
+        path: resolvedPath ?? (step.params.path as string | undefined),
         stepId: step.stepId,
       });
     }
@@ -757,7 +777,7 @@ export class Executor {
      * 写盘前已在同一份内容上算出的完整校验结果（含 import 检查）。
      * 有它就直接沿用：内容一模一样，再跑一遍只是重复开销。
      */
-    preWriteContentValidation?: ValidationResult,
+    preWriteContentValidation?: { validation: ValidationResult; content: string },
   ): Promise<ValidationResult> {
     if (typeof result === 'object' && result !== null) {
       const resultObj = result as { success?: boolean; error?: string };
@@ -771,7 +791,14 @@ export class Executor {
     }
 
     if (preWriteContentValidation) {
-      return preWriteContentValidation;
+      // 只有「实际落盘的就是被校验过的那份」才能复用。整文件判定依赖
+      // collectedContext.files 的行数快照，而 apply_patch 成功后该 Map 不刷新——
+      // 同一计划内二次改同一文件时，工具可能只替换了前 N 行并保留尾部，
+      // 落盘内容 ≠ 被校验的 patch.content。不一致就按读回内容重新判。
+      const landed = this.readWrittenFile(step.params.path as string | undefined);
+      if (landed === undefined || landed === preWriteContentValidation.content) {
+        return preWriteContentValidation.validation;
+      }
     }
 
     if (WRITE_ACTIONS.includes(step.action)) {

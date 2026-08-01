@@ -107,8 +107,13 @@ describe('Executor write validation', () => {
         expect(existsSync(join(projectRoot, 'src/Card.tsx'))).toBe(false);
         expect(result.stepResult.success).toBe(false);
         expect(result.stepResult.error).toContain('Pre-write validation failed');
-        expect(result.needsRollback).toBe(false);
-        expect(events).toEqual([expect.objectContaining({ type: 'validation_failed' })]);
+        // 磁盘无残留，但必须中止剩余计划：否则后续针对该文件的 apply_patch
+        // 会拿到「文件不存在」并被判为可跳过、记成成功
+        expect(result.needsRollback).toBe(true);
+        expect(result.writeLeftOnDisk).toBeFalsy();
+        expect(events).toEqual([
+          expect.objectContaining({ type: 'validation_failed', stage: 'pre_write' }),
+        ]);
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }
@@ -147,81 +152,61 @@ describe('Executor write validation', () => {
       expect(result.stepResult.success).toBe(true);
     });
 
-    it('rolls back a written patch when post-write validation fails', async () => {
-      const events: AgentEvent[] = [];
-      const executor = new Executor(
-        makeConfig({
-          hallucinationGuard: {
-            validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
-            validateCode: vi.fn().mockResolvedValue({
-              pass: false,
-              // 真实 guard 失败时 results 必有判失败项——事件口径依赖它
-              results: [
-                {
-                  pass: false,
-                  type: 'syntax_validity',
-                  severity: 'block',
-                  message: 'Syntax errors found in src/a.ts',
-                },
-              ],
-              blockedBy: ['Syntax errors found in src/a.ts'],
-            }),
-          } as unknown as ExecutorConfig['hallucinationGuard'],
-          emitEvent: (event) => events.push(event),
-          // SecurityManager 把 rollback 归为「需审批」，非交互运行会直接拒绝；
-          // 自动回滚要真正落地必须有这条 allow 规则（见 PR follow-up）
-          security: { permissions: { allow: ['rollback'] } },
-        }),
-      );
-      const callTool = vi.fn().mockImplementation((tool: string) => {
-        if (tool === 'rollback') {
-          return Promise.resolve({ success: true, message: 'rolled back' });
-        }
-        return Promise.resolve({
-          success: true,
-          content: 'export const a = {',
-          snapshotId: 'snap-1',
+    it('rolls back a written patch whose landed content carries a markdown fence', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-rb-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const target = join(projectRoot, 'src/a.ts');
+        const original = 'export const x = 0;\nexport const a = 1;\n';
+        writeFileSync(target, original);
+
+        const events: AgentEvent[] = [];
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+            emitEvent: (event) => events.push(event),
+            security: { permissions: { allow: ['rollback'] } },
+          }),
+        );
+        // 真实工具的返回形状：只有 success + snapshotId，内容靠落盘体现
+        const callTool = vi.fn().mockImplementation((tool: string) => {
+          if (tool === 'rollback') {
+            writeFileSync(target, original);
+            return Promise.resolve({ success: true, message: 'rolled back' });
+          }
+          writeFileSync(target, 'export const x = 0;\n```ts\n');
+          return Promise.resolve({ success: true, snapshotId: 'snap-1' });
         });
-      });
-      executor.registerMCPClient('files', {
-        callTool,
-        listTools: vi.fn().mockResolvedValue([]),
-      });
-      executor.registerToolMapping('apply_patch', 'files');
-      executor.registerToolMapping('rollback', 'files');
+        executor.registerMCPClient('files', { callTool, listTools: vi.fn().mockResolvedValue([]) });
+        executor.registerToolMapping('apply_patch', 'files');
+        executor.registerToolMapping('rollback', 'files');
 
-      const result = await executor.executeStep(
-        makeStep({
-          action: 'apply_patch',
-          tool: 'apply_patch',
-          // 非空 patches：走直传路径，避免落进 apply_patch 技能的 LLM 代码生成分支。
-          // 局部行补丁（不覆盖整文件）写盘前内容不可知，故必然落到写盘后判定 + 回滚——
-          // 整文件 replace 已被前置门禁挡在磁盘外，测不到这条回滚路径。
-          params: {
-            path: 'src/a.ts',
-            patches: [
-              { operation: 'replace', startLine: 2, endLine: 2, content: 'export const a = {' },
-            ],
-          },
-        }),
-        makeExecutionContext({
-          collectedContext: {
-            files: new Map([['src/a.ts', 'export const x = 0;\nexport const a = 1;\n']]),
-          },
-        }),
-      );
+        const result = await executor.executeStep(
+          makeStep({
+            action: 'apply_patch',
+            tool: 'apply_patch',
+            // 局部行补丁：写盘前内容不可知，落到写盘后判定
+            params: {
+              path: 'src/a.ts',
+              patches: [{ operation: 'replace', startLine: 2, endLine: 2, content: '```ts' }],
+            },
+          }),
+          makeExecutionContext({
+            collectedContext: { files: new Map([['src/a.ts', original]]) },
+          }),
+        );
 
-      expect(callTool).toHaveBeenCalledWith('rollback', { snapshotId: 'snap-1' });
-      expect(result.stepResult.success).toBe(false);
-      // 校验类失败 → 中止语义保持（planner 给写步骤的 validation 是 required:true，
-      // 旧条件在写步骤上恒真）。回滚成功属于磁盘状态，由 writeLeftOnDisk 单独表达。
-      expect(result.needsRollback).toBe(true);
-      expect(result.writeLeftOnDisk).toBe(false);
-      expect(events.map((event) => event.type)).toEqual([
-        'validation_failed',
-        'rollback_started',
-        'rollback_completed',
-      ]);
+        expect(result.stepResult.success).toBe(false);
+        expect(callTool).toHaveBeenCalledWith('rollback', { snapshotId: 'snap-1' });
+        // 回滚成功 → 磁盘干净 → writeLeftOnDisk 为 false；
+        // needsRollback 表达的是「有真实检查判失败」，仍为 true
+        expect(result.writeLeftOnDisk).toBe(false);
+        expect(readFileSync(target, 'utf-8')).toBe(original);
+        expect(events.map((event) => event.type)).toContain('rollback_completed');
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
     });
 
     it('does not emit validation_failed when only the tool itself failed', async () => {
@@ -493,67 +478,56 @@ describe('Executor write validation', () => {
     // 默认非交互配置下 SecurityManager 拒绝 rollback。这条分支恰恰是 headless
     // 运行里最需要上报的：没有终态事件，调用方会停在「回滚开始」。
     it('emits rollback_failed and reports the file is still on disk when rollback is denied', async () => {
-      const events: AgentEvent[] = [];
-      const executor = new Executor(
-        makeConfig({
-          hallucinationGuard: {
-            validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
-            validateCode: vi.fn().mockResolvedValue({
-              pass: false,
-              results: [
-                {
-                  pass: false,
-                  type: 'syntax_validity',
-                  severity: 'block',
-                  message: 'Syntax errors found in src/a.ts',
-                },
-              ],
-              blockedBy: ['Syntax errors found in src/a.ts'],
-            }),
-          } as unknown as ExecutorConfig['hallucinationGuard'],
-          emitEvent: (event) => events.push(event),
-          // 刻意不给 permissions.allow: ['rollback']——这就是评测所处的默认配置
-        }),
-      );
-      const callTool = vi.fn().mockImplementation((tool: string) => {
-        if (tool === 'rollback') {
-          return Promise.resolve({ success: true, message: 'rolled back' });
-        }
-        return Promise.resolve({ success: true, content: 'x', snapshotId: 'snap-1' });
-      });
-      executor.registerMCPClient('files', {
-        callTool,
-        listTools: vi.fn().mockResolvedValue([]),
-      });
-      executor.registerToolMapping('apply_patch', 'files');
-      executor.registerToolMapping('rollback', 'files');
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-rbdeny-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const target = join(projectRoot, 'src/a.ts');
+        const original = 'export const x = 0;\nexport const a = 1;\n';
+        writeFileSync(target, original);
 
-      const result = await executor.executeStep(
-        makeStep({
-          action: 'apply_patch',
-          tool: 'apply_patch',
-          // 局部行补丁：内容写盘前不可知，落到写盘后判定 → 触发回滚 → 回滚被安全层拒
-          params: {
-            path: 'src/a.ts',
-            patches: [
-              { operation: 'replace', startLine: 2, endLine: 2, content: 'export const a = {' },
-            ],
-          },
-        }),
-        makeExecutionContext({
-          collectedContext: {
-            files: new Map([['src/a.ts', 'export const x = 0;\nexport const a = 1;\n']]),
-          },
-        }),
-      );
+        const events: AgentEvent[] = [];
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+            emitEvent: (event) => events.push(event),
+            // 刻意不给 permissions.allow: ['rollback']——这就是评测所处的默认配置
+          }),
+        );
+        const callTool = vi.fn().mockImplementation((tool: string) => {
+          if (tool === 'rollback') {
+            return Promise.resolve({ success: true, message: 'rolled back' });
+          }
+          writeFileSync(target, 'export const x = 0;\n```ts\n');
+          return Promise.resolve({ success: true, snapshotId: 'snap-1' });
+        });
+        executor.registerMCPClient('files', { callTool, listTools: vi.fn().mockResolvedValue([]) });
+        executor.registerToolMapping('apply_patch', 'files');
+        executor.registerToolMapping('rollback', 'files');
 
-      const types = events.map((event) => event.type);
-      expect(types).toContain('rollback_started');
-      // 关键：不能出现只有 started 没有终态的悬空序列
-      expect(types).toContain('rollback_failed');
-      expect(result.stepResult.error).toContain('still on disk');
-      // 坏文件仍在磁盘上 → 后续步骤不能在这个状态上继续
-      expect(result.needsRollback).toBe(true);
+        const result = await executor.executeStep(
+          makeStep({
+            action: 'apply_patch',
+            tool: 'apply_patch',
+            params: {
+              path: 'src/a.ts',
+              patches: [{ operation: 'replace', startLine: 2, endLine: 2, content: '```ts' }],
+            },
+          }),
+          makeExecutionContext({
+            collectedContext: { files: new Map([['src/a.ts', original]]) },
+          }),
+        );
+
+        const types = events.map((event) => event.type);
+        expect(types).toContain('rollback_started');
+        // 关键：不能出现只有 started 没有终态的悬空序列
+        expect(types).toContain('rollback_failed');
+        expect(result.stepResult.error).toContain('still on disk');
+        expect(result.writeLeftOnDisk).toBe(true);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
     });
   });
   describe('post-write validation reads the file back', () => {
@@ -582,7 +556,7 @@ describe('Executor write validation', () => {
             writeFileSync(target, 'export const x = 0;\nexport const a = 1;\n');
             return Promise.resolve({ success: true, message: 'rolled back' });
           }
-          writeFileSync(target, 'export const x = 0;\nexport const a = {\n');
+          writeFileSync(target, 'export const x = 0;\n```ts\n');
           return Promise.resolve({ success: true, snapshotId: 'snap-1' });
         });
         executor.registerMCPClient('files', {
@@ -602,9 +576,7 @@ describe('Executor write validation', () => {
             params: {
               path: 'src/a.ts',
               // 局部行补丁：写盘前内容不可知，只能靠读回
-              patches: [
-                { operation: 'replace', startLine: 2, endLine: 2, content: 'export const a = {' },
-              ],
+              patches: [{ operation: 'replace', startLine: 2, endLine: 2, content: '```ts' }],
             },
           }),
           makeExecutionContext({
@@ -656,6 +628,82 @@ describe('Executor write validation', () => {
 
         const failed = events.find((event) => event.type === 'validation_failed');
         expect(failed).toMatchObject({ stage: 'pre_write', path: 'src/Card.tsx' });
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+  });
+  describe('the pre-write veto must not fire on legitimate code', () => {
+    // 这是本轮最该锁住的契约。guard 的 syntax_validity 是逐行数引号奇偶的启发式，
+    // 对 "it's"、多行模板字符串、JSX 撇号全部判 block（实测）。曾经把它当作写盘
+    // 否决权，等于让任何含撇号的字符串都写不出来——比它要修的缺陷严重得多。
+    const legitimate = {
+      'apostrophe in a string': 'export const msg = "it\'s fine";\n',
+      'multi-line template literal': 'export const q = `\n  SELECT 1\n`;\n',
+      'JSX text with an apostrophe': "export const P = () => <p>Don't panic</p>;\n",
+      'unbalanced-looking regex': 'export const re = /[{(]/;\n',
+    };
+
+    for (const [name, content] of Object.entries(legitimate)) {
+      it(`writes a file containing ${name}`, async () => {
+        const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-legit-'));
+        try {
+          mkdirSync(join(projectRoot, 'src'), { recursive: true });
+          const executor = new Executor(
+            makeConfig({
+              projectRoot,
+              hallucinationGuard: new HallucinationGuard({ projectRoot }),
+            }),
+          );
+          const callTool = vi.fn().mockResolvedValue({ success: true });
+          executor.registerMCPClient('files', {
+            callTool,
+            listTools: vi.fn().mockResolvedValue([]),
+          });
+          executor.registerToolMapping('create_file', 'files');
+
+          const result = await executor.executeStep(
+            makeStep({ params: { path: 'src/Legit.tsx', content } }),
+            makeExecutionContext(),
+          );
+
+          expect(callTool).toHaveBeenCalledTimes(1);
+          expect(result.stepResult.error).not.toContain('Pre-write validation failed');
+        } finally {
+          rmSync(projectRoot, { recursive: true, force: true });
+        }
+      });
+    }
+
+    it('still blocks a markdown fence, which is the failure actually observed in the eval', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-fence-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+          }),
+        );
+        const callTool = vi.fn().mockResolvedValue({ success: true });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('create_file', 'files');
+
+        const result = await executor.executeStep(
+          makeStep({
+            params: {
+              path: 'src/Card.tsx',
+              content: '```tsx\nexport const Card = () => null;\n```\n',
+            },
+          }),
+          makeExecutionContext(),
+        );
+
+        expect(callTool).not.toHaveBeenCalled();
+        expect(result.stepResult.error).toContain('Markdown code fence');
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }

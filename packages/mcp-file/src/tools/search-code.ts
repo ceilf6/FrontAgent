@@ -37,6 +37,60 @@ export interface SearchCodeResult {
   totalMatches?: number;
   truncated?: boolean;
   error?: string;
+  /**
+   * 降级说明。搜索成功但没有按调用方原本的意图执行时必须填——
+   * 静默降级会让空结果被读成「仓库里没有」，而实际是「没按你说的搜」。
+   */
+  warnings?: string[];
+}
+
+/**
+ * 把调用方给的 `pattern` 编译成正则；非法时退化为字面量匹配而不是抛出。
+ *
+ * 这里曾经是 `new RegExp(pattern, 'gi')`，没有 try/catch。模型很自然地把
+ * 路径形状的东西写成 glob——同一个工具既收 `pattern`（正则）又收
+ * `filePattern`（glob），命名上区分不出语义——而 `**` 在正则里恰好非法
+ * （`Nothing to repeat`）。于是整次搜索硬失败，不是降级、不是空结果。
+ *
+ * 2026-08-02 消融实验里实测连崩四次：
+ *
+ *     Invalid regular expression: /src/features/checkout/**\/gi
+ *     Invalid regular expression: /src/**\/gi
+ *     Invalid regular expression: /**\/*.test.ts|**\/*.spec.ts/gi
+ *
+ * 失败信息还对模型无用：「Nothing to repeat」不提示该换哪个参数，
+ * 于是它换着花样重试，四次撞同一堵墙，把重试预算烧光。
+ * 而这条路径正是导航失手后的兜底（issue #433）。
+ *
+ * 降级顺序也重要：`pattern` 非法时优先改用 `query`。把 glob 当字面量去搜
+ * 文件内容必然是空结果——不崩了，但空结果会被读成「仓库里没有」，
+ * 比崩溃更难发现。只有在没有 `query` 可退时才退到字面量。
+ */
+function buildSearchRegex(
+  pattern: string | undefined,
+  query: string | undefined,
+): { regex: RegExp; warning?: string } {
+  if (!pattern) return { regex: new RegExp(escapeRegex(query!), 'gi') };
+  try {
+    return { regex: new RegExp(pattern, 'gi') };
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error);
+    const looksGlob = /\*\*|\*\./.test(pattern);
+    const hint = looksGlob
+      ? `pattern 看起来是 glob（${pattern}）——限定文件范围请用 filePattern，pattern 只接受正则。`
+      : `pattern 不是合法正则（${why}）。`;
+
+    if (query) {
+      return {
+        regex: new RegExp(escapeRegex(query), 'gi'),
+        warning: `${hint} 已改用 query 搜索。`,
+      };
+    }
+    return {
+      regex: new RegExp(escapeRegex(pattern), 'gi'),
+      warning: `${hint} 已退化为字面量搜索，结果可能为空。`,
+    };
+  }
 }
 
 /**
@@ -94,7 +148,7 @@ export async function searchCode(
     }
 
     const matches: SearchMatch[] = [];
-    const searchRegex = pattern ? new RegExp(pattern, 'gi') : new RegExp(escapeRegex(query!), 'gi');
+    const { regex: searchRegex, warning: regexWarning } = buildSearchRegex(pattern, query);
 
     for (const file of safeFiles) {
       if (matches.length >= effectiveMaxResults) {
@@ -166,6 +220,7 @@ export async function searchCode(
       matches,
       totalMatches: matches.length,
       truncated: matches.length >= effectiveMaxResults,
+      ...(regexWarning ? { warnings: [regexWarning] } : {}),
     };
   } catch (error) {
     return {
@@ -190,11 +245,15 @@ export const searchCodeSchema = {
       },
       pattern: {
         type: 'string',
-        description: '正则表达式模式（优先于 query）',
+        description:
+          '搜索文件内容用的正则（优先于 query）。只接受正则，不接受 glob——' +
+          '要限定搜索的目录或文件类型请用 filePattern，把 "src/xxx/**" 写在这里是无效的。',
       },
       filePattern: {
         type: 'string',
-        description: '文件 glob 模式，默认搜索常见代码文件',
+        description:
+          '限定搜索哪些文件的 glob（如 "src/features/checkout/**" 或 "**/*.test.ts"），' +
+          '默认搜索常见代码文件。目录范围与文件类型都由它控制，不要写进 pattern。',
         default: '**/*.{ts,tsx,js,jsx,json,yaml,yml,md,css,scss,html,vue,svelte}',
       },
       globOnly: {

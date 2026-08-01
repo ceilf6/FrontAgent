@@ -564,6 +564,12 @@ test('README documents the reproducible ablation benchmark and its negative find
   // Findings are stated honestly rather than advertised as a win.
   assert.match(readme, /negative and actionable/u);
   assert.match(readme, /zero interceptions/u);
+
+  // The zero-interception count was later shown to be an observability artifact.
+  // Stating it unqualified at the top level reproduces the very misreading the
+  // follow-up report corrects, so the qualifier must travel with the claim.
+  assert.match(readme, /2026-07-31-validation-telemetry\.md/u);
+  assert.match(readme, /no emit site/u);
 });
 
 test('README documents filesense writeMode as currently having no effect', () => {

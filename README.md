@@ -1315,6 +1315,8 @@ node benchmarks/eval/report.mjs benchmarks/eval/out
 
 Latest results: [`benchmarks/results/`](benchmarks/results/). **The current findings are negative and actionable**: SDD showed no measurable effect on first-pass rate, and the hallucination guard recorded zero interceptions while syntactically invalid files still landed on disk. Three root causes are documented in the report and tracked as issues.
 
+That zero-interception count has since been qualified: [`2026-07-31-validation-telemetry.md`](benchmarks/results/2026-07-31-validation-telemetry.md) shows the event had no emit site anywhere in the repo at the time, so it could not have been anything but zero. A deterministic probe (committed alongside the report, no LLM spend) shows the check was running and failing all along — it just emitted nothing and left the file on disk.
+
 ## Download Stats (verifiable)
 
 <!-- npm-downloads:start -->

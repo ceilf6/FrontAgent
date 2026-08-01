@@ -170,6 +170,24 @@ for (const c of categories) {
 }
 
 console.log(`
+## 规划降级（读数前必看）
+
+LLM 规划抛错后会静默退到规则生成，而规则生成给 create 任务的目标路径是硬编码的
+`src/new-file.ts`——表现为**步骤全绿、任务成功、文件写错地方**。降级过的任务
+不能与正常任务混在同一个通过率里。
+
+| 臂 | 发生降级的任务数 |
+|---|---|
+| filesense 开 | ${arms.full.filter((r) => r.plannerFallbackReason).length} / ${arms.full.length} |
+| filesense 关 | ${arms.off.filter((r) => r.plannerFallbackReason).length} / ${arms.off.length} |
+
+${
+  arms.full.filter((r) => r.plannerFallbackReason).length > 0 ||
+  arms.off.filter((r) => r.plannerFallbackReason).length > 0
+    ? '**本轮存在降级任务，通过率不可直接引用**——降级把路径覆盖成硬编码值，与 filesense 是否定位成功无关。降级原因见各条记录的 `plannerFallbackReason`。'
+    : '本轮无降级任务。'
+}
+
 ## 读数纪律
 
 - 样本量 ${commonIds.length}（触发子集 ${triggered.length}）。除非差值远大于抽样波动，**不得据此宣称 filesense 提升或无用**。

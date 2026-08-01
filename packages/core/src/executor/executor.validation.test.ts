@@ -110,7 +110,7 @@ describe('Executor write validation', () => {
         // 磁盘无残留，但必须中止剩余计划：否则后续针对该文件的 apply_patch
         // 会拿到「文件不存在」并被判为可跳过、记成成功
         expect(result.needsRollback).toBe(true);
-        expect(result.writeLeftOnDisk).toBeFalsy();
+        expect(result.rollbackFailed).toBeFalsy();
         expect(events).toEqual([
           expect.objectContaining({ type: 'validation_failed', stage: 'pre_write' }),
         ]);
@@ -199,9 +199,9 @@ describe('Executor write validation', () => {
 
         expect(result.stepResult.success).toBe(false);
         expect(callTool).toHaveBeenCalledWith('rollback', { snapshotId: 'snap-1' });
-        // 回滚成功 → 磁盘干净 → writeLeftOnDisk 为 false；
+        // 回滚成功 → 磁盘干净 → rollbackFailed 为 false；
         // needsRollback 表达的是「有真实检查判失败」，仍为 true
-        expect(result.writeLeftOnDisk).toBe(false);
+        expect(result.rollbackFailed).toBe(false);
         expect(readFileSync(target, 'utf-8')).toBe(original);
         expect(events.map((event) => event.type)).toContain('rollback_completed');
       } finally {
@@ -293,7 +293,7 @@ describe('Executor write validation', () => {
         // 关键：写工具返回了 snapshotId，若回滚触发口径没收窄，
         // create 快照的回滚会 unlinkSync 把这个刚写好的合法文件删掉。
         expect(callTool).not.toHaveBeenCalledWith('rollback', expect.anything());
-        expect(result.writeLeftOnDisk).toBeFalsy();
+        expect(result.rollbackFailed).toBeFalsy();
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }
@@ -524,7 +524,7 @@ describe('Executor write validation', () => {
         // 关键：不能出现只有 started 没有终态的悬空序列
         expect(types).toContain('rollback_failed');
         expect(result.stepResult.error).toContain('still on disk');
-        expect(result.writeLeftOnDisk).toBe(true);
+        expect(result.rollbackFailed).toBe(true);
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }

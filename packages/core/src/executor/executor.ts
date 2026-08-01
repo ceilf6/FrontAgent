@@ -251,15 +251,9 @@ export class Executor {
       );
 
       const writeContent = this.resolveWriteContent(step, toolParams, context);
-      const rawContentValidation = await trace.withStage('validate_content', () =>
-        writeContent
-          ? this.config.hallucinationGuard.validateCode(
-              writeContent.content,
-              writeContent.language,
-              writeContent.path,
-            )
-          : Promise.resolve<ValidationResult>({ pass: true, results: [] }),
-      );
+      // 否决判据先跑：它是纯字符串扫描，而 validateCode 会做文件系统解析
+      // （import 检查）。围栏一旦命中就直接 return，没必要为一份不会落盘的内容
+      // 白跑一次完整 guard。
       const contentValidation = writeContent
         ? buildFenceVeto(writeContent.content, writeContent.path)
         : { pass: true, results: [] };
@@ -276,12 +270,22 @@ export class Executor {
             duration: Date.now() - startTime,
           },
           validation: contentValidation,
-          // 磁盘上没有残留（writeLeftOnDisk 保持 false），但中止语义必须与其余真实
+          // 磁盘上没有残留（rollbackFailed 保持 false），但中止语义必须与其余真实
           // 检查失败一致：否则计划继续跑，后续针对该文件的 apply_patch 会拿到
           // 「文件不存在」并被判为可跳过、记成成功——整轮以「零文件产出」呈现为成功。
           needsRollback: true,
         });
       }
+
+      const rawContentValidation = await trace.withStage('validate_content', () =>
+        writeContent
+          ? this.config.hallucinationGuard.validateCode(
+              writeContent.content,
+              writeContent.language,
+              writeContent.path,
+            )
+          : Promise.resolve<ValidationResult>({ pass: true, results: [] }),
+      );
 
       const toolResult = await trace.withStage('call_tool', () =>
         this.callTool(step.tool, toolParams),
@@ -311,7 +315,7 @@ export class Executor {
         ),
       );
 
-      let rollbackOutcome: { leftOnDisk: boolean; error?: string } = { leftOnDisk: false };
+      let rollbackOutcome: { rollbackFailed: boolean; error?: string } = { rollbackFailed: false };
       if (!postValidation.pass) {
         this.emitValidationFailed('post_write', postValidation, step);
         // 回滚的触发口径必须和写盘否决口径一致，且同样不能建立在会误判的启发式上：
@@ -329,7 +333,7 @@ export class Executor {
         output: toolResult,
         // 回滚没成功时把原因并入 error：否则「坏文件还在磁盘上」这一事实在
         // 非交互运行里除了事件流之外无处可查。
-        error: rollbackOutcome.leftOnDisk
+        error: rollbackOutcome.rollbackFailed
           ? `${stepError ?? 'step failed'} (rollback failed: ${rollbackOutcome.error}; the written file is still on disk)`
           : stepError,
         duration: Date.now() - startTime,
@@ -344,7 +348,7 @@ export class Executor {
         // 工具报错返回 results 为空的失败结果，把它算进来会让一次 read_file 失败
         // 就中止整个剩余计划。
         needsRollback: postValidation.results.some((result) => !result.pass),
-        writeLeftOnDisk: rollbackOutcome.leftOnDisk,
+        rollbackFailed: rollbackOutcome.rollbackFailed,
       });
     } catch (error) {
       trace.markCatchIfEmpty(error);
@@ -725,25 +729,25 @@ export class Executor {
    * 撤销已落盘的写入。快照由写工具在改动前创建，回滚是把它恢复回去；
    * 没有快照（工具未写盘或不支持快照）时无事可做。
    *
-   * 返回「磁盘上是否仍留着未被撤销的写入」——这正是 needsRollback 想表达的东西，
-   * 也是判断坏文件是否还在的唯一依据。
+   * 返回「是否尝试过回滚且没成功」。这**不等于**「坏文件还在磁盘上」：
+   * 没有快照时根本不会尝试回滚，文件照样留着。字段名如实反映前者。
    */
   private async rollbackFailedWrite(
     toolResult: unknown,
-  ): Promise<{ leftOnDisk: boolean; error?: string }> {
+  ): Promise<{ rollbackFailed: boolean; error?: string }> {
     if (typeof toolResult !== 'object' || toolResult === null) {
-      return { leftOnDisk: false };
+      return { rollbackFailed: false };
     }
     const snapshotId = (toolResult as { snapshotId?: string }).snapshotId;
     if (!snapshotId) {
-      return { leftOnDisk: false };
+      return { rollbackFailed: false };
     }
 
     this.config.emitEvent?.({ type: 'rollback_started', snapshotId });
     const result = await this.rollback(snapshotId);
     if (result.success) {
       this.config.emitEvent?.({ type: 'rollback_completed', snapshotId });
-      return { leftOnDisk: false };
+      return { rollbackFailed: false };
     }
 
     // 默认非交互配置下安全层会拒绝 rollback。这条分支恰恰是 headless 运行里
@@ -751,7 +755,7 @@ export class Executor {
     // 无法判定坏文件是否还在磁盘上。
     this.config.emitEvent?.({ type: 'rollback_failed', snapshotId, error: result.message });
     this.debugWarn(`[Executor] Rollback failed for snapshot ${snapshotId}: ${result.message}`);
-    return { leftOnDisk: true, error: result.message };
+    return { rollbackFailed: true, error: result.message };
   }
 
   /**
@@ -803,16 +807,21 @@ export class Executor {
 
     if (WRITE_ACTIONS.includes(step.action)) {
       const path = step.params.path as string;
-      // 真实的 create_file / apply_patch 都不返回 `content`
+      // 与写盘前同样按 action 分派。`apply_patch` 的 params 上可能残留一个从不落盘的
+      // `content`（计划参数是自由形状，技能又整体 spread），让它参与取值就是在校验
+      // 一份不会被写入的内容——`resolveWriteContent` 已经躲开这个陷阱，
+      // 写盘后路径不能把同一个坑再挖一遍。
+      //
+      // 另外：真实的 create_file / apply_patch 都不返回 `content`
       // （`{success, path, snapshotId}` / `{success, diff, validation, snapshotId}`），
-      // 局部行补丁也没有 `content` 参数——只靠这三个来源，写盘后内容校验对
-      // 局部补丁永远不会执行，#387 的「非法补丁内容不得留在磁盘」就不成立。
-      // 路径已知、文件刚写完，直接读回来校验。
+      // 局部行补丁也没有 `content` 参数——所以读回磁盘是补丁路径唯一可靠的内容来源。
       const content =
-        (result as { content?: string })?.content ??
-        (toolParams?.content as string | undefined) ??
-        (step.params.content as string | undefined) ??
-        this.readWrittenFile(path);
+        step.action === 'create_file'
+          ? ((result as { content?: string })?.content ??
+            (toolParams?.content as string | undefined) ??
+            (step.params.content as string | undefined) ??
+            this.readWrittenFile(path))
+          : this.readWrittenFile(path);
 
       if (content && path) {
         const language = detectLanguage(path);

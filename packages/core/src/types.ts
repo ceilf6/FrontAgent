@@ -734,11 +734,14 @@ export interface ExecutorOutput {
   /** 是否需要回滚：有真实检查判定失败（纯工具错误不计入） */
   needsRollback: boolean;
   /**
-   * 已落盘的写入未被成功撤销——坏文件仍在工作区里。
-   * 与 needsRollback 分开表达：后者是「要不要中止后续步骤」的调度信号，
-   * 这个是「磁盘处于什么状态」的事实，两者在回滚成功时会分叉。
+   * 尝试过回滚且没成功。
+   *
+   * 刻意**不叫**「写入仍在磁盘」：没有快照时压根不会尝试回滚，文件照样留着，
+   * 那种情况下这个字段是 false。要判断「坏文件是否还在」，得看这个字段
+   * 与 needsRollback 的并集，而不是单看它。
+   * 与 needsRollback 分开表达：后者是「要不要中止后续步骤」的调度信号。
    */
-  writeLeftOnDisk?: boolean;
+  rollbackFailed?: boolean;
   /** 后续步骤调整建议 */
   adjustments?: string[];
 }

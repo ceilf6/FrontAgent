@@ -1,11 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HallucinationGuard } from '@frontagent/hallucination-guard';
 import type { AgentTask, ExecutionStep } from '@frontagent/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { ExecutorActionSkill } from '../skills/index.js';
-import type { AgentEvent } from '../types.js';
 import { createExecutor, Executor } from './executor.js';
 import { ExecutorToolCallHandler } from './tool-call-handler.js';
 import type { ExecutorCollectedContext, ExecutorConfig } from './types.js';

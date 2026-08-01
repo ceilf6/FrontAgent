@@ -74,6 +74,10 @@ console.log(`# FrontAgent 消融评测：SDD 规格约束对一次通过率的�
 3. **\`validation_failed\` 事件从未触发**
    两臂合计 ${sumEvent(arms.full, 'validation_failed') + sumEvent(arms.ablation, 'validation_failed')} 次。该事件挂在执行器不走的那条校验路径上，导致「校验是否起作用」在遥测层面不可观测。
 
+   > **口径提醒（本轮之后）**：该事件现已带 \`stage\` 判别字段（\`pre_execution\` / \`pre_write\` / \`post_write\`）。
+   > 上面这个裸计数把三类混在一起，其中 \`post_write\` 会包含「前向引用 import」这类**刻意放行落盘**的失败，
+   > 因此不能当作「拦截数」使用。要度量拦截率，必须按 stage 分开计数——只有 \`pre_write\` 是真拦截。
+
 **实证**：失败样本中出现 \`TS1127: Invalid character\`——markdown 代码围栏被原样写进 \`.tsx\` 文件并落盘，两臂皆有。这正是 \`checkSyntaxValidity\` 的目标场景，guard 在运行却未阻止其落盘，与缺陷 2 的机制一致。
 
 ## 分类通过率

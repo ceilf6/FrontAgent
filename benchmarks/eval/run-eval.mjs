@@ -95,6 +95,12 @@ for (const task of tasks) {
       ...ARM_OPTIONS[ARM],
       onEvent: (e) => {
         events[e.type] = (events[e.type] ?? 0) + 1;
+        // 带 stage 的事件另记一份分阶段计数：`validation_failed` 的两个阶段含义
+        // 不同（post_write 时文件已经落盘了），只按 type 聚合的话，
+        // 事件加了 stage 也等于白加。
+        if (e.stage) {
+          events[`${e.type}:${e.stage}`] = (events[`${e.type}:${e.stage}`] ?? 0) + 1;
+        }
       },
     });
     resultText = result?.output ?? '';

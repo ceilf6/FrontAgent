@@ -115,6 +115,11 @@ export class FrontAgent {
       onSecurityDecision: (decision) => {
         this.emit({ type: 'security_decision', decision });
       },
+      // 执行器的校验事件经此汇入 agent 事件流；没有这条接线，
+      // 「校验是否拦截」在遥测层不可观测（issue #388）
+      emitEvent: (event) => {
+        this.emit(event);
+      },
       executionEngine: config.execution?.engine,
       langGraph: config.execution?.langGraph,
       maxRecoveryAttempts: config.execution?.maxRecoveryAttempts,

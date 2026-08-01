@@ -215,6 +215,43 @@ describe('createAgent', () => {
   });
 });
 
+describe('executor events reach the agent event stream (#388)', () => {
+  it('wires an emitEvent outlet into the executor', () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+    });
+
+    // 公开入口 agent.execute 需要真实 LLM 才能产出计划，所以这里直接断言接线存在：
+    // 接线一旦从构造期移走，这条会先失败，不会被下面的 cast 掩盖。
+    const executor = (agent as unknown as { executor: { config: { emitEvent?: unknown } } })
+      .executor;
+    expect(typeof executor.config.emitEvent).toBe('function');
+  });
+
+  it('forwards an executor-emitted event to registered listeners', () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+    });
+    const events: Array<{ type: string }> = [];
+    agent.addEventListener((event) => events.push(event as { type: string }));
+
+    const executor = (
+      agent as unknown as {
+        executor: { config: { emitEvent: (e: unknown) => void } };
+      }
+    ).executor;
+    executor.config.emitEvent({
+      type: 'validation_failed',
+      stage: 'post_write',
+      result: { pass: false, results: [], blockedBy: ['x'] },
+    });
+
+    expect(events.map((event) => event.type)).toContain('validation_failed');
+  });
+});
+
 describe('registerWebTools routing contract', () => {
   it('routes web_fetch and the browser tools to the web client', () => {
     const spy = vi.spyOn(Executor.prototype, 'registerToolMapping');

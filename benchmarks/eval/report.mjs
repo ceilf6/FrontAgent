@@ -74,6 +74,16 @@ console.log(`# FrontAgent 消融评测：SDD 规格约束对一次通过率的�
 3. **\`validation_failed\` 事件从未触发**
    两臂合计 ${sumEvent(arms.full, 'validation_failed') + sumEvent(arms.ablation, 'validation_failed')} 次。该事件挂在执行器不走的那条校验路径上，导致「校验是否起作用」在遥测层面不可观测。
 
+   **按阶段分解**（事件接线后才有意义）：
+
+   | 阶段 | SDD 关 | SDD 开 |
+   |---|---|---|
+   | \`pre_execution\`（执行前结构性拦截） | ${sumEvent(arms.ablation, 'validation_failed:pre_execution')} | ${sumEvent(arms.full, 'validation_failed:pre_execution')} |
+   | \`post_write\`（已落盘后判失败） | ${sumEvent(arms.ablation, 'validation_failed:post_write')} | ${sumEvent(arms.full, 'validation_failed:post_write')} |
+
+   > 全为 0 时先分清「未接线」与「零拦截」：若 JSONL 里连 \`validation_failed\` 这个裸键
+   > 都不存在，说明该轮数据产自事件接线之前，此时 0 不构成任何证据。
+
 **实证**：失败样本中出现 \`TS1127: Invalid character\`——markdown 代码围栏被原样写进 \`.tsx\` 文件并落盘，两臂皆有。这正是 \`checkSyntaxValidity\` 的目标场景，guard 在运行却未阻止其落盘，与缺陷 2 的机制一致。
 
 ## 分类通过率

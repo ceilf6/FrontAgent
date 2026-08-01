@@ -117,6 +117,64 @@ ${helpers.join('\n')}
     expect(section).toContain(`replace(/[&<>"']/g`);
   });
 
+  it('prefills the Configure form from user scope, not the gated effective values', () => {
+    const script = renderWebviewConfigScript();
+
+    // The form saves to User Settings. Prefilling it from the effective values
+    // would let one Save promote an approved workspace endpoint into the user's
+    // global default, undoing the per-workspace binding of the approval.
+    expect(script).toContain('const own = config.userScoped || {}');
+    expect(script).toContain("$('configBaseUrl').value = own.baseUrl || ''");
+    expect(script).toContain("$('configModel').value = own.model || ''");
+    expect(script).toContain("$('configProvider').value = own.provider || ''");
+    expect(script).not.toContain("$('configBaseUrl').value = config.baseUrl");
+
+    // The effective value is still visible, as a placeholder, so an
+    // env-configured user does not see an empty form next to a "ready" banner.
+    expect(script).toContain("$('configBaseUrl').placeholder = config.baseUrl");
+    expect(script).toContain("$('configModel').placeholder = config.model");
+
+    // The trust copy is computed host-side and rendered verbatim. Duplicating
+    // the wording here is how the banner and the run-failure message drifted
+    // apart before, so the script must not carry its own branches.
+    expect(script).toContain('(config.endpointTrust || {}).notice');
+    expect(script).not.toContain('trust.declinedThisSession');
+    expect(script).not.toContain('Reset Workspace Endpoint Approval');
+
+    // The notice is appended, not substituted: replacing "Configure now" left
+    // an unconfigured user with no recovery path visible anywhere.
+    expect(script).toContain('const baseCopy = config.configured');
+    expect(script).toContain('Configure now or use the command palette.');
+    expect(script).not.toContain('trustNotice ? trustNotice : baseCopy');
+  });
+
+  it('keeps Send enabled while an endpoint approval is pending', () => {
+    const script = renderWebviewStateScript();
+
+    // Sending is the only path that raises the confirmation modal. Gating it on
+    // `configured` deadlocks every user upgrading from the version whose
+    // Configure wrote to Workspace scope: their endpoint is workspace-supplied,
+    // so `configured` is false until they approve, and they cannot approve.
+    expect(script).toContain(
+      'next.isRunning || (!next.configStatus.configured && !awaitingEndpointApproval)',
+    );
+    // ...but only while a prompt is actually coming. After a decline no modal
+    // appears, so leaving Send enabled would just produce runs that fail.
+    expect(script).toContain('trust.requiresApproval && !trust.declinedThisSession');
+  });
+
+  it('emits a webview script that actually parses', () => {
+    // These renderers build JS inside template literals, so an unescaped
+    // backtick in a comment silently terminates the string and ships a webview
+    // that fails to load. Substring assertions do not reliably catch that.
+    const html = getWebviewHtml({ cspSource: 'vscode-webview://frontagent.test' } as never);
+    const body = html.match(/ {2}<script nonce="[^"]+">\n([\s\S]*?)\n {2}<\/script>/)?.[1];
+
+    expect(body).toBeDefined();
+    // Parses without executing; a syntax error here throws.
+    expect(() => new Function(body ?? '')).not.toThrow();
+  });
+
   it('renders the body markup through a focused renderer', () => {
     const html = getWebviewHtml({ cspSource: 'vscode-webview://frontagent.test' } as never);
     const bodySection = html.match(/<body>\n([\s\S]*?)\n\n {2}<script nonce="/)?.[1];

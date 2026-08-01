@@ -69,6 +69,10 @@ FrontAgent supports terminal, VS Code, and standalone desktop workflows:
 
 Install the VS Code extension from the Marketplace by searching for `FrontAgent` or the extension id `ceilf6.frontagent`.
 
+#### Endpoint trust in the VS Code extension
+
+`frontagent.provider`, `frontagent.model`, and `frontagent.baseUrl` select the host that receives your API key and task context, so the extension treats them as user-scoped configuration. A repository may propose them through its own `.vscode/settings.json`, but FrontAgent withholds a workspace-supplied endpoint until you confirm that exact provider/model/base URL for that workspace folder, re-asks whenever the repository changes it, and ignores it entirely when the workspace is not trusted. `frontagent.apiKey` is `machine`-scoped and is read only from User Settings. See [`apps/vscode/README.md`](apps/vscode/README.md) for details and the reset command.
+
 ### Desktop App
 
 The desktop client is a sandboxed Electron window wired to the real runtime (`window.frontagent` → IPC → `runFrontAgentTask`); it persists settings under your OS user-data directory and degrades gracefully if the runtime is unavailable.

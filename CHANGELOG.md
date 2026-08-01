@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **vscode**: A repository can no longer redirect FrontAgent LLM requests by committing `frontagent.provider` / `frontagent.model` / `frontagent.baseUrl` in `.vscode/settings.json`. Endpoint settings are now resolved per scope: workspace-supplied values are withheld until the user explicitly approves the exact effective endpoint (approval is bound to a digest of the workspace folder plus provider/model/base URL and is re-asked when any of them changes), and they are ignored outright when the workspace is not trusted. `frontagent.apiKey` is `machine`-scoped and honoured only from User Settings. `FrontAgent: Configure` and the sidebar Configure form now write to User Settings instead of Workspace settings, and both prefill from user scope, so accepting either dialog cannot promote a repository-supplied endpoint into User Settings. Repository-supplied values are flattened and truncated before being rendered in the confirmation dialog so they cannot forge its text. A dismissed endpoint prompt is remembered for the session instead of re-asking on every message. Because the RAG reranker and OpenAI embedding clients fall back to the resolved LLM base URL and key, those request paths are covered by the same gate. Thanks to @glmgbj233 for the detailed report. (#421)
+
+### Added
+
+- **vscode**: `FrontAgent: Reset Workspace Endpoint Approval` command to revoke a previously approved workspace endpoint.
+
 ### Changed
 
 - **mcp-filesense**: `filesense_navigate` no longer accepts `writeMode: 'workspace'` — the value is removed from the tool schema and from the exported `NavigateOptions` type, and the engine rejects it at runtime for callers that are not type-checked. navigate is classified as a read-only tool by the executor's `SecurityManager`, so honouring a workspace write there would hand an approval-exempt tool a write primitive. The planner downgrades a configured `workspace` to `none` (warning once) so the navigation phase is not silently dropped. Note that `FRONTAGENT_FILESENSE_WRITE_MODE` currently has no observable effect at any value: `filesense_sync` does not read it and always writes indexes (#403).

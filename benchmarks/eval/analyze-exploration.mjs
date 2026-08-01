@@ -41,6 +41,16 @@ function bucket(record, arm) {
       continue;
     }
     const onTarget = targets.some((d) => path.startsWith(d));
+
+    // 优先用记录里的步骤成败：读一个不存在的文件会失败，这个判据不依赖
+    // 工作区还在。旧记录没有 `ok` 字段时才回退到查工作区。
+    if (typeof step.ok === 'boolean') {
+      if (!step.ok) out.ghost += 1;
+      else if (onTarget) out.hit += 1;
+      else out.offTarget += 1;
+      continue;
+    }
+
     if (!wsAvailable) {
       out.unknown += 1;
       continue;

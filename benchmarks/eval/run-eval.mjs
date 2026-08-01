@@ -218,11 +218,16 @@ function collectEventDetail(details, event) {
     const params = event.step?.params ?? {};
     const where = params.path ?? params.directory ?? params.filePattern;
     if (where) {
+      // 记录步骤成败：读一个**不存在**的文件（模型猜错文件名）会失败，
+      // 而只判目录前缀会把它记成命中——那正是导航该防的幻觉，
+      // 盲区方向是低估导航价值、把两臂对照偏向零（issue #429）。
+      // 记在采集时而不是事后查工作区：工作区会被清理，判据不该依赖它。
+      const ok = event.type === 'step_completed';
       if (['read_file', 'list_directory', 'search_code'].includes(action)) {
-        details.explored.push({ action, path: String(where) });
+        details.explored.push({ action, path: String(where), ok });
       }
       if (['create_file', 'apply_patch'].includes(action)) {
-        details.touched.push({ action, path: String(where) });
+        details.touched.push({ action, path: String(where), ok });
       }
     }
   }
@@ -308,6 +313,8 @@ for (const task of tasks) {
     // 去描述 deep 的产物，正是 #410 撤回结论的同一类失真。
     fixture: FIXTURE_KIND,
     taskSet: basename(TASKS_FILE),
+    // 落进记录，事后分析才不必再回去读任务文件——记录自包含是可复算的前提
+    targetDirs: task.targetDirs ?? null,
     // 注意是**请求值**不是生效值：这里回读的是同进程的同一组常量，
     // 所以报告基于它的一致性校验是构造性结论，不是遥测验证。
     // 真正的生效值要等 core 在 filesense_navigated 载荷里回显 navigate 参数。
@@ -335,6 +342,14 @@ for (const task of tasks) {
     // list_directory / search_code 慢慢摸出来，结果一样、代价不同，
     // 而代价才是导航能力的直接体现。
     exploredCount: eventDetails.explored.length,
+    // 三桶：命中（目录对且步骤成功）/ 幻觉（步骤失败，多为猜错文件名）/ 脱靶（成功但目录错）。
+    // 二分口径把「幻觉」误记为命中，见 #429。
+    exploredHit: task.targetDirs
+      ? eventDetails.explored.filter(
+          (e) => e.ok && !e.path.includes('*') && task.targetDirs.some((d) => e.path.startsWith(d)),
+        ).length
+      : null,
+    exploredGhost: eventDetails.explored.filter((e) => !e.ok && !e.path.includes('*')).length,
     // 脱靶 = 探索到了一个**具体目录**且它不在目标目录下。
     // glob 模式（`**/*Route*.tsx`）不指向具体目录，既不算命中也不算脱靶——
     // 把它算成脱靶会惩罚「先 glob 再收敛」这条 prompt 明确推荐的流程。

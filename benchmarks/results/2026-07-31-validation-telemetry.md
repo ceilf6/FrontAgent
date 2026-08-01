@@ -61,7 +61,11 @@
 
 这是本轮最可靠的一组数据：**零 LLM 消耗、输入完全相同、走真实
 `runFrontAgentTask` 路径**（与评测 harness 同一入口、同一事件采集方式）。
-用一段确定性坏代码（未闭合 `{`，必然触发 guard 的括号匹配检查）：
+用一段确定性坏代码（未闭合 `{`，必然触发 guard 的括号匹配检查）。
+
+探针脚本已随本报告提交：`2026-07-31-smoke/probe-prewrite-validation.mjs`。
+在待测提交上 `pnpm build` 后各跑一次即可复现下表——它不依赖任何模型行为，
+两次运行之间唯一的变量就是被测代码本身。
 
 | | 修复前（`develop` @ `db42301`） | 修复后（PR #402） |
 |---|---|---|
@@ -106,16 +110,32 @@
 | `bugfix-formatdate` | FAIL | PASS |
 | `refactor-todolist-empty` | FAIL | FAIL |
 
-### 两个 `validation_failed` 的归类
+### 两个 `validation_failed` 的归类：**无法从已提交数据判定**
 
-均出现在 ablation 臂，且该臂 guard 四项检查全关，**因此不可能是内容拦截**。
-两条事件都伴随目标文件从未生成（`file_exists` 失败）与
-`validateBeforeExecution` 的 `apply_patch` 前置检查失败——即规划把新建文件
-排成了 `apply_patch`，目标文件读不到，执行前被结构性拦下。
+可以确定的只有一条：均出现在 ablation 臂，且该臂 guard 四项检查全关，
+**因此不可能是内容拦截**。
 
-按 `1a54e25` 的新口径，这两条**仍会**上报（它们的 `results` 中确有
-`pass: false` 项，是真实检查判定），但它们属于**结构性前置拦截**，
-不是「guard 拦下了坏代码」。报告任何「拦截数」时必须区分这两类。
+本报告初版进一步把它们归为 `validateBeforeExecution` 的 `apply_patch`
+结构性前置拦截。**该归因站不住**：§七 与 issue #408 引用的真实错误串是
+`Cannot apply patch: file not found in context: …`，而这个字符串在全仓只有一处
+产生点——`packages/core/src/skills/executor-skills.ts:242` 的 `prepareToolParams`，
+抛于**步骤执行期**，不是执行前校验。`validateBeforeExecution` 的 `apply_patch`
+分支产生的是另外两种文案（`executor.ts` 的 "file … does not exist (confirmed by
+previous directory listing)" 与 "failed to auto-read file …"）。
+
+两种归类会给出**相反**的结论：
+
+| 若实为 | 在 `1a54e25` 新口径下 | 本轮该行应记 |
+|---|---|---|
+| 执行前结构性拦截（`results` 有判失败项） | 仍会上报 | 结构性拦截 2 |
+| 纯工具失败（`validateAfterExecution` 返回 `results: []`） | **不会**上报 | 纯工具失败 2 |
+
+本轮 JSONL 只保存了事件计数，没有保存 `ValidationResult` 负载，
+**因此无法在已提交数据内判定属于哪一类**，此处不下结论。
+下一轮跑之前应先让 harness 落盘事件负载（至少 `type` 与 `message`），
+否则「拦截数」这个指标仍然不可直接使用。
+
+无论属于哪一类，都不是「guard 拦下了坏代码」——真·内容拦截两臂均为 0 这一点不受影响。
 
 ### 写盘前拦截 vs 写盘后回滚
 
@@ -175,14 +195,30 @@ TodoList.tsx    guard.validateCode pass = true | blockedBy = null
 
 **未跑**。不是因为额度耗尽，而是耗时超出可完成范围，按纪律不硬跑。
 
-实测外推（基于本轮 smoke 与 7 月同 5 条任务的比值 27.2 / 24.5 ≈ 1.11）：
+外推口径（本报告初版此处算错，已修正）：估算 = 7 月该臂 27 条实测总量
+× **任务数缩放 30/27** × **该指标自己的实测比值**（本轮 smoke ÷ 7 月同 5 条任务）。
+初版对耗时乘了两个因子、对 token 只乘了一个，且把 full 臂的耗时比值 1.11
+当成了两臂通用的 token 比值——两者都不成立。
 
-| 项 | 估算 |
-|---|---|
-| 单臂 30 条 | ≈ 135 min |
-| 双臂 30 条 | **≈ 4.5 小时** |
-| token（双臂 30 条） | ≈ 758K 输入 / 1.33M 输出 |
-| 费用（haiku-4-5 + cache creation） | **≈ $10** |
+各比值按臂、按指标分别实测（本轮 smoke ÷ 7 月同 5 条任务）：
+
+| 臂 | 耗时 | 输入 token | 输出 token |
+|---|---|---|---|
+| full | 1.109 | 1.251 | 0.988 |
+| ablation | **0.886** | 1.372 | 1.162 |
+
+据此的全量估算：
+
+| 项 | full | ablation | 双臂合计 |
+|---|---|---|---|
+| 30 条耗时 | ≈ 135 min | ≈ 114 min | **≈ 4.2 小时** |
+| 输入 token | ≈ 547K | ≈ 440K | ≈ 987K |
+| 输出 token | ≈ 670K | ≈ 759K | ≈ 1.43M |
+| 费用（haiku-4-5 + cache creation） | | | **≈ $10 量级** |
+
+口径修正后输入 token 比初版高约 30%，但耗时与费用的量级结论不变。
+所有输入数字均可从 `benchmarks/results/{full,ablation}.jsonl`（7 月）与
+`2026-07-31-smoke/{full,ablation}.jsonl`（本轮）逐条累加复算。
 
 后端可用性已验证：`claude` CLI v2.1.220 可用，探针调用
 `is_error: false`、`total_cost_usd: 0.0145`，额度未见受限；本轮 73 次调用

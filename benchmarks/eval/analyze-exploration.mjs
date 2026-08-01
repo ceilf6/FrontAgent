@@ -41,6 +41,16 @@ function bucket(record, arm) {
       continue;
     }
     const onTarget = targets.some((d) => path.startsWith(d));
+
+    // 优先用记录里的步骤成败：读一个不存在的文件会失败，这个判据不依赖
+    // 工作区还在。旧记录没有 `ok` 字段时才回退到查工作区。
+    if (typeof step.ok === 'boolean') {
+      if (!step.ok) out.ghost += 1;
+      else if (onTarget) out.hit += 1;
+      else out.offTarget += 1;
+      continue;
+    }
+
     if (!wsAvailable) {
       out.unknown += 1;
       continue;
@@ -74,6 +84,28 @@ for (const [arm, rows] of Object.entries(arms)) {
   console.log(
     `| ${arm} | ${rows.length} | ${t.hit} | **${t.ghost}** | ${t.offTarget} | ${t.glob} | ${t.unknown} |`,
   );
+}
+
+console.log('\n## 仅统计 full 臂真正触发了导航的任务\n');
+console.log('> 未触发导航的任务上两臂**架构上完全等价**，把它们算进平均只会把差异摊平——');
+console.log('> 第一轮的零差异就是这么来的。触发与否由 `decideFilesense` 的关键词正则决定（#425），');
+console.log('> 所以这一层分组本身也是一个发现：能参与对照的任务比设计时以为的少。\n');
+
+const navigated = new Set(
+  (arms.full ?? []).filter((r) => r.events?.filesense_navigated).map((r) => r.taskId),
+);
+console.log(`触发导航的任务：${navigated.size} / ${(arms.full ?? []).length}\n`);
+console.log('| 臂 | 任务数 | 命中 | 幻觉文件名 | 脱靶 | glob |');
+console.log('|---|---|---|---|---|---|');
+for (const [arm, rows] of Object.entries(arms)) {
+  const subset = rows.filter((r) => navigated.has(r.taskId));
+  if (subset.length === 0) continue;
+  const t = { hit: 0, ghost: 0, offTarget: 0, glob: 0, unknown: 0 };
+  for (const r of subset) {
+    const b = bucket(r, arm);
+    for (const k of Object.keys(t)) t[k] += b[k];
+  }
+  console.log(`| ${arm} | ${subset.length} | ${t.hit} | **${t.ghost}** | ${t.offTarget} | ${t.glob} |`);
 }
 
 console.log('\n> `幻觉文件名` 一列在 run-eval 的 `offTargetExplored` 里被误记为命中（#429）。');

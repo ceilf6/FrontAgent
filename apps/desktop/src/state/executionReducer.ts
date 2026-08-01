@@ -289,6 +289,15 @@ export function consoleReducer(state: ConsoleState, event: AgentEvent): ConsoleS
     case 'rollback_completed':
       return appendLog(state, 'info', `回滚完成: ${event.snapshotId}`);
 
+    case 'rollback_failed':
+      // 没有这条，`rollback_started` 会成为永远等不到收尾的日志，
+      // 用户也无从知道坏文件仍在工作区里。
+      return appendLog(
+        state,
+        'error',
+        `回滚失败: ${event.snapshotId}（写入仍在磁盘上）: ${event.error}`,
+      );
+
     case 'task_completed':
       // A `task_completed` event only means the run reached its end — the run
       // may still have failed. Route the status by `result.success` so the UI

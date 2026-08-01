@@ -793,6 +793,8 @@ export type AgentEvent =
   | { type: 'validation_failed'; result: ValidationResult }
   | { type: 'rollback_started'; snapshotId: string }
   | { type: 'rollback_completed'; snapshotId: string }
+  /** 回滚未成功——写入仍留在磁盘上。没有这个终态，rollback_started 会成为悬空事件 */
+  | { type: 'rollback_failed'; snapshotId: string; error: string }
   | { type: 'task_completed'; result: AgentExecutionResult }
   | { type: 'task_failed'; error: string; taskId?: string };
 

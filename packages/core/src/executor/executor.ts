@@ -24,6 +24,65 @@ import type {
 /** 会把内容写到磁盘的动作——校验必须发生在调用它们之前 */
 const WRITE_ACTIONS = ['apply_patch', 'create_file'];
 
+/**
+ * 有资格否决写盘的检查。只有语法失败才在列——语法非法的文件落盘没有任何价值，
+ * 而 import_validity 对「同一计划里后续步骤才创建的相对模块」与路径别名会误判 block，
+ * 把它纳入否决权会让本来能自洽的多文件计划根本写不出第一个文件。
+ */
+const PRE_WRITE_VETO_CHECKS = new Set(['syntax_validity']);
+
+/**
+ * 把完整校验结果收窄成「写盘否决」判定：仅保留有否决资格且判 block 的失败项。
+ * 其余失败项照旧留给写盘后判定，语义与本 PR 之前一致。
+ */
+function narrowToPreWriteVeto(validation: ValidationResult): ValidationResult {
+  const vetoing = validation.results.filter(
+    (result) =>
+      !result.pass && result.severity === 'block' && PRE_WRITE_VETO_CHECKS.has(result.type),
+  );
+  if (vetoing.length === 0) {
+    return { pass: true, results: [] };
+  }
+  return {
+    pass: false,
+    results: vetoing,
+    blockedBy: vetoing.map((result) => result.message ?? result.type),
+  };
+}
+
+/**
+ * codegen 生成的 apply_patch 是「覆盖整文件的单个 replace」——
+ * 计划 schema 不产出 patches，所有 modify 步骤都走这条路（executor-skills 的
+ * apply_patch 分支固定发 {operation:'replace', startLine:1, endLine:原文件行数}）。
+ * 这类补丁的最终内容在写盘前完全已知，理应和 create_file 一样受前置校验保护。
+ * 只改局部行的补丁仍返回 undefined，落回写盘后判定。
+ */
+function resolveFullFileReplaceContent(
+  toolParams: Record<string, unknown>,
+  originalContent: string | undefined,
+): string | undefined {
+  const patches = toolParams.patches;
+  if (!Array.isArray(patches) || patches.length !== 1) {
+    return undefined;
+  }
+  const patch = patches[0] as {
+    operation?: string;
+    startLine?: number;
+    endLine?: number;
+    content?: string;
+  };
+  if (patch.operation !== 'replace' || typeof patch.content !== 'string') {
+    return undefined;
+  }
+  if (patch.startLine !== 1 || originalContent === undefined) {
+    return undefined;
+  }
+  const originalLines = originalContent.split('\n').length;
+  return typeof patch.endLine === 'number' && patch.endLine >= originalLines
+    ? patch.content
+    : undefined;
+}
+
 export class Executor {
   private config: ExecutorConfig;
   private mcpClients: Map<string, MCPClient> = new Map();
@@ -177,8 +236,8 @@ export class Executor {
         }),
       );
 
-      const writeContent = this.resolveWriteContent(step, toolParams);
-      const contentValidation = await trace.withStage('validate_content', () =>
+      const writeContent = this.resolveWriteContent(step, toolParams, context);
+      const rawContentValidation = await trace.withStage('validate_content', () =>
         writeContent
           ? this.config.hallucinationGuard.validateCode(
               writeContent.content,
@@ -187,6 +246,10 @@ export class Executor {
             )
           : Promise.resolve<ValidationResult>({ pass: true, results: [] }),
       );
+      // 只有语法失败才有资格否决写盘。import_validity 对「同一计划里后续步骤才创建的
+      // 相对模块」和路径别名必然判 block——写盘后判定时文件还在磁盘上、后续步骤补齐即可自洽，
+      // 但一旦升级成写盘否决权，这类合法文件就根本不会存在。import 结果继续留给写盘后判定。
+      const contentValidation = narrowToPreWriteVeto(rawContentValidation);
       if (!contentValidation.pass) {
         const errorMsg = contentValidation.blockedBy?.join('; ') || '';
         this.emitValidationFailed(contentValidation);
@@ -222,19 +285,30 @@ export class Executor {
       }
 
       const postValidation = await trace.withStage('validate_after', () =>
-        this.validateAfterExecution(step, toolResult, toolParams, Boolean(writeContent)),
+        this.validateAfterExecution(
+          step,
+          toolResult,
+          toolParams,
+          writeContent ? rawContentValidation : undefined,
+        ),
       );
 
+      let rollbackOutcome: { leftOnDisk: boolean; error?: string } = { leftOnDisk: false };
       if (!postValidation.pass) {
         this.emitValidationFailed(postValidation);
         // 回滚不看事件口径：工具失败但已产生快照时同样要把落盘撤销
-        await this.rollbackFailedWrite(toolResult);
+        rollbackOutcome = await this.rollbackFailedWrite(toolResult);
       }
 
+      const stepError = postValidation.pass ? undefined : postValidation.blockedBy?.join('; ');
       const stepResult: StepResult = {
         success: postValidation.pass,
         output: toolResult,
-        error: postValidation.pass ? undefined : postValidation.blockedBy?.join('; '),
+        // 回滚没成功时把原因并入 error：否则「坏文件还在磁盘上」这一事实在
+        // 非交互运行里除了事件流之外无处可查。
+        error: rollbackOutcome.leftOnDisk
+          ? `${stepError ?? 'step failed'} (rollback failed: ${rollbackOutcome.error}; the written file is still on disk)`
+          : stepError,
         duration: Date.now() - startTime,
         snapshotId: (toolResult as { snapshotId?: string })?.snapshotId,
       };
@@ -242,7 +316,10 @@ export class Executor {
       return trace.finish({
         stepResult,
         validation: postValidation,
-        needsRollback: !postValidation.pass,
+        // 字段名说的是「需要回滚」，语义就该是「有内容落了盘且没被成功撤销」，
+        // 而不是「这一步失败了」——后者与 !stepResult.success 同义，且会让
+        // progress-enforcement 因为一次 read_file/run_command 失败就中止整个剩余计划。
+        needsRollback: rollbackOutcome.leftOnDisk,
       });
     } catch (error) {
       trace.markCatchIfEmpty(error);
@@ -560,11 +637,12 @@ export class Executor {
 
   /**
    * 解析出「写盘前即可确定的完整文件内容」；返回 null 表示该步骤无法前置校验
-   * （如 apply_patch 只给补丁片段，最终内容要落盘后才知道）。
+   * （如只改动局部行的补丁，最终内容要落盘后才知道）。
    */
   private resolveWriteContent(
     step: ExecutionStep,
     toolParams: Record<string, unknown>,
+    context?: { collectedContext: ExecutorCollectedContext },
   ): {
     path: string;
     content: string;
@@ -575,8 +653,14 @@ export class Executor {
     }
 
     const path = (toolParams.path ?? step.params.path) as string | undefined;
-    const content = (toolParams.content ?? step.params.content) as string | undefined;
-    if (!path || typeof content !== 'string') {
+    if (!path) {
+      return null;
+    }
+
+    const content =
+      ((toolParams.content ?? step.params.content) as string | undefined) ??
+      resolveFullFileReplaceContent(toolParams, context?.collectedContext.files.get(path));
+    if (typeof content !== 'string') {
       return null;
     }
 
@@ -598,30 +682,46 @@ export class Executor {
   /**
    * 撤销已落盘的写入。快照由写工具在改动前创建，回滚是把它恢复回去；
    * 没有快照（工具未写盘或不支持快照）时无事可做。
+   *
+   * 返回「磁盘上是否仍留着未被撤销的写入」——这正是 needsRollback 想表达的东西，
+   * 也是判断坏文件是否还在的唯一依据。
    */
-  private async rollbackFailedWrite(toolResult: unknown): Promise<void> {
+  private async rollbackFailedWrite(
+    toolResult: unknown,
+  ): Promise<{ leftOnDisk: boolean; error?: string }> {
     if (typeof toolResult !== 'object' || toolResult === null) {
-      return;
+      return { leftOnDisk: false };
     }
     const snapshotId = (toolResult as { snapshotId?: string }).snapshotId;
     if (!snapshotId) {
-      return;
+      return { leftOnDisk: false };
     }
 
     this.config.emitEvent?.({ type: 'rollback_started', snapshotId });
     const result = await this.rollback(snapshotId);
     if (result.success) {
       this.config.emitEvent?.({ type: 'rollback_completed', snapshotId });
-    } else {
-      this.debugWarn(`[Executor] Rollback failed for snapshot ${snapshotId}: ${result.message}`);
+      return { leftOnDisk: false };
     }
+
+    // 默认非交互配置下安全层会拒绝 rollback，返回的是 { success:false, error }——
+    // 只读 message 会打成 undefined。这条分支恰恰是 headless 运行里最需要上报的：
+    // 没有终态事件，调用方会停在「回滚开始」，无法判定坏文件是否还在磁盘上。
+    const reason = result.message ?? (result as { error?: string }).error ?? 'unknown error';
+    this.config.emitEvent?.({ type: 'rollback_failed', snapshotId, error: reason });
+    this.debugWarn(`[Executor] Rollback failed for snapshot ${snapshotId}: ${reason}`);
+    return { leftOnDisk: true, error: reason };
   }
 
   private async validateAfterExecution(
     step: ExecutionStep,
     result: unknown,
     toolParams?: Record<string, unknown>,
-    contentValidatedBeforeWrite = false,
+    /**
+     * 写盘前已在同一份内容上算出的完整校验结果（含 import 检查）。
+     * 有它就直接沿用：内容一模一样，再跑一遍只是重复开销。
+     */
+    preWriteContentValidation?: ValidationResult,
   ): Promise<ValidationResult> {
     if (typeof result === 'object' && result !== null) {
       const resultObj = result as { success?: boolean; error?: string };
@@ -634,7 +734,11 @@ export class Executor {
       }
     }
 
-    if (!contentValidatedBeforeWrite && WRITE_ACTIONS.includes(step.action)) {
+    if (preWriteContentValidation) {
+      return preWriteContentValidation;
+    }
+
+    if (WRITE_ACTIONS.includes(step.action)) {
       const content =
         (result as { content?: string })?.content ??
         (toolParams?.content as string | undefined) ??

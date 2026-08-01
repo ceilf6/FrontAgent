@@ -796,7 +796,19 @@ export type AgentEvent =
   | { type: 'step_failed'; step: ExecutionStep; error: string }
   | { type: 'security_decision'; decision: SecurityDecision }
   | { type: 'stream_token'; token: string; stepId: string }
-  | { type: 'validation_failed'; result: ValidationResult }
+  /**
+   * 校验拦截。`stage` 是必要的判别字段——三个发射点的含义完全不同：
+   * `pre_write` 是「坏内容没能落盘」的真拦截，`post_write` 是「已落盘再判失败」，
+   * `pre_execution` 是执行前的结构性拦截。不带 stage 就没法把它们分开计数，
+   * 「拦截率」这个指标也就无从谈起（issue #388）。
+   */
+  | {
+      type: 'validation_failed';
+      stage: 'pre_execution' | 'pre_write' | 'post_write';
+      result: ValidationResult;
+      path?: string;
+      stepId?: string;
+    }
   | { type: 'rollback_started'; snapshotId: string }
   | { type: 'rollback_completed'; snapshotId: string }
   /** 回滚未成功——写入仍留在磁盘上。没有这个终态，rollback_started 会成为悬空事件 */

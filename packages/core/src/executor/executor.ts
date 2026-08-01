@@ -1,4 +1,4 @@
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { AgentTask, ExecutionStep, StepResult, ValidationResult } from '@frontagent/shared';
 import { logger } from '@frontagent/shared';
@@ -203,7 +203,7 @@ export class Executor {
         }
 
         const errorMsg = preValidation.blockedBy?.join('; ') || '';
-        this.emitValidationFailed(preValidation);
+        this.emitValidationFailed('pre_execution', preValidation, step);
         return trace.finish({
           stepResult: {
             success: false,
@@ -252,7 +252,7 @@ export class Executor {
       const contentValidation = narrowToPreWriteVeto(rawContentValidation);
       if (!contentValidation.pass) {
         const errorMsg = contentValidation.blockedBy?.join('; ') || '';
-        this.emitValidationFailed(contentValidation);
+        this.emitValidationFailed('pre_write', contentValidation, step);
         if (this.config.debug) {
           console.log(`[Executor] Blocked write before disk: ${errorMsg}`);
         }
@@ -295,7 +295,7 @@ export class Executor {
 
       let rollbackOutcome: { leftOnDisk: boolean; error?: string } = { leftOnDisk: false };
       if (!postValidation.pass) {
-        this.emitValidationFailed(postValidation);
+        this.emitValidationFailed('post_write', postValidation, step);
         // 回滚的触发口径必须和写盘否决口径一致。`import_validity` 对「同一计划里
         // 后续步骤才创建的相对模块」和路径别名必然判 block——那正是上面刻意
         // 放行落盘的两类内容。若按未收窄的结果回滚，`create` 快照的回滚是
@@ -685,9 +685,19 @@ export class Executor {
    * validateAfterExecution 在工具自身报错时返回 results 为空的失败结果——那是工具失败，
    * 不是校验拦截；两者混在同一事件里会让 validation_failed 无法当作拦截数使用。
    */
-  private emitValidationFailed(validation: ValidationResult): void {
+  private emitValidationFailed(
+    stage: 'pre_execution' | 'pre_write' | 'post_write',
+    validation: ValidationResult,
+    step: ExecutionStep,
+  ): void {
     if (validation.results.some((result) => !result.pass)) {
-      this.config.emitEvent?.({ type: 'validation_failed', result: validation });
+      this.config.emitEvent?.({
+        type: 'validation_failed',
+        stage,
+        result: validation,
+        path: step.params.path as string | undefined,
+        stepId: step.stepId,
+      });
     }
   }
 
@@ -724,6 +734,21 @@ export class Executor {
     return { leftOnDisk: true, error: result.message };
   }
 
+  /**
+   * 读回刚写入的文件内容，供写盘后校验使用。
+   * 读不到（路径越界、文件已被删）时返回 undefined，由调用方跳过内容校验。
+   */
+  private readWrittenFile(path: string | undefined): string | undefined {
+    if (!path) return undefined;
+    try {
+      const absolute = resolve(this.config.projectRoot, path);
+      if (!existsSync(absolute) || !statSync(absolute).isFile()) return undefined;
+      return readFileSync(absolute, 'utf-8');
+    } catch {
+      return undefined;
+    }
+  }
+
   private async validateAfterExecution(
     step: ExecutionStep,
     result: unknown,
@@ -750,11 +775,17 @@ export class Executor {
     }
 
     if (WRITE_ACTIONS.includes(step.action)) {
+      const path = step.params.path as string;
+      // 真实的 create_file / apply_patch 都不返回 `content`
+      // （`{success, path, snapshotId}` / `{success, diff, validation, snapshotId}`），
+      // 局部行补丁也没有 `content` 参数——只靠这三个来源，写盘后内容校验对
+      // 局部补丁永远不会执行，#387 的「非法补丁内容不得留在磁盘」就不成立。
+      // 路径已知、文件刚写完，直接读回来校验。
       const content =
         (result as { content?: string })?.content ??
         (toolParams?.content as string | undefined) ??
-        (step.params.content as string | undefined);
-      const path = step.params.path as string;
+        (step.params.content as string | undefined) ??
+        this.readWrittenFile(path);
 
       if (content && path) {
         const language = detectLanguage(path);

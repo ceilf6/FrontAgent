@@ -276,12 +276,19 @@ export function consoleReducer(state: ConsoleState, event: AgentEvent): ConsoleS
         },
       };
 
-    case 'validation_failed':
-      return appendLog(
-        state,
-        'warn',
-        `校验失败${event.result.blockedBy?.length ? `: ${event.result.blockedBy.join(', ')}` : ''}`,
-      );
+    case 'validation_failed': {
+      // 阶段决定了这条日志的含义：pre_write 是「坏内容没能落盘」（好事），
+      // post_write 是「已落盘再判失败」（文件可能还在）。混成一句会误导读日志的人。
+      const stageLabel =
+        event.stage === 'pre_write'
+          ? '写盘前拦截'
+          : event.stage === 'post_write'
+            ? '写盘后校验失败'
+            : '执行前校验失败';
+      const target = event.path ? `[${event.path}] ` : '';
+      const reason = event.result.blockedBy?.length ? `: ${event.result.blockedBy.join(', ')}` : '';
+      return appendLog(state, 'warn', `${stageLabel} ${target}${reason}`.trim());
+    }
 
     case 'rollback_started':
       return appendLog(state, 'warn', `回滚开始: ${event.snapshotId}`);

@@ -236,8 +236,15 @@ describe('executor event forwarding contract', () => {
       agent.registerToolMapping('create_file', 'files');
 
       // 执行器的校验事件必须经 emitEvent 汇入 agent 的事件流，
-      // 否则「校验是否拦截」在遥测层不可观测（issue #388）
+      // 否则「校验是否拦截」在遥测层不可观测（issue #388）。
+      //
+      // 注：这里取私有 executor 是刻意的取舍——公开入口 `agent.execute` 需要真实
+      // LLM 才能产出计划。为不让 cast 掩盖接线断裂，先直接断言 executor 的
+      // emitEvent 出口存在；接线若从构造期移走，这条会先失败。
       const executor = (agent as unknown as { executor: Executor }).executor;
+      const executorConfig = (executor as unknown as { config: { emitEvent?: unknown } }).config;
+      expect(typeof executorConfig.emitEvent).toBe('function');
+
       const result = await executor.executeStep(
         makeStep({
           action: 'create_file',

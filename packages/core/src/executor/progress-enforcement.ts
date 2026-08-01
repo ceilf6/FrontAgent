@@ -39,7 +39,10 @@ export async function executeStepsWithProgressEnforcement(
     completedSteps.add(step.stepId);
     onStepComplete?.(step, output);
 
-    if (!output.stepResult.success && output.needsRollback) {
+    // 两个中止条件：校验类失败（needsRollback），或写入卡在磁盘上没被撤销
+    // （writeLeftOnDisk）。后者是最不该继续的一种状态——工作区里留着一份
+    // 已知有问题的文件，后续步骤会在它之上继续推演。
+    if (!output.stepResult.success && (output.needsRollback || output.writeLeftOnDisk)) {
       for (const pending of pendingSteps) {
         pending.status = 'skipped';
       }

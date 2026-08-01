@@ -189,9 +189,26 @@ for (const entity of ENTITIES) {
   );
 }
 
-const featureCount = FEATURES.length;
-const entityCount = ENTITIES.length;
+// 实测规模而不是把数字写死在散文里——写死的数会随 FEATURES/ENTITIES 漂移，
+// 而这几个数正是这个夹具存在的理由（预算闸能不能关上）。
+function measure(dir) {
+  let files = 0;
+  let dirs = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      dirs += 1;
+      const sub = measure(join(dir, entry.name));
+      files += sub.files;
+      dirs += sub.dirs;
+    } else {
+      files += 1;
+    }
+  }
+  return { files, dirs };
+}
+
+const { files, dirs } = measure(SRC);
 console.log(
-  `generated: ${featureCount} features × 8 files + ${entityCount} entities × 3 files ` +
-    `= ${featureCount * 8 + entityCount * 3} noise files under ${SRC}`,
+  `generated: ${FEATURES.length} features × 8 + ${ENTITIES.length} entities × 3 noise files.\n` +
+    `fixture size (scanner's own units): ${files} files / ${dirs + 1} dirs / ${files + dirs + 1} entries under ${SRC}`,
 );

@@ -61,6 +61,8 @@ const ARM_OPTIONS = {
   ablation: {
     // 指向不存在的文件 → run.ts existsSync 判定为无 SDD
     sddPath: 'sdd.disabled.yaml',
+    // 与 full 臂同样钉死：三臂里只要有一臂随环境，臂间差异就不再只归因于被消融的那一项
+    filesense: { enabled: true },
     hallucinationGuard: {
       enabled: false,
       checks: { fileExistence: false, importValidity: false, syntaxValidity: false, sddCompliance: false },
@@ -112,15 +114,20 @@ const backend = createClaudeCliBackend();
  *   拦截数是复合值（2026-07-31 遥测报告 §三 因此无法定论）。
  * 所以除计数外，另存这两类事件的载荷。载荷体积很小，一次跑至多几十条。
  */
+/** 事件形状与 core 对不上时记在这里；主循环据此中止本臂，而不是继续产出假数据 */
+const harnessFailures = [];
+
 function collectEventDetail(details, event) {
   if (event.type === 'filesense_navigated') {
     // 这里跨包读 core 的 AgentEvent 字段，`.mjs` 拿不到类型约束。
     // core 一旦改名，entries 会静默变成 0、报告照样出「累计扫描条目 0」——
     // 正是本 harness 要根治的「空结果被当成证据」。宁可吵，不可静默。
     if (typeof event.entries !== 'number') {
-      throw new Error(
-        `filesense_navigated.entries 不是数字（实际 ${typeof event.entries}）——` +
-          'core 的事件形状可能已变，继续跑只会产出静默为 0 的假数据',
+      // 不能 throw：`Agent.emit` 对监听器异常是 try/catch + debug 级日志
+      // （`agent.ts:307-315`），抛出去只会被静默吞掉——正是本 harness 要防的那种
+      // 「守卫看起来加了、实际没生效」。改为记账，由主循环在写完本条记录后中止本臂。
+      harnessFailures.push(
+        `filesense_navigated.entries 不是数字（实际 ${typeof event.entries}）——core 的事件形状可能已变`,
       );
     }
     details.filesense.push({
@@ -239,6 +246,14 @@ for (const task of tasks) {
   console.log(
     `[${ARM}] ${task.id}: ${pass ? 'PASS' : 'FAIL'} (${record.elapsedMs}ms, ${llmCalls} calls, ${llmFailures} failures, events=${JSON.stringify(events)})`,
   );
+  if (harnessFailures.length > 0) {
+    console.error(
+      `[${ARM}] harness 与 core 的事件契约不符，中止本臂（继续跑只会产出静默为 0 的假数据）：\n  - ` +
+        harnessFailures.join('\n  - '),
+    );
+    process.exit(3);
+  }
+
   // 后端一次成功调用都没有 = 环境坏了（登录态过期等），继续跑只会产出降级噪音
   if (llmCalls === 0) {
     console.error(`[${ARM}] ${task.id} 零成功 LLM 调用（失败 ${llmFailures} 次）——判定后端环境异常，中止本臂评测`);

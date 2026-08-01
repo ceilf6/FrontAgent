@@ -86,3 +86,6 @@ CLAUDE-FABLE-5.md
 # PR #412 的深夹具生成树；只在该分支上被跟踪，其余分支一律忽略，
 # 避免它在共享 worktree 里被 `git add` 反复扫进无关 PR（本轮已发生四次）。
 benchmarks/eval/fixture-deep/
+
+# 评测输出目录（--out 的产物），不进仓库；报告落 benchmarks/results/
+benchmarks/eval/out-deep/

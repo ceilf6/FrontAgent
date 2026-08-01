@@ -426,9 +426,21 @@ export interface SubAgentConfig {
   codeQualityEvaluator?: {
     /** 是否启用（默认 true） */
     enabled?: boolean;
-    /** 隔离模式：process 为真实上下文隔离（默认 process） */
+    /**
+     * 隔离模式：process 为真实上下文隔离（默认 process）。
+     * 注意：当调用方注入了自定义 `llm.backend` 且启用 LLM 评审时，
+     * `process` 会被强制降级为 `in_memory`——函数形态的 backend 越不过进程边界，
+     * worker 会静默丢掉它并改用 provider 直连。降级会打一条无条件 warn。
+     */
     isolationMode?: 'in_memory' | 'process';
-    /** process 模式下 worker 超时毫秒（默认 120000） */
+    /**
+     * LLM 评审超时毫秒（默认 120000）。
+     * `process` 模式下是父进程对 worker 的 SIGKILL 上界；
+     * `in_memory` 模式下没有进程可杀，改由进程内 race 约束 **LLM 调用**，
+     * 超时按 LLM 评审失败处理并退回规则评审（会打一条日志，并置
+     * `llmReviewDegraded`）。注意 race 抢占不了同步的规则扫描，
+     * 因此病态正则、OOM 与崩溃在该模式下没有边界。
+     */
     processTimeoutMs?: number;
     /** 是否启用 LLM 评估（默认 true） */
     enableLLMReview?: boolean;

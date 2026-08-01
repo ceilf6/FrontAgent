@@ -2,6 +2,7 @@ import { existsSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { AgentTask, ExecutionStep, StepResult, ValidationResult } from '@frontagent/shared';
 import { logger } from '@frontagent/shared';
+import { groundStepPath } from '../filesense/path-grounding.js';
 import {
   createDefaultExecutorSkillRegistry,
   type ExecutorActionSkill,
@@ -154,6 +155,11 @@ export class Executor {
       }
 
       let toolParams = { ...step.params };
+
+      // 路径接地（#434）：导航步骤是前插到一份已定路径的计划上的，导航结果此前
+      // 从不回改这些路径。这里拿导航枚举出的真实目录清单校正读取类步骤的文件名。
+      // 只在把握明确时改写；含糊即保持原样让它自然失败——见 path-grounding.ts。
+      toolParams = this.groundToolPath(step, toolParams);
 
       if (this.config.debug) {
         const stepAny = step as { needsCodeGeneration?: boolean };
@@ -532,6 +538,60 @@ export class Executor {
    * 那是工具失败，不是拦截；两者混在同一事件里，`validation_failed`
    * 就不能当拦截数用，而 #388 要的正是一个能计数的拦截量。
    */
+  /**
+   * 用导航枚举出的真实目录清单校正步骤路径（#434）。
+   *
+   * 拒绝的情形也要发事件。只统计成功校正会让「接地覆盖率」读成 100%，
+   * 而被拒绝的那部分正是这套启发式的能力边界——那才是下一轮该改的东西。
+   */
+  private groundToolPath(
+    step: ExecutionStep,
+    params: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const path = params.path;
+    if (typeof path !== 'string' || !path) return params;
+
+    const facts = this.config.getFileSystemFacts?.();
+    if (!facts) return params;
+
+    const outcome = groundStepPath(path, step.action, facts);
+
+    if (outcome.corrected) {
+      this.debugLog(
+        `[Executor] 🧭 路径接地：${outcome.corrected.from} → ${outcome.corrected.to}（相似度 ${outcome.corrected.score}）`,
+      );
+      this.config.emitEvent?.({
+        type: 'filesense_path_grounded',
+        outcome: 'corrected',
+        stepId: step.stepId,
+        action: step.action,
+        from: outcome.corrected.from,
+        to: outcome.corrected.to,
+        score: outcome.corrected.score,
+        candidateCount:
+          facts.directoryContents.get(path.slice(0, path.lastIndexOf('/')))?.length ?? 0,
+      });
+      return { ...params, path: outcome.corrected.to };
+    }
+
+    if (outcome.declined) {
+      this.debugLog(
+        `[Executor] 🧭 路径接地放弃：${outcome.declined.path}（${outcome.declined.reason}）`,
+      );
+      this.config.emitEvent?.({
+        type: 'filesense_path_grounded',
+        outcome: 'declined',
+        stepId: step.stepId,
+        action: step.action,
+        from: outcome.declined.path,
+        reason: outcome.declined.reason,
+        candidateCount: outcome.declined.candidates.length,
+      });
+    }
+
+    return params;
+  }
+
   private emitValidationFailed(
     stage: 'pre_execution' | 'post_write',
     validation: ValidationResult,

@@ -37,7 +37,10 @@ export function updateFilesystemFactsFromToolResult(
   // Handle filesense navigation results - consume explicit factsDelta instead of guessing result shape.
   if (toolName.startsWith('filesense_')) {
     const data = result.data as
-      | { factsDelta?: { existingFiles?: string[]; existingDirectories?: string[] } }
+      | {
+          factsDelta?: { existingFiles?: string[]; existingDirectories?: string[] };
+          scanned?: { truncated?: boolean };
+        }
       | undefined;
     const factsDelta = data?.factsDelta;
     if (result.success && factsDelta) {
@@ -48,6 +51,28 @@ export function updateFilesystemFactsFromToolResult(
       for (const dir of factsDelta.existingDirectories ?? []) {
         changed = addToSet(facts.filesystem.existingDirectories, dir) || changed;
         changed = removeFromSet(facts.filesystem.nonExistentPaths, dir) || changed;
+      }
+
+      // 目录清单：把扫描到的文件按父目录归组，供路径接地判断「这个文件名不存在」。
+      //
+      // 只在 `truncated === false` 时记录。预算截断意味着清单是残缺的，
+      // 此时「不在清单里」不等于「不存在」——据此去改写一个本来正确的路径，
+      // 会把一个能跑通的步骤改坏。宁可不接地，不可接错地。
+      if (data?.scanned?.truncated === false) {
+        const byDir = new Map<string, string[]>();
+        for (const file of factsDelta.existingFiles ?? []) {
+          const slash = file.lastIndexOf('/');
+          const dir = slash === -1 ? '.' : file.slice(0, slash);
+          const list = byDir.get(dir);
+          if (list) list.push(file);
+          else byDir.set(dir, [file]);
+        }
+        for (const [dir, files] of byDir) {
+          const merged = [
+            ...new Set([...(facts.filesystem.directoryContents.get(dir) ?? []), ...files]),
+          ].sort();
+          changed = setStringArrayMap(facts.filesystem.directoryContents, dir, merged) || changed;
+        }
       }
     }
   }

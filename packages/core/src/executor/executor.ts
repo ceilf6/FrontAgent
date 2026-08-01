@@ -52,6 +52,30 @@ function detectMarkdownFence(content: string): { line: number; text: string } | 
 
 /** 把围栏检出结果表达成 ValidationResult，好让事件与错误文案与其余校验同形。 */
 /**
+ * 剔除 `syntax_validity` 的判定，保留其余检查。
+ *
+ * 这个检查器逐行数引号奇偶，对 `"it's fine"`、多行模板字符串、JSX 撇号一律判 block
+ * （issue #413 有实测）。本文件已经论证过「它不可靠到不能否决写盘」——那就不能
+ * 反手让它决定步骤成败：`needsRollback` 会因此为真，`progress-enforcement` 跳过
+ * 全部剩余步骤，agent 主路径白耗 recovery 次数，`validation_failed:post_write`
+ * 的计数也被误报污染。同一份判据在两处不能有两套可信度。
+ *
+ * 写盘前的围栏否决不受影响——那条判据是确定性的。
+ * #413 落地（换真 parser）后这个函数应当删除。
+ */
+function dropUnreliableSyntaxVerdicts(validation: ValidationResult): ValidationResult {
+  const kept = validation.results.filter((result) => result.type !== 'syntax_validity');
+  const blockedBy = kept
+    .filter((result) => !result.pass && result.severity === 'block')
+    .map((result) => result.message ?? result.type);
+  return {
+    pass: blockedBy.length === 0,
+    results: kept,
+    blockedBy: blockedBy.length > 0 ? blockedBy : undefined,
+  };
+}
+
+/**
  * 围栏判据只适用于 TS/JS 家族。`.yaml` 的块标量里放一段 markdown（含围栏）
  * 是完全合法的内容，`.json` 的字符串同理——对它们套用这条判据就是误伤。
  */
@@ -332,13 +356,31 @@ export class Executor {
       let rollbackOutcome: { rollbackFailed: boolean; error?: string } = { rollbackFailed: false };
       /** 写盘后读不回内容的路径；记进 stepResult.error，避免这条分支彻底静默 */
       let unreadableAfterWrite: string | undefined;
-      if (!postValidation.pass) {
-        this.emitValidationFailed('post_write', postValidation, step);
-        // 回滚的触发口径必须和写盘否决口径一致，且同样不能建立在会误判的启发式上：
-        // `create` 快照的回滚是 unlinkSync，误判一次就是删掉一个合法文件。
-        // 只有确定性的围栏入码才触发撤销。
-        const landedPath = step.params.path as string | undefined;
-        const landed = this.readWrittenFile(landedPath);
+
+      // 落盘内容里的围栏是**独立**的失败来源，不依附于 postValidation。
+      // 写盘后的 syntax_validity 判定已被剔除（见 dropUnreliableSyntaxVerdicts），
+      // 所以一份写进 .ts 的围栏不会再让 postValidation 失败——但它确实是坏内容，
+      // 必须自己让步骤失败并触发撤销。这也让「判失败」与「触发回滚」用的是同一条
+      // 确定性判据，不会出现一个判失败、另一个不撤销的错位。
+      const landedPath = step.params.path as string | undefined;
+      const landedContent = WRITE_ACTIONS.includes(step.action)
+        ? this.readWrittenFile(landedPath)
+        : undefined;
+      const landedFenceVeto =
+        landedContent !== undefined && vetoEnabled
+          ? buildFenceVeto(
+              landedContent,
+              String(landedPath),
+              detectLanguage(String(landedPath)) ?? '',
+            )
+          : { pass: true, results: [] };
+      const effectivePostValidation = landedFenceVeto.pass ? postValidation : landedFenceVeto;
+
+      if (!effectivePostValidation.pass) {
+        this.emitValidationFailed('post_write', effectivePostValidation, step, landedPath);
+        // 回滚只由确定性的围栏判据触发：`create` 快照的回滚是 unlinkSync，
+        // 误判一次就是删掉一个合法文件。
+        const landed = landedContent;
         if (landed === undefined && (toolResult as { snapshotId?: string })?.snapshotId) {
           // 读不回内容（路径越界/不可读/工具根目录与 projectRoot 不一致）时，
           // 既不会尝试回滚、rollbackFailed 也保持 false——三处都表现为「无异常」。
@@ -349,18 +391,16 @@ export class Executor {
           // 只告警、不置 rollbackFailed：后者会驱动中止语义，是比「读不回」更强的断言。
           // 读不回不等于「回滚失败」，只等于「无法判断要不要回滚」。
           unreadableAfterWrite = landedPath;
-        } else if (
-          landed !== undefined &&
-          vetoEnabled &&
-          !buildFenceVeto(landed, String(landedPath), detectLanguage(String(landedPath)) ?? '').pass
-        ) {
+        } else if (!landedFenceVeto.pass) {
           rollbackOutcome = await this.rollbackFailedWrite(toolResult);
         }
       }
 
-      const stepError = postValidation.pass ? undefined : postValidation.blockedBy?.join('; ');
+      const stepError = effectivePostValidation.pass
+        ? undefined
+        : effectivePostValidation.blockedBy?.join('; ');
       const stepResult: StepResult = {
-        success: postValidation.pass,
+        success: effectivePostValidation.pass,
         output: toolResult,
         // 回滚没成功时把原因并入 error：否则「坏文件还在磁盘上」这一事实在
         // 非交互运行里除了事件流之外无处可查。
@@ -375,7 +415,7 @@ export class Executor {
 
       return trace.finish({
         stepResult,
-        validation: postValidation,
+        validation: effectivePostValidation,
         // 中止语义保持不变（写步骤的 validation 由 planner 覆写为 required:true，
         // 旧条件在写步骤上恒真），但排除纯工具失败：`validateAfterExecution` 对
         // 工具报错返回 results 为空的失败结果，把它算进来会让一次 read_file 失败
@@ -384,8 +424,8 @@ export class Executor {
         // 写工具报 EACCES 后若继续跑，后续「引用该模块的另一个文件」的步骤会全绿收尾，
         // 整轮以「缺模块但步骤全成功」呈现。写动作的工具失败照旧中止。
         needsRollback:
-          postValidation.results.some((result) => !result.pass) ||
-          (!postValidation.pass && WRITE_ACTIONS.includes(step.action)),
+          effectivePostValidation.results.some((result) => !result.pass) ||
+          (!effectivePostValidation.pass && WRITE_ACTIONS.includes(step.action)),
         rollbackFailed: rollbackOutcome.rollbackFailed,
       });
     } catch (error) {
@@ -839,7 +879,9 @@ export class Executor {
       // 落盘内容 ≠ 被校验的 patch.content。不一致就按读回内容重新判。
       const landed = this.readWrittenFile(step.params.path as string | undefined);
       if (landed === undefined || landed === preWriteContentValidation.content) {
-        return preWriteContentValidation.validation;
+        // 同样剔除 syntax_validity：这份结果是写盘**前**算的，但它现在被当作
+        // 写盘**后**的结论用——判据的可信度不因复用而改变。
+        return dropUnreliableSyntaxVerdicts(preWriteContentValidation.validation);
       }
     }
 
@@ -869,7 +911,7 @@ export class Executor {
             language,
             path,
           );
-          return codeValidation;
+          return dropUnreliableSyntaxVerdicts(codeValidation);
         }
       }
     }

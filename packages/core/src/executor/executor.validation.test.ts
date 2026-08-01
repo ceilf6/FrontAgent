@@ -293,7 +293,7 @@ describe('Executor write validation', () => {
         );
 
         expect(callTool).toHaveBeenCalledTimes(1);
-        expect(result.stepResult.error).not.toContain('Pre-write validation failed');
+        expect(result.stepResult.error ?? '').not.toContain('Pre-write validation failed');
         // 关键：写工具返回了 snapshotId，若回滚触发口径没收窄，
         // create 快照的回滚会 unlinkSync 把这个刚写好的合法文件删掉。
         expect(callTool).not.toHaveBeenCalledWith('rollback', expect.anything());
@@ -336,7 +336,7 @@ describe('Executor write validation', () => {
         );
 
         expect(callTool).toHaveBeenCalledTimes(1);
-        expect(result.stepResult.error).not.toContain('Pre-write validation failed');
+        expect(result.stepResult.error ?? '').not.toContain('Pre-write validation failed');
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }
@@ -674,7 +674,7 @@ describe('Executor write validation', () => {
           );
 
           expect(callTool).toHaveBeenCalledTimes(1);
-          expect(result.stepResult.error).not.toContain('Pre-write validation failed');
+          expect(result.stepResult.error ?? '').not.toContain('Pre-write validation failed');
         } finally {
           rmSync(projectRoot, { recursive: true, force: true });
         }
@@ -783,6 +783,63 @@ describe('Executor write validation', () => {
 
         expect(callTool).toHaveBeenCalledTimes(1);
         expect(result.stepResult.error ?? '').not.toContain('Markdown code fence');
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+    it('does not fail an apply_patch whose content merely contains an apostrophe', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-apos-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const target = join(projectRoot, 'src/a.ts');
+        const original = 'export const msg = "old";\n';
+        writeFileSync(target, original);
+
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+          }),
+        );
+        // 之前 apply_patch 从不进入 validateCode；本 PR 让它进了，于是这个
+        // 逐行数引号奇偶的检查器第一次能判 modify 步骤成败——而它对 "it's fine"
+        // 必然判 block（issue #413 实测）。写盘后的 syntax_validity 判定因此被剔除。
+        const patched = 'export const msg = "it\'s fine";\n';
+        const callTool = vi.fn().mockImplementation(() => {
+          writeFileSync(target, patched);
+          return Promise.resolve({ success: true, snapshotId: 'snap-1' });
+        });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('apply_patch', 'files');
+        executor.registerToolMapping('rollback', 'files');
+
+        const result = await executor.executeStep(
+          makeStep({
+            action: 'apply_patch',
+            tool: 'apply_patch',
+            params: {
+              path: 'src/a.ts',
+              patches: [
+                {
+                  operation: 'replace',
+                  startLine: 1,
+                  endLine: original.split('\n').length,
+                  content: patched,
+                },
+              ],
+            },
+          }),
+          makeExecutionContext({
+            collectedContext: { files: new Map([['src/a.ts', original]]) },
+          }),
+        );
+
+        expect(result.stepResult.success).toBe(true);
+        expect(callTool).not.toHaveBeenCalledWith('rollback', expect.anything());
+        expect(readFileSync(target, 'utf-8')).toBe(patched);
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }

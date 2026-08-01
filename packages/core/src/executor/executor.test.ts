@@ -805,9 +805,10 @@ describe('Executor', () => {
 
       expect(callTool).toHaveBeenCalledWith('rollback', { snapshotId: 'snap-1' });
       expect(result.stepResult.success).toBe(false);
-      // 回滚成功 → 磁盘上没有残留 → 后续步骤可以安全继续。
-      // needsRollback 表达的是「有内容落盘且未被撤销」，不是「这一步失败了」。
-      expect(result.needsRollback).toBe(false);
+      // 校验类失败 → 中止语义保持（planner 给写步骤的 validation 是 required:true，
+      // 旧条件在写步骤上恒真）。回滚成功属于磁盘状态，由 writeLeftOnDisk 单独表达。
+      expect(result.needsRollback).toBe(true);
+      expect(result.writeLeftOnDisk).toBe(false);
       expect(events.map((event) => event.type)).toEqual([
         'validation_failed',
         'rollback_started',
@@ -853,6 +854,9 @@ describe('Executor', () => {
       expect(result.stepResult.error).toContain('EACCES');
       // 步骤失败但没有拦截：validation_failed 必须保持为 0，否则拦截数不可用
       expect(events.map((event) => event.type)).not.toContain('validation_failed');
+      // 纯工具失败不得中止剩余计划——一次 read_file/run_command 失败
+      // 不应该让 progress-enforcement 把后续步骤全标 skipped
+      expect(result.needsRollback).toBe(false);
     });
   });
 
@@ -868,9 +872,12 @@ describe('Executor', () => {
           makeConfig({
             projectRoot,
             hallucinationGuard: new HallucinationGuard({ projectRoot }),
+            // 授予 rollback 许可：不给的话安全层会先拒掉，测不出「回滚会不会被触发」
+            security: { permissions: { allow: ['rollback'] } },
           }),
         );
-        const callTool = vi.fn().mockResolvedValue({ success: true });
+        // 必须带 snapshotId：没有它 rollbackFailedWrite 直接短路，用例形同虚设
+        const callTool = vi.fn().mockResolvedValue({ success: true, snapshotId: 'snap-1' });
         executor.registerMCPClient('files', {
           callTool,
           listTools: vi.fn().mockResolvedValue([]),
@@ -890,6 +897,10 @@ describe('Executor', () => {
 
         expect(callTool).toHaveBeenCalledTimes(1);
         expect(result.stepResult.error).not.toContain('Pre-write validation failed');
+        // 关键：写工具返回了 snapshotId，若回滚触发口径没收窄，
+        // create 快照的回滚会 unlinkSync 把这个刚写好的合法文件删掉。
+        expect(callTool).not.toHaveBeenCalledWith('rollback', expect.anything());
+        expect(result.writeLeftOnDisk).toBeFalsy();
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }
@@ -903,9 +914,12 @@ describe('Executor', () => {
           makeConfig({
             projectRoot,
             hallucinationGuard: new HallucinationGuard({ projectRoot }),
+            // 授予 rollback 许可：不给的话安全层会先拒掉，测不出「回滚会不会被触发」
+            security: { permissions: { allow: ['rollback'] } },
           }),
         );
-        const callTool = vi.fn().mockResolvedValue({ success: true });
+        // 必须带 snapshotId：没有它 rollbackFailedWrite 直接短路，用例形同虚设
+        const callTool = vi.fn().mockResolvedValue({ success: true, snapshotId: 'snap-1' });
         executor.registerMCPClient('files', {
           callTool,
           listTools: vi.fn().mockResolvedValue([]),
@@ -982,6 +996,53 @@ describe('Executor', () => {
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }
+    });
+
+    // 计划参数原样透传、apply_patch 技能整体 spread 原 params，所以
+    // `{path, content, patches}` 是可达状态。若 content 能兜底，校验的就是一份
+    // 不会被写入的内容，而真正落盘的补丁内容一次都不过 guard。
+    it('validates the patch content, not a leftover content param, on apply_patch', async () => {
+      const validateCode = vi.fn().mockResolvedValue({ pass: true, results: [] });
+      const executor = new Executor(
+        makeConfig({
+          hallucinationGuard: {
+            validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
+            validateCode,
+          } as unknown as ExecutorConfig['hallucinationGuard'],
+        }),
+      );
+      executor.registerMCPClient('files', {
+        callTool: vi.fn().mockResolvedValue({ success: true }),
+        listTools: vi.fn().mockResolvedValue([]),
+      });
+      executor.registerToolMapping('apply_patch', 'files');
+
+      const original = 'export const a = 1;\n';
+      await executor.executeStep(
+        makeStep({
+          action: 'apply_patch',
+          tool: 'apply_patch',
+          params: {
+            path: 'src/a.ts',
+            content: 'export const NEVER_WRITTEN = 1;',
+            patches: [
+              {
+                operation: 'replace',
+                startLine: 1,
+                endLine: original.split('\n').length,
+                content: 'export const ACTUALLY_WRITTEN = 1;',
+              },
+            ],
+          },
+        }),
+        makeExecutionContext({
+          collectedContext: { files: new Map([['src/a.ts', original]]) },
+        }),
+      );
+
+      expect(validateCode).toHaveBeenCalledTimes(1);
+      expect(validateCode.mock.calls[0]?.[0]).toContain('ACTUALLY_WRITTEN');
+      expect(validateCode.mock.calls[0]?.[0]).not.toContain('NEVER_WRITTEN');
     });
 
     it('leaves a partial-line patch to post-write validation', async () => {

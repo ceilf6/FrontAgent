@@ -296,8 +296,13 @@ export class Executor {
       let rollbackOutcome: { leftOnDisk: boolean; error?: string } = { leftOnDisk: false };
       if (!postValidation.pass) {
         this.emitValidationFailed(postValidation);
-        // 回滚不看事件口径：工具失败但已产生快照时同样要把落盘撤销
-        rollbackOutcome = await this.rollbackFailedWrite(toolResult);
+        // 回滚的触发口径必须和写盘否决口径一致。`import_validity` 对「同一计划里
+        // 后续步骤才创建的相对模块」和路径别名必然判 block——那正是上面刻意
+        // 放行落盘的两类内容。若按未收窄的结果回滚，`create` 快照的回滚是
+        // unlinkSync，等于把刚写好的合法文件删掉，与放行它的理由直接矛盾。
+        if (!narrowToPreWriteVeto(postValidation).pass) {
+          rollbackOutcome = await this.rollbackFailedWrite(toolResult);
+        }
       }
 
       const stepError = postValidation.pass ? undefined : postValidation.blockedBy?.join('; ');
@@ -316,10 +321,12 @@ export class Executor {
       return trace.finish({
         stepResult,
         validation: postValidation,
-        // 字段名说的是「需要回滚」，语义就该是「有内容落了盘且没被成功撤销」，
-        // 而不是「这一步失败了」——后者与 !stepResult.success 同义，且会让
-        // progress-enforcement 因为一次 read_file/run_command 失败就中止整个剩余计划。
-        needsRollback: rollbackOutcome.leftOnDisk,
+        // 中止语义保持不变（写步骤的 validation 由 planner 覆写为 required:true，
+        // 旧条件在写步骤上恒真），但排除纯工具失败：`validateAfterExecution` 对
+        // 工具报错返回 results 为空的失败结果，把它算进来会让一次 read_file 失败
+        // 就中止整个剩余计划。
+        needsRollback: postValidation.results.some((result) => !result.pass),
+        writeLeftOnDisk: rollbackOutcome.leftOnDisk,
       });
     } catch (error) {
       trace.markCatchIfEmpty(error);
@@ -657,9 +664,14 @@ export class Executor {
       return null;
     }
 
+    // 按动作分派，不做跨动作兜底。apply_patch 写入的是 `patches`，
+    // 而 `content` 在其 params 上是可达的残留字段（计划参数原样透传、技能整体
+    // spread）。若允许它兜底，校验的就是一份**不会被写入**的内容，而真正落盘的
+    // 补丁内容一次都不过 guard——比修复前更糟。
     const content =
-      ((toolParams.content ?? step.params.content) as string | undefined) ??
-      resolveFullFileReplaceContent(toolParams, context?.collectedContext.files.get(path));
+      step.action === 'create_file'
+        ? ((toolParams.content ?? step.params.content) as string | undefined)
+        : resolveFullFileReplaceContent(toolParams, context?.collectedContext.files.get(path));
     if (typeof content !== 'string') {
       return null;
     }
@@ -704,13 +716,12 @@ export class Executor {
       return { leftOnDisk: false };
     }
 
-    // 默认非交互配置下安全层会拒绝 rollback，返回的是 { success:false, error }——
-    // 只读 message 会打成 undefined。这条分支恰恰是 headless 运行里最需要上报的：
-    // 没有终态事件，调用方会停在「回滚开始」，无法判定坏文件是否还在磁盘上。
-    const reason = result.message ?? (result as { error?: string }).error ?? 'unknown error';
-    this.config.emitEvent?.({ type: 'rollback_failed', snapshotId, error: reason });
-    this.debugWarn(`[Executor] Rollback failed for snapshot ${snapshotId}: ${reason}`);
-    return { leftOnDisk: true, error: reason };
+    // 默认非交互配置下安全层会拒绝 rollback。这条分支恰恰是 headless 运行里
+    // 最需要上报的：没有终态事件，调用方会停在「回滚开始」，
+    // 无法判定坏文件是否还在磁盘上。
+    this.config.emitEvent?.({ type: 'rollback_failed', snapshotId, error: result.message });
+    this.debugWarn(`[Executor] Rollback failed for snapshot ${snapshotId}: ${result.message}`);
+    return { leftOnDisk: true, error: result.message };
   }
 
   private async validateAfterExecution(
@@ -944,10 +955,22 @@ export class Executor {
     return allResults;
   }
 
+  /**
+   * 撤销一次快照。返回形状在此归一化：工具成功时给 `message`，
+   * 而安全层拒绝时给的是 `{ success:false, error }`（`tool-call-handler.ts`）——
+   * 声明成必有 `message` 会让每个调用方各自 cast 一次去捞 `error`。
+   */
   async rollback(snapshotId: string): Promise<{ success: boolean; message: string }> {
     try {
-      const result = await this.callTool('rollback', { snapshotId });
-      return result as { success: boolean; message: string };
+      const result = (await this.callTool('rollback', { snapshotId })) as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+      };
+      return {
+        success: Boolean(result?.success),
+        message: result?.message ?? result?.error ?? 'rollback returned no message',
+      };
     } catch (error) {
       return {
         success: false,

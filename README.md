@@ -1308,9 +1308,29 @@ A frozen 30-task benchmark measures whether SDD constraints and the hallucinatio
 
 ```bash
 pnpm build
+pnpm --dir benchmarks/eval/fixture install                     # fixture deps (required)
 node benchmarks/eval/run-eval.mjs --arm full --tasks all       # SDD on
 node benchmarks/eval/run-eval.mjs --arm ablation --tasks all   # SDD off
 node benchmarks/eval/report.mjs benchmarks/eval/out
+```
+
+A separate arm ablates **filesense** alone — it differs from `full` in exactly one
+field, so unlike `full` vs `ablation` (which leaves filesense enabled in both) its
+difference is attributable to navigation. It is meant to be run against the deep
+fixture: on the flat one, filesense scans 17 of the repository's 18 entries and
+never truncates, so budgeted navigation and a plain `ls -R` are indistinguishable
+by construction.
+
+```bash
+# One-time: install fixture dependencies and materialise the generated module tree.
+# The runner refuses to start without node_modules — a dangling symlink would
+# otherwise turn every typecheck into a FAIL and record an arm of noise as data.
+pnpm --dir benchmarks/eval/fixture-deep install
+node benchmarks/eval/fixture-deep/generate.mjs
+
+node benchmarks/eval/run-eval.mjs --arm full          --fixture deep --tasks all
+node benchmarks/eval/run-eval.mjs --arm no-filesense  --fixture deep --tasks all
+node benchmarks/eval/report-filesense.mjs benchmarks/eval/out deep
 ```
 
 Latest results: [`benchmarks/results/`](benchmarks/results/). **The current findings are negative and actionable**: SDD showed no measurable effect on first-pass rate, and the hallucination guard recorded zero interceptions while syntactically invalid files still landed on disk. Three root causes are documented in the report and tracked as issues.

@@ -604,6 +604,22 @@ test('filesense navigate schema does not offer writeMode values the engine rejec
   assert.doesNotMatch(enumLine, /workspace/u);
 });
 
+test('README documents the filesense ablation arm and its deep-fixture prerequisite', () => {
+  const readme = readFileSync('README.md', 'utf8');
+
+  // The arm is useless without the deep fixture (on the flat one filesense scans
+  // essentially the whole repo and never truncates), and the fixture does not
+  // exist until the generator has been run. Documenting the arm without both
+  // facts hands a reader a command that silently measures nothing.
+  assert.match(readme, /--arm no-filesense/u);
+  assert.match(readme, /--fixture deep/u);
+  assert.match(readme, /fixture-deep\/generate\.mjs/u);
+  assert.match(readme, /report-filesense\.mjs/u);
+  // The runner now hard-fails without fixture node_modules, so a reader following
+  // the block verbatim stops at the second command unless install is documented.
+  assert.match(readme, /pnpm --dir benchmarks\/eval\/fixture-deep install/u);
+});
+
 test('README exposes the verifiable npm downloads counter with its marker block', () => {
   const readme = readFileSync('README.md', 'utf8');
 

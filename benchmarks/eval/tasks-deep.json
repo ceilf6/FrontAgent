@@ -151,6 +151,10 @@
       },
       {
         "kind": "typecheck"
+      },
+      {
+        "kind": "file_unchanged",
+        "path": "src/features/checkout/lib/computeTotal.test.ts"
       }
     ]
   },
@@ -172,6 +176,10 @@
       },
       {
         "kind": "typecheck"
+      },
+      {
+        "kind": "file_unchanged",
+        "path": "src/features/cart/lib/mergeLines.test.ts"
       }
     ]
   },
@@ -193,6 +201,10 @@
       },
       {
         "kind": "typecheck"
+      },
+      {
+        "kind": "file_unchanged",
+        "path": "src/features/shipping/lib/estimateEta.test.ts"
       }
     ]
   },

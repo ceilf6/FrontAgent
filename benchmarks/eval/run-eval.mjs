@@ -54,7 +54,10 @@ if (!existsSync(join(FIXTURE, 'node_modules'))) {
 const OUT = join(OUT_DIR, `${ARM}${FIXTURE_KIND === 'deep' ? '-deep' : ''}.jsonl`);
 
 const ARM_OPTIONS = {
-  full: { sddPath: 'sdd.yaml' },
+  // 对照臂也必须把 filesense 钉死。不写的话它取自 FRONTAGENT_FILESENSE_ENABLED——
+  // 一臂钉死、一臂随环境，操作者环境里存在该变量就会得到「两臂都关」的空结果，
+  // 与 #386 废掉 guard 臂、#411 废掉本臂是同一类失真。
+  full: { sddPath: 'sdd.yaml', filesense: { enabled: true } },
   ablation: {
     // 指向不存在的文件 → run.ts existsSync 判定为无 SDD
     sddPath: 'sdd.disabled.yaml',
@@ -111,6 +114,15 @@ const backend = createClaudeCliBackend();
  */
 function collectEventDetail(details, event) {
   if (event.type === 'filesense_navigated') {
+    // 这里跨包读 core 的 AgentEvent 字段，`.mjs` 拿不到类型约束。
+    // core 一旦改名，entries 会静默变成 0、报告照样出「累计扫描条目 0」——
+    // 正是本 harness 要根治的「空结果被当成证据」。宁可吵，不可静默。
+    if (typeof event.entries !== 'number') {
+      throw new Error(
+        `filesense_navigated.entries 不是数字（实际 ${typeof event.entries}）——` +
+          'core 的事件形状可能已变，继续跑只会产出静默为 0 的假数据',
+      );
+    }
     details.filesense.push({
       intent: event.intent ?? null,
       paths: event.paths ?? [],
@@ -192,7 +204,7 @@ for (const task of tasks) {
     runError = String(error).slice(0, 400);
   }
   const usageAfter = getUsageTally();
-  const checkResults = runError ? [] : runChecks(task.checks, { workspace: ws, resultText });
+  const checkResults = runError ? [] : runChecks(task.checks, { workspace: ws, resultText, fixtureRoot: FIXTURE });
   const pass = !runError && checkResults.length > 0 && checkResults.every((c) => c.ok);
   const llmCalls = usageAfter.calls - usageBefore.calls;
   const llmFailures = usageAfter.failures - usageBefore.failures;

@@ -20,7 +20,7 @@
  * 用法：node benchmarks/eval/fixture-deep/generate.mjs
  */
 
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -91,19 +91,27 @@ function write(relPath, content) {
 
 // 先清理上一轮的生成物：不清的话，改动 FEATURES / ENTITIES 后重跑会留下孤儿文件，
 // 条目数与截断行为随之漂移——而这两个数正是这个夹具存在的理由。
-for (const feature of FEATURES) {
-  if (ANCHORED_FEATURES.has(feature)) {
-    // 锚点 feature 只清生成的子目录，保留 lib/ 下已提交的文件
-    for (const sub of ['api', 'model', 'hooks', 'ui']) {
-      rmSync(join(SRC, 'features', feature, sub), { recursive: true, force: true });
+// 枚举磁盘上实际存在的目录，而不是当前的 FEATURES/ENTITIES 列表——
+// 只遍历列表的话，从列表里**删掉**一个条目后它的目录会永久残留，
+// 条目数照样漂移，而条目数正是这个夹具存在的理由。
+function cleanGeneratedTree(group, anchored = new Set()) {
+  const root = join(SRC, group);
+  if (!existsSync(root)) return;
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (anchored.has(entry.name)) {
+      // 锚点目录只清生成的子目录，保留 lib/ 下已提交的文件
+      for (const sub of ['api', 'model', 'hooks', 'ui']) {
+        rmSync(join(root, entry.name, sub), { recursive: true, force: true });
+      }
+      continue;
     }
-    continue;
+    rmSync(join(root, entry.name), { recursive: true, force: true });
   }
-  rmSync(join(SRC, 'features', feature), { recursive: true, force: true });
 }
-for (const entity of ENTITIES) {
-  rmSync(join(SRC, 'entities', entity), { recursive: true, force: true });
-}
+
+cleanGeneratedTree('features', ANCHORED_FEATURES);
+cleanGeneratedTree('entities');
 
 for (const feature of FEATURES) {
   const F = pascal(feature);

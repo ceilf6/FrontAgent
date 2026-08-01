@@ -6,7 +6,7 @@ version: "1.0"
 project:
   name: "eval-fixture-deep"
   type: "react-spa"
-  description: "filesense 消融评测的冻结深夹具工程（feature-sliced，236 源文件 / 188 目录）"
+  description: "filesense 消融评测的冻结深夹具工程（feature-sliced：242 源文件 / 188 目录 / 430 条目，扫描器口径）"
 
 # 技术栈约束
 tech_stack:

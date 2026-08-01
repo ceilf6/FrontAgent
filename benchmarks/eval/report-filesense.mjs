@@ -58,6 +58,18 @@ const diffPp = ((rate(arms.full) - rate(arms.off)) * 100).toFixed(1);
 // 触发率是本报告的第一读数：filesense 只在触发的任务上可能起作用，
 // 不触发的任务被算进平均值只会把效应稀释成噪音。
 const triggered = navTasks(arms.full);
+
+// 与上面的 provenance 守卫同一个理由：零触发时这份对比什么也没测到，
+// 但正文照样会印出「全量差值 X 个百分点」这种结论式表述，
+// 而报告产物是要提交进 benchmarks/results/ 当证据的。宁可不出。
+if (triggered.length === 0) {
+  console.error(
+    'filesense 开臂零触发——本轮对比没有测到任何导航行为，拒绝出报告。\n' +
+      '常见原因：跑在平坦夹具上（预算闸不关、任务多为已知单文件），或 filesense 被环境变量关掉了。',
+  );
+  process.exit(1);
+}
+
 const triggeredIds = new Set(triggered.map((r) => r.taskId));
 const pairedTriggered = {
   full: triggered,

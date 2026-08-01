@@ -577,6 +577,9 @@ test('README documents the filesense ablation arm and its deep-fixture prerequis
   assert.match(readme, /--fixture deep/u);
   assert.match(readme, /fixture-deep\/generate\.mjs/u);
   assert.match(readme, /report-filesense\.mjs/u);
+  // The runner now hard-fails without fixture node_modules, so a reader following
+  // the block verbatim stops at the second command unless install is documented.
+  assert.match(readme, /pnpm --dir benchmarks\/eval\/fixture-deep install/u);
 });
 
 test('README exposes the verifiable npm downloads counter with its marker block', () => {

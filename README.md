@@ -1304,6 +1304,7 @@ A frozen 30-task benchmark measures whether SDD constraints and the hallucinatio
 
 ```bash
 pnpm build
+pnpm --dir benchmarks/eval/fixture install                     # fixture deps (required)
 node benchmarks/eval/run-eval.mjs --arm full --tasks all       # SDD on
 node benchmarks/eval/run-eval.mjs --arm ablation --tasks all   # SDD off
 node benchmarks/eval/report.mjs benchmarks/eval/out
@@ -1317,7 +1318,10 @@ never truncates, so budgeted navigation and a plain `ls -R` are indistinguishabl
 by construction.
 
 ```bash
-# One-time: materialise the deep fixture's generated module tree
+# One-time: install fixture dependencies and materialise the generated module tree.
+# The runner refuses to start without node_modules — a dangling symlink would
+# otherwise turn every typecheck into a FAIL and record an arm of noise as data.
+pnpm --dir benchmarks/eval/fixture-deep install
 node benchmarks/eval/fixture-deep/generate.mjs
 
 node benchmarks/eval/run-eval.mjs --arm full          --fixture deep --tasks all

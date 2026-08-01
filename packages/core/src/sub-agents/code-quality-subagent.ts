@@ -40,6 +40,12 @@ export interface CodeQualityReviewResponse {
   summary: string;
   issues: CodeQualityIssue[];
   factUpdates?: ProjectFactsUpdate;
+  /**
+   * LLM 评审未跑成（超时或调用失败），本次结果只来自规则评审。
+   * `passed`/`score` 在这种情况下照常是「干净的成功」——没有这个字段，
+   * 消费方无从区分「LLM 评审通过」与「LLM 评审压根没跑」（#407 建议 3）。
+   */
+  llmReviewDegraded?: boolean;
 }
 
 export interface CodeQualitySubAgentOptions {
@@ -48,11 +54,18 @@ export interface CodeQualitySubAgentOptions {
   maxFilesForLLM?: number;
   maxCharsPerFileForLLM?: number;
   /**
-   * LLM 评审的时间上界（毫秒）。**缺省不设上界**——这是有意的：
+   * LLM 评审调用的时间上界（毫秒）。**缺省不设上界**——这是有意的：
    * 进程隔离分支的上界由父进程的 SIGKILL 提供，worker 内部再叠一层默认值，
    * 会让调用方设置的 `processTimeoutMs > 默认值` 时由 worker 先超时并
    * 静默返回一份 rule-only 的成功响应，父进程的上界形同虚设。
    * 只有没有进程边界可杀的 in_memory 分支才由 `agent.ts` 显式传入上界。
+   *
+   * 两条边界要说清楚：
+   * - 超时只让调用方停止等待，**不取消在途请求**（`LLMService` 无 AbortSignal 接口），
+   *   backend 可能继续消耗 token。
+   * - 只约束 LLM 调用。规则评审是同步的，`Promise.race` 抢占不了同步代码，
+   *   所以病态正则或 OOM 在 in_memory 下没有任何边界——那是 process 分支
+   *   SIGKILL 独有的保障，降级后确实失去了。
    */
   reviewTimeoutMs?: number;
   debug?: boolean;
@@ -135,7 +148,7 @@ export class CodeQualitySubAgent
     const warningCount = issues.filter((issue) => issue.severity === 'warning').length;
     const score = Math.max(0, 100 - errorCount * 20 - warningCount * 5);
 
-    // 日志之外再在 summary 上留痕：机器消费方读的是这里，不是 stderr。
+    // 日志给人看，`llmReviewDegraded` 给消费方判定，summary 两者都照顾到。
     const degraded = llmReviewFailed ? ' [LLM review unavailable — rule-only result]' : '';
     const summary = llmSummary
       ? `${llmSummary} (merged with ${ruleIssues.length} rule issue(s))`
@@ -147,6 +160,7 @@ export class CodeQualitySubAgent
       summary,
       issues,
       factUpdates: this.buildFactUpdates(payload, issues),
+      llmReviewDegraded: llmReviewFailed || undefined,
     };
 
     return {

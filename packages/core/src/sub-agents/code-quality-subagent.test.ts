@@ -47,8 +47,10 @@ describe('CodeQualitySubAgent LLM review timeout', () => {
     // 超时后走规则评审，而不是把挂起原样传播给调用方
     expect(response.payload?.summary).toContain('CodeQualitySubAgent reviewed');
     // 降级必须在 payload 上留痕：只打日志的话机器消费方拿到的是一份
-    // 看起来正常的 rule-only 结果（#407 的失能形态）
+    // 看起来正常的 rule-only 结果（#407 的失能形态）。
+    // summary 面向人，llmReviewDegraded 面向判定逻辑。
     expect(response.payload?.summary).toContain('LLM review unavailable');
+    expect(response.payload?.llmReviewDegraded).toBe(true);
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
@@ -73,7 +75,7 @@ describe('CodeQualitySubAgent LLM review timeout', () => {
 
     const response = await pending;
     expect(response.payload?.summary).toContain('llm review');
-    expect(response.payload?.summary).not.toContain('LLM review unavailable');
+    expect(response.payload?.llmReviewDegraded).toBeUndefined();
   });
 
   it('uses the LLM result when the backend answers within the timeout', async () => {

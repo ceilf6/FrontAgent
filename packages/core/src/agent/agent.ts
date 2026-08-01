@@ -170,6 +170,9 @@ export class FrontAgent {
     const codeQualityConfig = config.subAgents?.codeQualityEvaluator;
     const enableCodeQualitySubAgent = codeQualityConfig?.enabled ?? true;
     if (enableCodeQualitySubAgent) {
+      // 保留「是否显式指定」：归一后无法区分「调用方为隔离性显式要了 process」
+      // 与「取了默认值」，而前者被静默改写的代价高得多。
+      const isolationExplicit = codeQualityConfig?.isolationMode !== undefined;
       const requestedIsolationMode = codeQualityConfig?.isolationMode ?? 'process';
       const enableLLMReview = codeQualityConfig?.enableLLMReview ?? true;
 
@@ -190,11 +193,20 @@ export class FrontAgent {
       const inMemoryReviewTimeoutMs = codeQualityConfig?.processTimeoutMs ?? 120000;
 
       if (isolationMode !== requestedIsolationMode) {
-        // 批处理调用方通常不开 debug——这条必须无条件可见，
-        // 否则隔离级别下降没有任何信号。
-        logger.warn(
-          `[FrontAgent] codeQualityEvaluator: custom llm.backend cannot cross a process boundary; falling back to in_memory isolation so the injected backend is honored. The review time bound (${inMemoryReviewTimeoutMs}ms) is now enforced by an in-process race instead of a worker SIGKILL, and the worker's output byte cap no longer applies.`,
-        );
+        // 批处理调用方通常不开 debug，故不走 debugWarn。注意 logger 仍受
+        // FA_LOG_LEVEL 控制——silent/error 下这条看不到，所以显式指定被改写时升到 error。
+        const notice =
+          `[FrontAgent] codeQualityEvaluator: custom llm.backend cannot cross a process boundary; ` +
+          `falling back to in_memory isolation so the injected backend is honored. ` +
+          `Only the LLM review call is time-bounded (${inMemoryReviewTimeoutMs}ms, via an in-process race); ` +
+          `the rule scan is synchronous and a race cannot preempt it, so the worker's SIGKILL and ` +
+          `output byte cap no longer bound pathological regexes, OOM, or a crash.`;
+        if (isolationExplicit) {
+          // 调用方明确要了进程隔离却拿到进程内执行——这不是默认值调整，是契约被推翻
+          logger.error(notice);
+        } else {
+          logger.warn(notice);
+        }
       }
 
       if (isolationMode === 'process') {

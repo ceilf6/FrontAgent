@@ -234,11 +234,8 @@ describe('code quality sub-agent isolation contract', () => {
     expect(isolationOf(agent)).toBe('ProcessIsolatedCodeQualitySubAgent');
   });
 
-  it('falls back to in-process isolation when a custom llm backend is injected', () => {
-    // backend 是函数集合，JSON 传不过进程边界；进程隔离会静默丢弃它并改打真实 provider
-    const agent = createAgent({ projectRoot: '/test', llm: { ...llm, backend } });
-    expect(isolationOf(agent)).toBe('CodeQualitySubAgent');
-  });
+  // 注：「注入 backend 时降级」这条契约由下面那条行为测试覆盖
+  // （断言 backend 真被调用），比断言类名更贴近 #407 的验收条件，故不再重复断言类名。
 
   it('keeps process isolation when LLM review is disabled, since no backend is needed', () => {
     const agent = createAgent({

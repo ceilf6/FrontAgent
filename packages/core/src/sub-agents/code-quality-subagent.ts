@@ -5,7 +5,7 @@
  */
 
 import type { SDDConfig } from '@frontagent/shared';
-import { generateId } from '@frontagent/shared';
+import { generateId, logger } from '@frontagent/shared';
 import { z } from 'zod';
 import type { A2AAgent, A2ARequest, A2AResponse } from '../a2a.js';
 import type { LLMService } from '../llm.js';
@@ -48,9 +48,11 @@ export interface CodeQualitySubAgentOptions {
   maxFilesForLLM?: number;
   maxCharsPerFileForLLM?: number;
   /**
-   * LLM 评审的时间上界（毫秒，默认 120000）。
-   * 进程隔离分支靠 SIGKILL 兜底，in_memory 分支没有进程边界可杀，
-   * 故在此设上界——超时按 LLM 评审失败处理，退回规则评审。
+   * LLM 评审的时间上界（毫秒）。**缺省不设上界**——这是有意的：
+   * 进程隔离分支的上界由父进程的 SIGKILL 提供，worker 内部再叠一层默认值，
+   * 会让调用方设置的 `processTimeoutMs > 默认值` 时由 worker 先超时并
+   * 静默返回一份 rule-only 的成功响应，父进程的上界形同虚设。
+   * 只有没有进程边界可杀的 in_memory 分支才由 `agent.ts` 显式传入上界。
    */
   reviewTimeoutMs?: number;
   debug?: boolean;
@@ -70,7 +72,7 @@ export class CodeQualitySubAgent
   private readonly enableRuleFallback: boolean; // 规则函数检查
   private readonly maxFilesForLLM: number; // LLM评估最多文件数
   private readonly maxCharsPerFileForLLM: number; // 上下文上限
-  private readonly reviewTimeoutMs: number; // LLM 评审时间上界
+  private readonly reviewTimeoutMs?: number; // LLM 评审时间上界；undefined = 不设上界
   private readonly debug: boolean; // 失败日志
 
   constructor(options: CodeQualitySubAgentOptions = {}) {
@@ -78,7 +80,7 @@ export class CodeQualitySubAgent
     this.enableRuleFallback = options.enableRuleFallback ?? true;
     this.maxFilesForLLM = options.maxFilesForLLM ?? 6;
     this.maxCharsPerFileForLLM = options.maxCharsPerFileForLLM ?? 12000;
-    this.reviewTimeoutMs = options.reviewTimeoutMs ?? 120000;
+    this.reviewTimeoutMs = options.reviewTimeoutMs;
     this.debug = options.debug ?? false;
   }
 
@@ -103,18 +105,26 @@ export class CodeQualitySubAgent
 
     let llmIssues: CodeQualityIssue[] = [];
     let llmSummary: string | undefined;
+    let llmReviewFailed = false;
 
     if (this.llmService) {
       try {
         const llmReview = await this.withReviewTimeout(this.evaluateWithLLM(payload));
         llmIssues = llmReview.issues;
         llmSummary = llmReview.summary;
+        llmReviewFailed = false;
       } catch (error) {
+        // 无条件上报：静默退回规则评审正是 #407 描述的失能形态——
+        // 调用方会拿到一份 success/score 100 的 rule-only 结果而毫无信号。
+        // debug 只控制是否附带完整错误详情。
+        llmReviewFailed = true;
+        logger.warn(
+          `[CodeQualitySubAgent] LLM review unavailable, falling back to the rule review: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
         if (this.debug) {
-          console.warn(
-            '[CodeQualitySubAgent] LLM review failed, fallback to rule-based issues:',
-            error,
-          );
+          console.warn('[CodeQualitySubAgent] LLM review failure detail:', error);
         }
       }
     }
@@ -125,9 +135,11 @@ export class CodeQualitySubAgent
     const warningCount = issues.filter((issue) => issue.severity === 'warning').length;
     const score = Math.max(0, 100 - errorCount * 20 - warningCount * 5);
 
+    // 日志之外再在 summary 上留痕：机器消费方读的是这里，不是 stderr。
+    const degraded = llmReviewFailed ? ' [LLM review unavailable — rule-only result]' : '';
     const summary = llmSummary
       ? `${llmSummary} (merged with ${ruleIssues.length} rule issue(s))`
-      : `CodeQualitySubAgent reviewed ${payload.files.length} file(s): ${errorCount} error(s), ${warningCount} warning(s), score ${score}/100.`;
+      : `CodeQualitySubAgent reviewed ${payload.files.length} file(s): ${errorCount} error(s), ${warningCount} warning(s), score ${score}/100.${degraded}`;
 
     const review: CodeQualityReviewResponse = {
       passed: errorCount === 0,
@@ -155,16 +167,20 @@ export class CodeQualitySubAgent
   /**
    * 给 LLM 评审加时间上界。超时不中断底层请求（LLMService 无 AbortSignal 接口），
    * 但让调用方停止等待并落到规则评审——in_memory 分支没有进程可杀，这是唯一的兜底位。
+   * 未配置上界时原样透传，不引入第二层竞速。
    */
   private async withReviewTimeout<T>(promise: Promise<T>): Promise<T> {
+    const timeoutMs = this.reviewTimeoutMs;
+    if (timeoutMs === undefined) return promise;
+
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
         promise,
         new Promise<never>((_, reject) => {
           timer = setTimeout(
-            () => reject(new Error(`LLM review timed out after ${this.reviewTimeoutMs}ms`)),
-            this.reviewTimeoutMs,
+            () => reject(new Error(`LLM review timed out after ${timeoutMs}ms`)),
+            timeoutMs,
           );
         }),
       ]);

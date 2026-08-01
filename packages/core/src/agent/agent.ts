@@ -184,11 +184,16 @@ export class FrontAgent {
           ? 'in_memory'
           : requestedIsolationMode;
 
+      // in_memory 分支没有进程边界可杀，上界只能靠进程内 race。
+      // 默认值只在这里出现——`CodeQualitySubAgent` 自身缺省不设上界，
+      // 否则 worker 会继承一份默认上界并抢在父进程 SIGKILL 之前静默降级。
+      const inMemoryReviewTimeoutMs = codeQualityConfig?.processTimeoutMs ?? 120000;
+
       if (isolationMode !== requestedIsolationMode) {
-        // 降级会同时失去进程分支的超时兜底，且批处理调用方通常不开 debug——
-        // 这条必须无条件可见，否则隔离级别下降没有任何信号。
+        // 批处理调用方通常不开 debug——这条必须无条件可见，
+        // 否则隔离级别下降没有任何信号。
         logger.warn(
-          '[FrontAgent] codeQualityEvaluator: custom llm.backend cannot cross a process boundary; falling back to in_memory isolation so the injected backend is honored. The 120s worker timeout no longer applies.',
+          `[FrontAgent] codeQualityEvaluator: custom llm.backend cannot cross a process boundary; falling back to in_memory isolation so the injected backend is honored. The review time bound (${inMemoryReviewTimeoutMs}ms) is now enforced by an in-process race instead of a worker SIGKILL, and the worker's output byte cap no longer applies.`,
         );
       }
 
@@ -208,8 +213,7 @@ export class FrontAgent {
           enableRuleFallback: codeQualityConfig?.enableRuleFallback ?? true,
           maxFilesForLLM: codeQualityConfig?.maxFilesForLLM,
           maxCharsPerFileForLLM: codeQualityConfig?.maxCharsPerFileForLLM,
-          // 与进程分支同一个上界：降级后仍有时间兜底，只是靠 race 而非 SIGKILL。
-          reviewTimeoutMs: codeQualityConfig?.processTimeoutMs,
+          reviewTimeoutMs: inMemoryReviewTimeoutMs,
           debug: config.debug ?? false,
         });
       }

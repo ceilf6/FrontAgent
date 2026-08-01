@@ -433,7 +433,12 @@ export interface SubAgentConfig {
      * worker 会静默丢掉它并改用 provider 直连。降级会打一条无条件 warn。
      */
     isolationMode?: 'in_memory' | 'process';
-    /** LLM 评审超时毫秒（默认 120000）；process 模式下为 worker SIGKILL 上界，in_memory 下为 race 上界 */
+    /**
+     * LLM 评审超时毫秒（默认 120000）。
+     * `process` 模式下是父进程对 worker 的 SIGKILL 上界；
+     * `in_memory` 模式下没有进程可杀，改由进程内 race 保障同一个上界，
+     * 超时按 LLM 评审失败处理并退回规则评审（会打一条无条件 warn）。
+     */
     processTimeoutMs?: number;
     /** 是否启用 LLM 评估（默认 true） */
     enableLLMReview?: boolean;

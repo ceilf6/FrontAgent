@@ -148,10 +148,15 @@ export class Planner {
   ): Promise<ExecutionPlan | null> {
     let steps: ExecutionStep[];
 
-    if (task.type === 'query') {
-      steps = this.generateStepsForTask(task, context);
-    } else if (this.config.useLLM) {
-      // 使用 LLM 生成计划
+    if (this.config.useLLM) {
+      // 使用 LLM 生成计划。
+      //
+      // query 曾经在这里被短路到规则生成，而规则生成只对
+      // `task.context.relevantFiles` 里的文件发 read_file——调用方没预先点名文件时，
+      // 计划里一个读取步骤都没有，agent 只能回答「没有可用证据」。
+      // 于是「哪个文件定义了 X」这类最需要帮助的问题结构上无法回答，
+      // 尽管 prompt 明确教了 glob 发现流程、search_code / list_directory 也都在动作枚举里
+      // （issue #419）。规则生成继续作为回退，与其他任务类型一致。
       try {
         const llmPlan = await this.generatePlanWithLLM(task, context);
         steps = this.convertLLMPlanToSteps(llmPlan);

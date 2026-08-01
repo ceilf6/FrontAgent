@@ -303,6 +303,16 @@ for (const task of tasks) {
     // 「按需供给 vs 全量倾倒」这条主张能不能拿数字说话，全靠这两个字段。
     filesenseEntries: eventDetails.filesense.reduce((sum, nav) => sum + (nav.entries ?? 0), 0),
     filesenseTruncated: eventDetails.filesense.some((nav) => nav.truncated),
+    // 定位精度：探索了多少路径，其中多少落在任务声明的目标目录之外。
+    // `targetDirs` 由任务自己在 tasks-deep.json 里声明，不是从结果反推的——
+    // 否则就是拿答案去评分。通过率对「找得准不准」太不敏感：两臂都能靠
+    // list_directory / search_code 慢慢摸出来，结果一样、代价不同，
+    // 而代价才是导航能力的直接体现。
+    exploredCount: eventDetails.explored.length,
+    offTargetExplored: task.targetDirs
+      ? eventDetails.explored.filter((e) => !task.targetDirs.some((d) => e.path.startsWith(d)))
+          .length
+      : null,
     elapsedMs: Math.round(performance.now() - t0),
     llmCalls,
     llmFailures,

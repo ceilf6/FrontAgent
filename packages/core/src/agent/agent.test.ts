@@ -1,5 +1,6 @@
 import type { ExecutionStep } from '@frontagent/shared';
 import { describe, expect, it, vi } from 'vitest';
+import { A2A_PROTOCOL_NAME, A2A_PROTOCOL_VERSION } from '../a2a.js';
 import { Executor } from '../executor.js';
 import { createAgent } from './agent.js';
 import { generateOutput } from './answer-generation.js';
@@ -212,6 +213,85 @@ describe('createAgent', () => {
     const executorSnap = agent.getExecutorSkillSnapshot();
     expect(plannerSnap.taskSkills).toBeInstanceOf(Array);
     expect(executorSnap.actionSkills).toBeInstanceOf(Array);
+  });
+});
+
+describe('code quality sub-agent isolation contract', () => {
+  const llm = { provider: 'anthropic' as const, model: 'claude-3-5-sonnet-20241022' };
+  const backend = {
+    name: 'stub',
+    generateText: async () => '',
+    generateObject: async () => ({}),
+  } as unknown as NonNullable<Parameters<typeof createAgent>[0]['llm']>['backend'];
+
+  function isolationOf(agent: ReturnType<typeof createAgent>): string {
+    const sub = (agent as unknown as { codeQualitySubAgent?: object }).codeQualitySubAgent;
+    return sub?.constructor.name ?? 'none';
+  }
+
+  it('uses process isolation when no custom backend is injected', () => {
+    const agent = createAgent({ projectRoot: '/test', llm: { ...llm, apiKey: 'k' } });
+    expect(isolationOf(agent)).toBe('ProcessIsolatedCodeQualitySubAgent');
+  });
+
+  // 注：「注入 backend 时降级」这条契约由下面那条行为测试覆盖
+  // （断言 backend 真被调用），比断言类名更贴近 #407 的验收条件，故不再重复断言类名。
+
+  it('keeps process isolation when LLM review is disabled, since no backend is needed', () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { ...llm, backend },
+      subAgents: { codeQualityEvaluator: { enableLLMReview: false } },
+    });
+    expect(isolationOf(agent)).toBe('ProcessIsolatedCodeQualitySubAgent');
+  });
+
+  // #407 的验收条件是「注入的 backend 被真正调用」，选中哪个类只是手段。
+  // 断言类名对重命名脆弱，也证明不了 backend 没被绕开去直连 provider。
+  it('routes the sub-agent review through the injected backend rather than the provider', async () => {
+    const generateObject = vi.fn(async () => ({
+      summary: 'stub review',
+      issues: [],
+    }));
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: {
+        ...llm,
+        backend: {
+          name: 'stub',
+          generateText: async () => '',
+          generateObject,
+        } as unknown as NonNullable<Parameters<typeof createAgent>[0]['llm']>['backend'],
+      },
+    });
+
+    const sub = (
+      agent as unknown as {
+        codeQualitySubAgent?: {
+          handleRequest: (req: unknown) => Promise<{ success: boolean }>;
+        };
+      }
+    ).codeQualitySubAgent;
+
+    const response = await sub?.handleRequest({
+      protocol: A2A_PROTOCOL_NAME,
+      version: A2A_PROTOCOL_VERSION,
+      kind: 'request',
+      messageId: 'a2a-req-backend-honored',
+      timestamp: Date.now(),
+      from: 'frontagent.main',
+      to: 'subagent.code-quality',
+      intent: 'code_quality.review_generated_files',
+      payload: {
+        taskId: 'task-1',
+        phase: 'implementation',
+        files: [{ path: 'src/a.ts', content: 'export const A = 1;' }],
+      },
+    });
+
+    expect(response?.success).toBe(true);
+    // 没有 apiKey：若 backend 被绕开，createModel 会抛错、generateObject 调用数为 0
+    expect(generateObject).toHaveBeenCalledTimes(1);
   });
 });
 

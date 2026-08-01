@@ -106,7 +106,12 @@ export interface NavigateOptions extends FilesenseBudget {
     | 'prepare_create'
     | 'validate_freshness';
   output?: 'summary' | 'candidates' | 'verbose';
-  writeMode?: 'cache' | 'workspace' | 'none';
+  /**
+   * navigate 是只读工具，故类型层面只允许非写取值。
+   * engine 仍在运行期拒绝 `'workspace'`——MCP args 不经类型检查，
+   * 那条守卫面向的是未经 TS 校验的调用方。
+   */
+  writeMode?: 'cache' | 'none';
 }
 
 export interface NavigateResult {

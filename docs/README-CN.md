@@ -475,6 +475,8 @@ export FRONTAGENT_RAG_WEAVIATE_TIMEOUT_MS="30000"
 export FRONTAGENT_FILESENSE_ENABLED="true"
 export FRONTAGENT_FILESENSE_OUTPUT="summary"       # summary | candidates | verbose
 export FRONTAGENT_FILESENSE_WRITE_MODE="cache"     # cache | workspace | none
+                                                   # `workspace` 仅对 filesense_sync 有意义；
+                                                   # navigate 是只读工具，会把它降级为 `none`。
 export FRONTAGENT_FILESENSE_MAX_ENTRIES="300"
 export FRONTAGENT_FILESENSE_MAX_BYTES="131072"
 export FRONTAGENT_FILESENSE_TIMEOUT_MS="3000"

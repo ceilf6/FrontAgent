@@ -201,15 +201,18 @@ describe('Filesense Engine', () => {
     await fs.mkdir(path.join(TEST_DIR, 'src'));
     await fs.writeFile(path.join(TEST_DIR, 'src', 'main.tsx'), 'export const main = 1;');
 
+    // 断言「任何位置都没写」，而不只是 FILES.json 不存在——'cache' 声称是非写别名，
+    // 若将来真引入缓存目录，只查单个文件名的断言发现不了语义漂移。
+    const snapshot = async () =>
+      (await fs.readdir(TEST_DIR, { recursive: true, withFileTypes: true }))
+        .map((entry) => path.join(entry.parentPath ?? TEST_DIR, entry.name))
+        .sort();
+
+    const before = await snapshot();
     for (const writeMode of ['none', 'cache'] as const) {
       const result = await navigate(TEST_DIR, { paths: ['.'], depth: 1, writeMode });
       expect(result.summary.packageManager).toBe('node');
-
-      const indexExists = await fs
-        .access(path.join(TEST_DIR, 'FILES.json'))
-        .then(() => true)
-        .catch(() => false);
-      expect(indexExists).toBe(false);
+      expect(await snapshot()).toEqual(before);
     }
   });
 });

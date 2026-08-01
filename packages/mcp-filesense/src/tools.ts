@@ -174,9 +174,10 @@ export const filesenseNavigateSchema = {
       },
       writeMode: {
         type: 'string',
-        enum: ['cache', 'workspace', 'none'],
-        description:
-          "写入模式，默认 none。navigate 是只读工具：none/cache 均不写盘；'workspace' 会被拒绝，写索引请用 filesense_sync。",
+        // 'workspace' 故意不在枚举内：navigate 是只读工具，该取值必然被 engine 拒绝。
+        // 留在 schema 里只会让模型选中一个注定失败的值，写索引请用 filesense_sync。
+        enum: ['cache', 'none'],
+        description: '写入模式，默认 none。navigate 是只读工具，none/cache 均不写盘。',
       },
     },
     required: [] as string[],

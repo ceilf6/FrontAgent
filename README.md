@@ -465,6 +465,8 @@ export FRONTAGENT_RAG_WEAVIATE_TIMEOUT_MS="30000"
 export FRONTAGENT_FILESENSE_ENABLED="true"
 export FRONTAGENT_FILESENSE_OUTPUT="summary"       # summary | candidates | verbose
 export FRONTAGENT_FILESENSE_WRITE_MODE="cache"     # cache | workspace | none
+                                                   # `workspace` only applies to filesense_sync;
+                                                   # navigate is read-only and downgrades it to `none`.
 export FRONTAGENT_FILESENSE_MAX_ENTRIES="300"
 export FRONTAGENT_FILESENSE_MAX_BYTES="131072"
 export FRONTAGENT_FILESENSE_TIMEOUT_MS="3000"

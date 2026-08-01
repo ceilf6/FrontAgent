@@ -162,13 +162,19 @@ export type FilesenseNavigationIntent =
   | 'prepare_create'
   | 'validate_freshness';
 
+export type FilesenseWriteMode = 'cache' | 'workspace' | 'none';
+
 export interface FilesenseConfig {
   /** 是否启用 Filesense 轻量导航（默认 true） */
   enabled?: boolean;
   /** 默认返回形式（默认 summary） */
   output?: 'summary' | 'candidates' | 'verbose';
-  /** 写入模式；navigate 默认不写业务目录（默认 cache） */
-  writeMode?: 'cache' | 'workspace' | 'none';
+  /**
+   * 写入模式（默认 cache）。
+   * 仅对 `filesense_sync` 类写索引工具有意义：navigate 是只读工具，
+   * `workspace` 在规划阶段会被降级为 `none` 并打一条 warn。
+   */
+  writeMode?: FilesenseWriteMode;
   /** 默认最大扫描条目数 */
   maxEntries?: number;
   /** 默认返回字节预算 */

@@ -94,7 +94,7 @@
 | 一次通过 | 3/5 | 2/5 |
 | `validation_failed`（旧复合口径） | **0** | **2** |
 | ├ 其中真·内容拦截 | **0** | **0** |
-| └ 其中执行前结构性拦截 | 0 | **2** |
+| └ 其中归类未定（结构性拦截 或 纯工具失败，见下） | 0 | **2** |
 | `rollback_started` | 0 | 0 |
 | 耗时 | 27.2 min | 28.6 min |
 | LLM 调用（失败数） | 34（0） | 39（0） |
@@ -120,8 +120,8 @@
 `Cannot apply patch: file not found in context: …`，而这个字符串在全仓只有一处
 产生点——`packages/core/src/skills/executor-skills.ts:242` 的 `prepareToolParams`，
 抛于**步骤执行期**，不是执行前校验。`validateBeforeExecution` 的 `apply_patch`
-分支产生的是另外两种文案（`executor.ts` 的 "file … does not exist (confirmed by
-previous directory listing)" 与 "failed to auto-read file …"）。
+分支产生的是另外三种文案（`executor.ts` 的 "file … does not exist (confirmed by
+previous directory listing)"、"failed to auto-read file …" 与 "error reading file …"）。
 
 两种归类会给出**相反**的结论：
 

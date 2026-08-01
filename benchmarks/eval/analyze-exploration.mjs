@@ -19,8 +19,25 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const dir = process.argv[2] ?? 'benchmarks/eval/out-final';
-const suffix = process.argv[3] === 'deep' ? '-deep' : '';
+const argv = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const dir = argv[0] ?? 'benchmarks/eval/out-final';
+const suffix = argv[1] === 'deep' || argv[0]?.includes('deep') ? '-deep' : '';
+
+/**
+ * 加载 0 条记录时**报错退出**，不打印空表。
+ *
+ * 空表和「两臂都没有探索」在视觉上无法区分——本会话已经有两次分析器
+ * 因为读不到数据而报出全零，被当成真实结果读了一轮。一个不能区分
+ * 「没数据」和「数据是零」的工具，产出的每个零都不可信。
+ */
+function requireRecords(arms) {
+  const total = arms.reduce((n, [, rows]) => n + rows.length, 0);
+  if (total > 0) return;
+  const names = arms.map(([a]) => join(dir, `${a}${suffix}.jsonl`)).join('\n  ');
+  console.error(`未从以下路径读到任何记录：\n  ${names}\n`);
+  console.error('注意参数是位置参数：analyze-exploration.mjs <outDir> [deep]');
+  process.exit(1);
+}
 
 function load(arm) {
   const p = join(dir, `${arm}${suffix}.jsonl`);
@@ -42,23 +59,28 @@ function bucket(record, arm) {
     }
     const onTarget = targets.some((d) => path.startsWith(d));
 
-    // 优先用记录里的步骤成败：读一个不存在的文件会失败，这个判据不依赖
-    // 工作区还在。旧记录没有 `ok` 字段时才回退到查工作区。
-    if (typeof step.ok === 'boolean') {
-      if (!step.ok) out.ghost += 1;
+    // 文件系统探测是**唯一**权威判据，`ok` 只能加不能减。
+    //
+    // 曾经反过来写过：先信 `step.ok`，读不存在的文件应当发 step_failed。
+    // 实测 36/36 个探索步骤全是 ok=true，其中三条指向根本不存在的路径
+    // （`src/features/billing/lib/formatAmount.ts`、`src/app/routes.ts`、
+    // 以及一条模板占位符没替换的 `src/features/{selectedFeatureName}/index.ts`）。
+    // 读文件失败不会让步骤失败——工具照常返回，错误在返回内容里。
+    //
+    // 于是那版实现用一个恒真的信号短路掉了本来能工作的探测，把主指标
+    // 打成恒零。零和「没测出来」在表里长得一模一样，这是本次评测最危险
+    // 的一种错误：它不会报错，只会让人得出反向结论。
+    if (wsAvailable) {
+      if (!existsSync(join(ws, path))) out.ghost += 1;
       else if (onTarget) out.hit += 1;
       else out.offTarget += 1;
       continue;
     }
 
-    if (!wsAvailable) {
-      out.unknown += 1;
-      continue;
-    }
-    const exists = existsSync(join(ws, path));
-    if (!exists) out.ghost += 1;
-    else if (onTarget) out.hit += 1;
-    else out.offTarget += 1;
+    // 工作区已清理时才退回 `ok`，且只认它报告的失败——ok=true 不能证明
+    // 文件存在（上面刚证明的），所以此时只能记为不可判定。
+    if (step.ok === false) out.ghost += 1;
+    else out.unknown += 1;
   }
   return out;
 }
@@ -69,6 +91,7 @@ const TASKS = JSON.parse(readFileSync('benchmarks/eval/tasks-deep.json', 'utf8')
 const TARGETS = new Map(TASKS.map((t) => [t.id, t.targetDirs ?? []]));
 
 const arms = { full: load('full'), 'no-filesense': load('no-filesense') };
+requireRecords(Object.entries(arms));
 
 console.log('# 探索质量三桶重算\n');
 console.log('| 臂 | 任务数 | 命中(目录对+文件在) | 幻觉文件名 | 脱靶(文件在+目录错) | glob | 不可判定 |');

@@ -162,13 +162,22 @@ export type FilesenseNavigationIntent =
   | 'prepare_create'
   | 'validate_freshness';
 
+export type FilesenseWriteMode = 'cache' | 'workspace' | 'none';
+
 export interface FilesenseConfig {
   /** 是否启用 Filesense 轻量导航（默认 true） */
   enabled?: boolean;
   /** 默认返回形式（默认 summary） */
   output?: 'summary' | 'candidates' | 'verbose';
-  /** 写入模式；navigate 默认不写业务目录（默认 cache） */
-  writeMode?: 'cache' | 'workspace' | 'none';
+  /**
+   * 写入模式（默认 cache）。
+   *
+   * **目前没有任何生效消费者**：唯一读它的工具是 navigate，而 navigate 是只读的——
+   * `cache` 与 `none` 行为完全相同，`workspace` 在规划阶段被降级为 `none`（并打一条 warn）。
+   * `filesense_sync` 不接受该参数、恒写索引。保留该字段是为了不破坏既有配置，
+   * 若将来引入真正的缓存位置概念，此处才会有区分。
+   */
+  writeMode?: FilesenseWriteMode;
   /** 默认最大扫描条目数 */
   maxEntries?: number;
   /** 默认返回字节预算 */

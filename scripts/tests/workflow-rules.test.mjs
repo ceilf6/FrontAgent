@@ -566,6 +566,38 @@ test('README documents the reproducible ablation benchmark and its negative find
   assert.match(readme, /zero interceptions/u);
 });
 
+test('README documents filesense writeMode as currently having no effect', () => {
+  // navigate is a read-only tool and filesense_sync does not accept the parameter,
+  // so no value of this variable changes behaviour today. Documenting it without
+  // that qualifier is what made the setting look usable while silently costing
+  // the whole navigation phase. The assertion must be anchored to the variable
+  // itself — a bare `/navigate/` match would pass on the pre-change README.
+  const cases = [
+    ['README.md', /FRONTAGENT_FILESENSE_WRITE_MODE[\s\S]{0,400}?no-op/u],
+    ['docs/README-CN.md', /FRONTAGENT_FILESENSE_WRITE_MODE[\s\S]{0,400}?no-op/u],
+  ];
+  for (const [path, pattern] of cases) {
+    assert.match(readFileSync(path, 'utf8'), pattern);
+  }
+});
+
+test('filesense navigate schema does not offer writeMode values the engine rejects', () => {
+  // The enum is a public contract for external MCP clients and for the model's
+  // tool-argument generation. Re-adding `workspace` would hand them a value that
+  // is guaranteed to fail, and nothing else in the suite would notice.
+  const tools = readFileSync('packages/mcp-filesense/src/tools.ts', 'utf8');
+  const navigateSchema = tools.slice(tools.indexOf('export const filesenseNavigateSchema'));
+  const writeModeBlock = navigateSchema.slice(
+    navigateSchema.indexOf('writeMode:'),
+    navigateSchema.indexOf('writeMode:') + 400,
+  );
+  // Anchor on the enum line itself: the surrounding comment legitimately names
+  // the removed value, so a block-wide `doesNotMatch` would fail on the comment.
+  const enumLine = writeModeBlock.match(/enum:.*$/mu)?.[0] ?? '';
+  assert.match(enumLine, /\['cache',\s*'none'\]/u);
+  assert.doesNotMatch(enumLine, /workspace/u);
+});
+
 test('README exposes the verifiable npm downloads counter with its marker block', () => {
   const readme = readFileSync('README.md', 'utf8');
 

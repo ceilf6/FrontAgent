@@ -70,6 +70,18 @@ if (triggered.length === 0) {
   process.exit(1);
 }
 
+// 关臂必须零触发。非零意味着 filesense 根本没被关掉（配置没生效、或臂配错了），
+// 此时两臂差异不再归因于导航能力——与「开臂零触发」同等致命，只是方向相反。
+const leaked = navTasks(arms.off);
+if (leaked.length > 0) {
+  console.error(
+    `filesense 关臂有 ${leaked.length} 条任务仍触发了导航（${leaked
+      .map((r) => r.taskId)
+      .join(', ')}）——该臂并未真正关闭 filesense，拒绝出报告。`,
+  );
+  process.exit(1);
+}
+
 const triggeredIds = new Set(triggered.map((r) => r.taskId));
 const pairedTriggered = {
   full: triggered,

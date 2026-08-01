@@ -57,12 +57,12 @@ const ARM_OPTIONS = {
   // 对照臂也必须把 filesense 钉死。不写的话它取自 FRONTAGENT_FILESENSE_ENABLED——
   // 一臂钉死、一臂随环境，操作者环境里存在该变量就会得到「两臂都关」的空结果，
   // 与 #386 废掉 guard 臂、#411 废掉本臂是同一类失真。
-  full: { sddPath: 'sdd.yaml', filesense: { enabled: true } },
+  full: { sddPath: 'sdd.yaml', filesenseEnabled: true },
   ablation: {
     // 指向不存在的文件 → run.ts existsSync 判定为无 SDD
     sddPath: 'sdd.disabled.yaml',
     // 与 full 臂同样钉死：三臂里只要有一臂随环境，臂间差异就不再只归因于被消融的那一项
-    filesense: { enabled: true },
+    filesenseEnabled: true,
     hallucinationGuard: {
       enabled: false,
       checks: { fileExistence: false, importValidity: false, syntaxValidity: false, sddCompliance: false },
@@ -71,7 +71,7 @@ const ARM_OPTIONS = {
   // filesense 单独消融：SDD 与 guard 与 full 臂完全相同，唯一变量是导航能力。
   // 这是回答「filesense 有没有用」的臂——full/ablation 两臂 filesense 都开着，
   // 它们之间的差异说明不了 filesense 的任何事情。
-  'no-filesense': { sddPath: 'sdd.yaml', filesense: { enabled: false } },
+  'no-filesense': { sddPath: 'sdd.yaml', filesenseEnabled: false },
 };
 
 function setupWorkspace(taskId) {
@@ -242,18 +242,20 @@ for (const task of tasks) {
     inputTokens: usageAfter.inputTokens - usageBefore.inputTokens,
     outputTokens: usageAfter.outputTokens - usageBefore.outputTokens,
   };
-  appendFileSync(OUT, `${JSON.stringify(record)}\n`);
-  console.log(
-    `[${ARM}] ${task.id}: ${pass ? 'PASS' : 'FAIL'} (${record.elapsedMs}ms, ${llmCalls} calls, ${llmFailures} failures, events=${JSON.stringify(events)})`,
-  );
+  // 必须在写盘之前中止：污染记录一旦落进 JSONL，续跑去重只看 taskId，
+  // 修好后重跑会**跳过**这条，report 照常把它计入汇总——假数据就此永久固化。
   if (harnessFailures.length > 0) {
     console.error(
-      `[${ARM}] harness 与 core 的事件契约不符，中止本臂（继续跑只会产出静默为 0 的假数据）：\n  - ` +
+      `[${ARM}] ${task.id}: harness 与 core 的事件契约不符，不写记录、中止本臂：\n  - ` +
         harnessFailures.join('\n  - '),
     );
     process.exit(3);
   }
 
+  appendFileSync(OUT, `${JSON.stringify(record)}\n`);
+  console.log(
+    `[${ARM}] ${task.id}: ${pass ? 'PASS' : 'FAIL'} (${record.elapsedMs}ms, ${llmCalls} calls, ${llmFailures} failures, events=${JSON.stringify(events)})`,
+  );
   // 后端一次成功调用都没有 = 环境坏了（登录态过期等），继续跑只会产出降级噪音
   if (llmCalls === 0) {
     console.error(`[${ARM}] ${task.id} 零成功 LLM 调用（失败 ${llmFailures} 次）——判定后端环境异常，中止本臂评测`);

@@ -8,7 +8,6 @@ import {
   type AgentSessionSnapshot,
   createAgent,
   type ExecutorStepTrace,
-  type FilesenseConfig,
   type HallucinationGuardConfig,
   type LLMBackend,
 } from '@frontagent/core';
@@ -57,16 +56,6 @@ export interface RunFrontAgentTaskOptions extends RuntimeConfigInput {
   llmBackend?: LLMBackend;
   /** 评测/消融用：覆盖幻觉防控配置（缺省时保持核心默认行为） */
   hallucinationGuard?: HallucinationGuardConfig;
-  /**
-   * 评测/消融用：覆盖 Filesense 导航配置。
-   * 与已解析的配置**逐字段合并**（调用方的字段优先），因此只覆盖一个字段
-   * 不会丢掉环境变量解析出来的其余字段。
-   *
-   * 没有这个入口，`filesense.enabled` 虽然在 core 侧是活配置
-   * （`planner-skills.ts` 真读），但从运行时 API 根本够不着——
-   * filesense 消融臂会像 #386 废掉 guard 臂那样，静默退化成「两臂都开着」。
-   */
-  filesense?: FilesenseConfig;
   signal?: AbortSignal;
   /**
    * 显式启用项目内 .frontagent/settings.json 的 hooks（默认关闭）。
@@ -184,9 +173,7 @@ export async function runFrontAgentTask(
     hallucinationGuard: options.hallucinationGuard,
     execution: resolved.execution,
     rag: resolved.rag,
-    // 合并而非整体替换：调用方常常只覆盖一个字段（消融臂只给 enabled: false），
-    // 整体替换会把 FRONTAGENT_FILESENSE_MAX_ENTRIES 等解析出来的兄弟字段一起丢掉。
-    filesense: { ...resolved.filesense, ...options.filesense },
+    filesense: resolved.filesense,
     skillContent: {
       builtInSkillRoots: resolveBuiltInSkillRoots(options.builtInSkillRoots),
     },
@@ -456,9 +443,7 @@ export async function planFrontAgentTask(
     hallucinationGuard: options.hallucinationGuard,
     execution: resolved.execution,
     rag: resolved.rag,
-    // 合并而非整体替换：调用方常常只覆盖一个字段（消融臂只给 enabled: false），
-    // 整体替换会把 FRONTAGENT_FILESENSE_MAX_ENTRIES 等解析出来的兄弟字段一起丢掉。
-    filesense: { ...resolved.filesense, ...options.filesense },
+    filesense: resolved.filesense,
     skillContent: {
       builtInSkillRoots: resolveBuiltInSkillRoots(options.builtInSkillRoots),
     },

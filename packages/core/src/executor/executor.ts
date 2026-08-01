@@ -141,6 +141,7 @@ export class Executor {
         }
 
         const errorMsg = preValidation.blockedBy?.join('; ') || '';
+        this.emitValidationFailed('pre_execution', preValidation, step);
         return trace.finish({
           stepResult: {
             success: false,
@@ -193,6 +194,10 @@ export class Executor {
       const postValidation = await trace.withStage('validate_after', () =>
         this.validateAfterExecution(step, toolResult, toolParams),
       );
+
+      if (!postValidation.pass) {
+        this.emitValidationFailed('post_write', postValidation, step);
+      }
 
       const stepResult: StepResult = {
         success: postValidation.pass,
@@ -519,6 +524,28 @@ export class Executor {
       results,
       blockedBy: blockedBy.length > 0 ? blockedBy : undefined,
     };
+  }
+
+  /**
+   * 只有「至少一项真实检查判定失败」才算校验拦截。
+   * `validateAfterExecution` 在工具自身报错时返回 results 为空的失败结果——
+   * 那是工具失败，不是拦截；两者混在同一事件里，`validation_failed`
+   * 就不能当拦截数用，而 #388 要的正是一个能计数的拦截量。
+   */
+  private emitValidationFailed(
+    stage: 'pre_execution' | 'post_write',
+    validation: ValidationResult,
+    step: ExecutionStep,
+  ): void {
+    if (validation.results.some((result) => !result.pass)) {
+      this.config.emitEvent?.({
+        type: 'validation_failed',
+        stage,
+        result: validation,
+        path: step.params.path as string | undefined,
+        stepId: step.stepId,
+      });
+    }
   }
 
   private async validateAfterExecution(

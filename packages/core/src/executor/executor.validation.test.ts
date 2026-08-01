@@ -29,6 +29,7 @@ function makeConfig(overrides: Partial<ExecutorConfig> = {}): ExecutorConfig {
     hallucinationGuard: {
       validateFilePath: vi.fn(),
       validateCode: vi.fn(),
+      isCheckEnabled: () => true,
     } as unknown as ExecutorConfig['hallucinationGuard'],
     llmService: {
       name: 'test',
@@ -126,6 +127,7 @@ describe('Executor write validation', () => {
           hallucinationGuard: {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
             validateCode,
+            isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
           getFileSystemFacts: () => ({
             existingFiles: new Set<string>(),
@@ -218,6 +220,7 @@ describe('Executor write validation', () => {
           hallucinationGuard: {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
             validateCode,
+            isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
           emitEvent: (event) => events.push(event),
           getFileSystemFacts: () => ({
@@ -247,9 +250,10 @@ describe('Executor write validation', () => {
       expect(result.stepResult.error).toContain('EACCES');
       // 步骤失败但没有拦截：validation_failed 必须保持为 0，否则拦截数不可用
       expect(events.map((event) => event.type)).not.toContain('validation_failed');
-      // 纯工具失败不得中止剩余计划——一次 read_file/run_command 失败
-      // 不应该让 progress-enforcement 把后续步骤全标 skipped
-      expect(result.needsRollback).toBe(false);
+      // 写动作的工具失败仍要中止：继续跑的话，后续「引用该模块的另一个文件」的
+      // 步骤会全绿收尾，整轮以「缺模块但步骤全成功」呈现。
+      // （只读动作的工具失败才不中止——那条由 executor.test.ts 的 read_file 用例覆盖。）
+      expect(result.needsRollback).toBe(true);
     });
   });
 
@@ -401,6 +405,7 @@ describe('Executor write validation', () => {
           hallucinationGuard: {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
             validateCode,
+            isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
         }),
       );
@@ -445,6 +450,7 @@ describe('Executor write validation', () => {
           hallucinationGuard: {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
             validateCode,
+            isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
         }),
       );
@@ -704,6 +710,79 @@ describe('Executor write validation', () => {
 
         expect(callTool).not.toHaveBeenCalled();
         expect(result.stepResult.error).toContain('Markdown code fence');
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+    it('does not veto when syntaxValidity is disabled, so the guard stays ablatable', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-ablatable-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({
+              projectRoot,
+              enabledChecks: { syntaxValidity: false },
+            }),
+          }),
+        );
+        const callTool = vi.fn().mockResolvedValue({ success: true });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('create_file', 'files');
+
+        const result = await executor.executeStep(
+          makeStep({
+            params: {
+              path: 'src/Card.tsx',
+              content: '```tsx\nexport const Card = () => null;\n```\n',
+            },
+          }),
+          makeExecutionContext(),
+        );
+
+        // 执行器在 guard 之外复刻了一条检查；它若不受同一份配置管辖，
+        // `syntaxValidity: false` 就关不掉写盘否决——正是 #386 让七月消融基准
+        // guard 臂失效的机制。
+        expect(callTool).toHaveBeenCalledTimes(1);
+        expect(result.stepResult.error ?? '').not.toContain('Markdown code fence');
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('does not veto a markdown fence inside a yaml block scalar', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-yaml-'));
+      try {
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+          }),
+        );
+        const callTool = vi.fn().mockResolvedValue({ success: true });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('create_file', 'files');
+
+        const result = await executor.executeStep(
+          makeStep({
+            params: {
+              path: 'docs.yaml',
+              // 块标量里放一段 markdown 是完全合法的 YAML
+              content: 'readme: |\n  ```ts\n  const a = 1;\n  ```\n',
+            },
+          }),
+          makeExecutionContext(),
+        );
+
+        expect(callTool).toHaveBeenCalledTimes(1);
+        expect(result.stepResult.error ?? '').not.toContain('Markdown code fence');
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }

@@ -72,6 +72,17 @@ export class HallucinationGuard {
   }
 
   /**
+   * 某项检查是否启用。
+   *
+   * 公开出来是必要的：执行器有自己的写盘前门禁，若它不查这份配置，
+   * `enabledChecks` 就又变成「关不掉」——正是 #386 让消融基准的 guard 臂失效的机制。
+   * 任何在 guard 之外复刻检查语义的调用方，都必须先问过这里。
+   */
+  isCheckEnabled(check: keyof NonNullable<GuardConfig['enabledChecks']>): boolean {
+    return this.enabledChecks[check];
+  }
+
+  /**
    * 验证 Agent 输出
    */
   async validate(output: AgentOutput): Promise<ValidationResult> {

@@ -95,6 +95,12 @@ for (const task of tasks) {
       ...ARM_OPTIONS[ARM],
       onEvent: (e) => {
         events[e.type] = (events[e.type] ?? 0) + 1;
+        // 带 stage 的事件另记一份分阶段计数：`validation_failed` 的三个阶段含义
+        // 完全不同（pre_write 才是真拦截，post_write 含刻意放行落盘的前向引用 import），
+        // 只按 type 聚合的话，事件加了 stage 也等于白加。
+        if (e.stage) {
+          events[`${e.type}:${e.stage}`] = (events[`${e.type}:${e.stage}`] ?? 0) + 1;
+        }
       },
     });
     resultText = result?.output ?? '';

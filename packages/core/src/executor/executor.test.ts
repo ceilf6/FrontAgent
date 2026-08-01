@@ -30,6 +30,7 @@ function makeConfig(overrides: Partial<ExecutorConfig> = {}): ExecutorConfig {
     hallucinationGuard: {
       validateFilePath: vi.fn(),
       validateCode: vi.fn(),
+      isCheckEnabled: () => true,
     } as unknown as ExecutorConfig['hallucinationGuard'],
     llmService: {
       name: 'test',
@@ -381,6 +382,7 @@ describe('Executor', () => {
               severity: 'info',
             }),
             validateCode: vi.fn(),
+            isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
         }),
       );

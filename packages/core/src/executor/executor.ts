@@ -51,7 +51,16 @@ function detectMarkdownFence(content: string): { line: number; text: string } | 
 }
 
 /** 把围栏检出结果表达成 ValidationResult，好让事件与错误文案与其余校验同形。 */
-function buildFenceVeto(content: string, path: string): ValidationResult {
+/**
+ * 围栏判据只适用于 TS/JS 家族。`.yaml` 的块标量里放一段 markdown（含围栏）
+ * 是完全合法的内容，`.json` 的字符串同理——对它们套用这条判据就是误伤。
+ */
+const FENCE_VETO_LANGUAGES = new Set(['typescript', 'javascript']);
+
+function buildFenceVeto(content: string, path: string, language: string): ValidationResult {
+  if (!FENCE_VETO_LANGUAGES.has(language)) {
+    return { pass: true, results: [] };
+  }
   const fence = detectMarkdownFence(content);
   if (!fence) {
     return { pass: true, results: [] };
@@ -254,9 +263,14 @@ export class Executor {
       // 否决判据先跑：它是纯字符串扫描，而 validateCode 会做文件系统解析
       // （import 检查）。围栏一旦命中就直接 return，没必要为一份不会落盘的内容
       // 白跑一次完整 guard。
-      const contentValidation = writeContent
-        ? buildFenceVeto(writeContent.content, writeContent.path)
-        : { pass: true, results: [] };
+      // 必须先问过 guard 的 enabledChecks：执行器在 guard 之外复刻了一条检查，
+      // 若它不受同一份配置管辖，`syntaxValidity: false` 就关不掉写盘否决——
+      // 那正是 #386 让七月消融基准 guard 臂失效的机制，不能在这里重演。
+      const vetoEnabled = this.config.hallucinationGuard.isCheckEnabled('syntaxValidity');
+      const contentValidation =
+        writeContent && vetoEnabled
+          ? buildFenceVeto(writeContent.content, writeContent.path, writeContent.language)
+          : { pass: true, results: [] };
       if (!contentValidation.pass) {
         const errorMsg = contentValidation.blockedBy?.join('; ') || '';
         this.emitValidationFailed('pre_write', contentValidation, step, writeContent?.path);
@@ -316,13 +330,30 @@ export class Executor {
       );
 
       let rollbackOutcome: { rollbackFailed: boolean; error?: string } = { rollbackFailed: false };
+      /** 写盘后读不回内容的路径；记进 stepResult.error，避免这条分支彻底静默 */
+      let unreadableAfterWrite: string | undefined;
       if (!postValidation.pass) {
         this.emitValidationFailed('post_write', postValidation, step);
         // 回滚的触发口径必须和写盘否决口径一致，且同样不能建立在会误判的启发式上：
         // `create` 快照的回滚是 unlinkSync，误判一次就是删掉一个合法文件。
         // 只有确定性的围栏入码才触发撤销。
-        const landed = this.readWrittenFile(step.params.path as string | undefined);
-        if (landed !== undefined && !buildFenceVeto(landed, String(step.params.path)).pass) {
+        const landedPath = step.params.path as string | undefined;
+        const landed = this.readWrittenFile(landedPath);
+        if (landed === undefined && (toolResult as { snapshotId?: string })?.snapshotId) {
+          // 读不回内容（路径越界/不可读/工具根目录与 projectRoot 不一致）时，
+          // 既不会尝试回滚、rollbackFailed 也保持 false——三处都表现为「无异常」。
+          // 至少要让它可见，否则又是一个静默为「什么都没发生」的分支。
+          this.debugWarn(
+            `[Executor] Could not read back ${landedPath} after the write; rollback was not attempted.`,
+          );
+          // 只告警、不置 rollbackFailed：后者会驱动中止语义，是比「读不回」更强的断言。
+          // 读不回不等于「回滚失败」，只等于「无法判断要不要回滚」。
+          unreadableAfterWrite = landedPath;
+        } else if (
+          landed !== undefined &&
+          vetoEnabled &&
+          !buildFenceVeto(landed, String(landedPath), detectLanguage(String(landedPath)) ?? '').pass
+        ) {
           rollbackOutcome = await this.rollbackFailedWrite(toolResult);
         }
       }
@@ -335,7 +366,9 @@ export class Executor {
         // 非交互运行里除了事件流之外无处可查。
         error: rollbackOutcome.rollbackFailed
           ? `${stepError ?? 'step failed'} (rollback failed: ${rollbackOutcome.error}; the written file is still on disk)`
-          : stepError,
+          : unreadableAfterWrite
+            ? `${stepError ?? 'step failed'} (could not read back ${unreadableAfterWrite}; rollback was not attempted)`
+            : stepError,
         duration: Date.now() - startTime,
         snapshotId: (toolResult as { snapshotId?: string })?.snapshotId,
       };
@@ -347,7 +380,12 @@ export class Executor {
         // 旧条件在写步骤上恒真），但排除纯工具失败：`validateAfterExecution` 对
         // 工具报错返回 results 为空的失败结果，把它算进来会让一次 read_file 失败
         // 就中止整个剩余计划。
-        needsRollback: postValidation.results.some((result) => !result.pass),
+        // 排除纯工具失败，是为了不让一次 read_file 失败中止整个计划。但写动作不同：
+        // 写工具报 EACCES 后若继续跑，后续「引用该模块的另一个文件」的步骤会全绿收尾，
+        // 整轮以「缺模块但步骤全成功」呈现。写动作的工具失败照旧中止。
+        needsRollback:
+          postValidation.results.some((result) => !result.pass) ||
+          (!postValidation.pass && WRITE_ACTIONS.includes(step.action)),
         rollbackFailed: rollbackOutcome.rollbackFailed,
       });
     } catch (error) {

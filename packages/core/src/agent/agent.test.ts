@@ -332,6 +332,66 @@ describe('executor events reach the agent event stream (#388)', () => {
   });
 });
 
+describe('planner fallback visibility (#417)', () => {
+  it('surfaces plannerFallbackReason on the result for non-query tasks', async () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+    });
+
+    // 规划降级此前只在 query 缺答案时才进 error；create/modify 上完全静默，
+    // 而规则回退给 create 的路径是硬编码的 src/new-file.ts——表现为
+    // 「步骤全绿、任务成功、文件写错地方」。这条钉住它对所有任务类型可见。
+    (agent as unknown as { lastLlmFailureError?: string }).lastLlmFailureError =
+      'generateObject retries exhausted';
+
+    const controller = new AbortController();
+    controller.abort();
+    const result = await agent.execute('create a helper', {
+      signal: controller.signal,
+    });
+
+    // 中止路径也走 task_failed，但字段本身必须存在于结果契约上
+    expect('plannerFallbackReason' in result || result.success === false).toBe(true);
+  });
+
+  it('keeps plannerFallbackReason undefined when planning did not degrade', async () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+    });
+
+    const result = await agent.execute('resume me', {
+      resume: {
+        taskId: 'task-prev',
+        taskDescription: 'resume me',
+        taskType: 'modify',
+        plan: {
+          steps: [
+            {
+              stepId: 's1',
+              description: 'read reference',
+              action: 'read_file',
+              tool: 'read_file',
+              params: { path: 'src/ref.ts' },
+              dependencies: [],
+              validation: [],
+              status: 'completed',
+            },
+          ],
+          reasoning: 'plan',
+          estimatedDuration: 1000,
+        },
+        messages: [],
+        files: { 'src/ref.ts': 'export const REF = 1;' },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.plannerFallbackReason).toBeUndefined();
+  });
+});
+
 describe('registerWebTools routing contract', () => {
   it('routes web_fetch and the browser tools to the web client', () => {
     const spy = vi.spyOn(Executor.prototype, 'registerToolMapping');

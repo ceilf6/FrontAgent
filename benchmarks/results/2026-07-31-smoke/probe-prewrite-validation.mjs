@@ -9,9 +9,16 @@
  * 用法：
  *   node benchmarks/results/2026-07-31-smoke/probe-prewrite-validation.mjs
  *
- * 在待测提交上各跑一次并比较输出，例如：
- *   git checkout db42301 && pnpm build && node <此脚本>   # 修复前
- *   git checkout <PR#402> && pnpm build && node <此脚本>  # 修复后
+ * 在待测提交上各跑一次并比较输出。注意脚本本身随本 PR 引入，切到修复前的提交后
+ * 它不在工作区里——**先把脚本复制到 worktree 之外**（或从另一份 checkout 用绝对
+ * 路径调用），再切提交：
+ *
+ *   cp benchmarks/results/2026-07-31-smoke/probe-prewrite-validation.mjs /tmp/probe.mjs
+ *   git checkout db42301 && pnpm build && node /tmp/probe.mjs   # 修复前
+ *   git checkout <PR#402> && pnpm build && node /tmp/probe.mjs  # 修复后
+ *
+ * 脚本按相对路径 import `packages/runtime-node/dist`，所以要么放在原位置深度相同
+ * 的目录下，要么把那行 import 改成绝对路径。
  *
  * 判读：`validation_failed` 从 0 变 1、`badFileOnDisk` 从 true 变 false，
  * 而 `step_failed` 两侧都是 1 —— 这正是「检查一直在跑并判失败，只是不发事件、

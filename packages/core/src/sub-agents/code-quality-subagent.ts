@@ -47,6 +47,12 @@ export interface CodeQualitySubAgentOptions {
   enableRuleFallback?: boolean;
   maxFilesForLLM?: number;
   maxCharsPerFileForLLM?: number;
+  /**
+   * LLM 评审的时间上界（毫秒，默认 120000）。
+   * 进程隔离分支靠 SIGKILL 兜底，in_memory 分支没有进程边界可杀，
+   * 故在此设上界——超时按 LLM 评审失败处理，退回规则评审。
+   */
+  reviewTimeoutMs?: number;
   debug?: boolean;
 }
 
@@ -64,6 +70,7 @@ export class CodeQualitySubAgent
   private readonly enableRuleFallback: boolean; // 规则函数检查
   private readonly maxFilesForLLM: number; // LLM评估最多文件数
   private readonly maxCharsPerFileForLLM: number; // 上下文上限
+  private readonly reviewTimeoutMs: number; // LLM 评审时间上界
   private readonly debug: boolean; // 失败日志
 
   constructor(options: CodeQualitySubAgentOptions = {}) {
@@ -71,6 +78,7 @@ export class CodeQualitySubAgent
     this.enableRuleFallback = options.enableRuleFallback ?? true;
     this.maxFilesForLLM = options.maxFilesForLLM ?? 6;
     this.maxCharsPerFileForLLM = options.maxCharsPerFileForLLM ?? 12000;
+    this.reviewTimeoutMs = options.reviewTimeoutMs ?? 120000;
     this.debug = options.debug ?? false;
   }
 
@@ -98,7 +106,7 @@ export class CodeQualitySubAgent
 
     if (this.llmService) {
       try {
-        const llmReview = await this.evaluateWithLLM(payload);
+        const llmReview = await this.withReviewTimeout(this.evaluateWithLLM(payload));
         llmIssues = llmReview.issues;
         llmSummary = llmReview.summary;
       } catch (error) {
@@ -142,6 +150,27 @@ export class CodeQualitySubAgent
       success: true,
       payload: review,
     };
+  }
+
+  /**
+   * 给 LLM 评审加时间上界。超时不中断底层请求（LLMService 无 AbortSignal 接口），
+   * 但让调用方停止等待并落到规则评审——in_memory 分支没有进程可杀，这是唯一的兜底位。
+   */
+  private async withReviewTimeout<T>(promise: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`LLM review timed out after ${this.reviewTimeoutMs}ms`)),
+            this.reviewTimeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private async evaluateWithLLM(

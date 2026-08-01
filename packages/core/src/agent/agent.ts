@@ -177,14 +177,18 @@ export class FrontAgent {
       // 改用 provider 直连，调用方指定的路由意图被违背且 LLM 评审静默退化为规则评审。
       // 故有 backend 时降级为 in-process 隔离——该分支直接复用 this.llmService。
       const backendBlocksProcessIsolation = Boolean(config.llm?.backend) && enableLLMReview;
-      const isolationMode =
+      const isolationMode: NonNullable<
+        NonNullable<AgentConfig['subAgents']>['codeQualityEvaluator']
+      >['isolationMode'] =
         requestedIsolationMode === 'process' && backendBlocksProcessIsolation
-          ? 'inProcess'
+          ? 'in_memory'
           : requestedIsolationMode;
 
       if (isolationMode !== requestedIsolationMode) {
-        this.debugWarn(
-          '[FrontAgent] codeQualityEvaluator: custom llm.backend cannot cross a process boundary; falling back to in-process isolation so the injected backend is honored.',
+        // 降级会同时失去进程分支的超时兜底，且批处理调用方通常不开 debug——
+        // 这条必须无条件可见，否则隔离级别下降没有任何信号。
+        logger.warn(
+          '[FrontAgent] codeQualityEvaluator: custom llm.backend cannot cross a process boundary; falling back to in_memory isolation so the injected backend is honored. The 120s worker timeout no longer applies.',
         );
       }
 
@@ -204,6 +208,8 @@ export class FrontAgent {
           enableRuleFallback: codeQualityConfig?.enableRuleFallback ?? true,
           maxFilesForLLM: codeQualityConfig?.maxFilesForLLM,
           maxCharsPerFileForLLM: codeQualityConfig?.maxCharsPerFileForLLM,
+          // 与进程分支同一个上界：降级后仍有时间兜底，只是靠 race 而非 SIGKILL。
+          reviewTimeoutMs: codeQualityConfig?.processTimeoutMs,
           debug: config.debug ?? false,
         });
       }

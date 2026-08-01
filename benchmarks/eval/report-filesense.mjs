@@ -29,6 +29,20 @@ if (distinct.length !== 1) {
   process.exit(1);
 }
 const [FIXTURE_KIND, TASK_SET] = distinct[0].split('/');
+
+// 预算配置也必须两臂一致。「预算被截断」是本报告要印的结论之一，
+// 而预算值若随操作者环境浮动，那个结论就成了他机器的属性而不是夹具的属性。
+const budgets = [...fullAll, ...offAll].map((r) =>
+  JSON.stringify({ ...(r.filesenseConfig ?? {}), enabled: undefined }),
+);
+if (new Set(budgets).size !== 1) {
+  console.error('两臂的 filesense 预算配置不一致，拒绝出报告——预算差异会污染截断结论。');
+  process.exit(1);
+}
+if (!fullAll[0]?.filesenseConfig) {
+  console.error('JSONL 缺少 filesenseConfig 字段——来自旧版 harness，无法确认预算口径，拒绝出报告');
+  process.exit(1);
+}
 if (FIXTURE_KIND === 'unknown') {
   console.error('JSONL 缺少 fixture/taskSet 字段——来自旧版 harness，无法确认方法学，拒绝出报告');
   process.exit(1);
@@ -90,7 +104,10 @@ const pairedTriggered = {
 
 console.log(`# FrontAgent 消融评测：filesense 目录导航对一次通过率的影响
 
-> **口径**：两臂唯一的差异是 \`filesense.enabled\`。SDD、guard、RAG、模型、任务集、夹具全部相同。
+> **口径**：两臂唯一的差异是**是否注入 filesense 导航步骤**（\`filesenseEnabled\`）。
+> SDD、guard、RAG、模型、任务集、夹具、以及 filesense 的全部预算参数都相同且被显式钉死（已从 JSONL 校验）。
+> 严格说关臂不是「filesense 不可用」而是「planner 不注入导航步骤」——工具仍在注册表里，
+> 但计划 prompt 与 schema 都不暴露 filesense 动作，模型点不到它；下面的关臂零触发守卫会验证这一点。
 > 2026-07-12 那轮的 full/ablation 两臂 **filesense 都是开的**，因此那份数据说明不了 filesense 的任何事情。
 
 ## 方法

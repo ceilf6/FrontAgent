@@ -53,16 +53,32 @@ if (!existsSync(join(FIXTURE, 'node_modules'))) {
 // 先跑 flat 再跑 deep 会静默追加进同一个文件，报告会把两套夹具平均成一个数。
 const OUT = join(OUT_DIR, `${ARM}${FIXTURE_KIND === 'deep' ? '-deep' : ''}.jsonl`);
 
+/**
+ * filesense 的**全部**配置面都要钉死，不只是 enabled。
+ *
+ * `output` / `writeMode` / `maxEntries` / `maxBytes` / `timeoutMs` 若不写，就取自
+ * `FRONTAGENT_FILESENSE_*`，而 `planner-skills.ts` 里配置值会**压过** trigger-policy
+ * 的默认预算——报告却把「预算是否截断」当结论印出来。操作者环境里有一个
+ * `FRONTAGENT_FILESENSE_MAX_ENTRIES`，那个结论就变成了他机器的属性。
+ */
+const FILESENSE_PINNED = {
+  filesenseOutput: 'summary',
+  filesenseWriteMode: 'cache',
+  filesenseMaxEntries: 300,
+  filesenseMaxBytes: 131072,
+  filesenseTimeoutMs: 3000,
+};
+
 const ARM_OPTIONS = {
-  // 对照臂也必须把 filesense 钉死。不写的话它取自 FRONTAGENT_FILESENSE_ENABLED——
-  // 一臂钉死、一臂随环境，操作者环境里存在该变量就会得到「两臂都关」的空结果，
-  // 与 #386 废掉 guard 臂、#411 废掉本臂是同一类失真。
-  full: { sddPath: 'sdd.yaml', filesenseEnabled: true },
+  // 对照臂也必须钉死。一臂钉死、一臂随环境，操作者环境里存在该变量就会得到
+  // 「两臂都关」的空结果，与 #386 废掉 guard 臂是同一类失真。
+  full: { sddPath: 'sdd.yaml', filesenseEnabled: true, ...FILESENSE_PINNED },
   ablation: {
     // 指向不存在的文件 → run.ts existsSync 判定为无 SDD
     sddPath: 'sdd.disabled.yaml',
     // 与 full 臂同样钉死：三臂里只要有一臂随环境，臂间差异就不再只归因于被消融的那一项
     filesenseEnabled: true,
+    ...FILESENSE_PINNED,
     hallucinationGuard: {
       enabled: false,
       checks: { fileExistence: false, importValidity: false, syntaxValidity: false, sddCompliance: false },
@@ -71,7 +87,10 @@ const ARM_OPTIONS = {
   // filesense 单独消融：SDD 与 guard 与 full 臂完全相同，唯一变量是导航能力。
   // 这是回答「filesense 有没有用」的臂——full/ablation 两臂 filesense 都开着，
   // 它们之间的差异说明不了 filesense 的任何事情。
-  'no-filesense': { sddPath: 'sdd.yaml', filesenseEnabled: false },
+  // 注意口径：这是关掉**注入式导航**（planner 不再注入 filesense_navigate 步骤），
+  // 不是把 filesense 工具从注册表里摘掉。实际等价，因为计划 prompt 与 schema
+  // 都不暴露 filesense 动作，模型点不到它——报告里的守卫会验证这一点。
+  'no-filesense': { sddPath: 'sdd.yaml', filesenseEnabled: false, ...FILESENSE_PINNED },
 };
 
 function setupWorkspace(taskId) {
@@ -223,6 +242,12 @@ for (const task of tasks) {
     // 去描述 deep 的产物，正是 #410 撤回结论的同一类失真。
     fixture: FIXTURE_KIND,
     taskSet: TASKS_FILE.split('/').pop(),
+    // 生效的 filesense 配置随记录落盘：没有它，「预算被截断」这个结论
+    // 无法与产生它的预算值对应，报告也就无从校验两臂是否同一套预算。
+    filesenseConfig: {
+      enabled: ARM_OPTIONS[ARM].filesenseEnabled,
+      ...FILESENSE_PINNED,
+    },
     pass,
     agentSuccess,
     agentError,

@@ -537,6 +537,18 @@ test('repo guard remains advisory and training-camp workflows are absent', () =>
   assert.throws(() => readFileSync('docs/progress.json', 'utf8'));
 });
 
+// actions/checkout refuses fork checkout under pull_request_target unless this
+// input is set, and it does not read the job-level allowlist. Without it Repo
+// Guard fails on every fork PR before the review step runs (#437).
+test('repo guard can check out fork PRs from allowlisted contributors', () => {
+  const repoGuard = readFileSync('.github/workflows/repo-guard.yml', 'utf8');
+
+  assert.match(repoGuard, /allow-unsafe-pr-checkout:\s*true/u);
+  assert.match(repoGuard, /persist-credentials:\s*false/u);
+  // The opt-in is only defensible while triggering stays gated to known actors.
+  assert.match(repoGuard, /contains\(fromJSON\('\["NanluQingshi","HaveNiceDa"\]'\)/u);
+});
+
 test('agent prompts describe the OSS Harness review loop', () => {
   for (const file of ['AGENTS.md', 'CLAUDE.md']) {
     const prompt = readFileSync(file, 'utf8');

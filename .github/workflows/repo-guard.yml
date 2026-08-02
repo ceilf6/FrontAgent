@@ -53,11 +53,19 @@ jobs:
     timeout-minutes: 45
     steps:
       # PR 评审的工作目录:checkout 即评审数据,凭据不落盘。
+      #
+      # allow-unsafe-pr-checkout: actions/checkout 自 v4 起默认拒绝在
+      # pull_request_target / workflow_run 下 checkout fork 代码(防 "pwn request"),
+      # 且只认这一个开关——上面 job 级 if 白名单是 workflow 层的,action 不读它,
+      # 不开这一项则本 job 对所有 fork PR 必然 fail(#437)。
+      # 开启的前提是上面的 if 门禁已把触发者限死在仓库成员 + 具名白名单,
+      # 即信任边界是「这几个具名的人」而非任意 fork 提交者;这是一次显式的信任声明。
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && github.event.issue.pull_request)
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || format('refs/pull/{0}/head', github.event.issue.number) }}
           persist-credentials: false
+          allow-unsafe-pr-checkout: true
       - uses: ceilf6/repo-guard@main
         with:
           type: both

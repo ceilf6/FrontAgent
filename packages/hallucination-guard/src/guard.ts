@@ -68,10 +68,26 @@ export class HallucinationGuard {
     this.config = config;
     this.enabled = config.enabled ?? true;
     this.enabledChecks = {
-      fileExistence: this.enabled && (config.enabledChecks?.fileExistence ?? true),
-      importValidity: this.enabled && (config.enabledChecks?.importValidity ?? true),
-      syntaxValidity: this.enabled && (config.enabledChecks?.syntaxValidity ?? true),
-      sddCompliance: this.enabled && (config.enabledChecks?.sddCompliance ?? true),
+      fileExistence: config.enabledChecks?.fileExistence ?? true,
+      importValidity: config.enabledChecks?.importValidity ?? true,
+      syntaxValidity: config.enabledChecks?.syntaxValidity ?? true,
+      sddCompliance: config.enabledChecks?.sddCompliance ?? true,
+    };
+  }
+
+  private isCheckEnabled(check: keyof NonNullable<GuardConfig['enabledChecks']>): boolean {
+    return this.enabled && this.enabledChecks[check];
+  }
+
+  private validatePathContainment(path: string): HallucinationCheckResult | undefined {
+    const resolvedRoot = resolve(this.config.projectRoot);
+    if (isInsidePath(resolve(resolvedRoot, path), resolvedRoot)) return undefined;
+    return {
+      pass: false,
+      type: 'file_existence',
+      severity: 'block',
+      message: `Security violation: Path "${path}" is outside project root`,
+      details: { path, projectRoot: this.config.projectRoot },
     };
   }
 
@@ -82,7 +98,7 @@ export class HallucinationGuard {
     const results: HallucinationCheckResult[] = [];
 
     // 1. 文件存在性检查
-    if (this.enabledChecks.fileExistence && output.targetPath) {
+    if (this.isCheckEnabled('fileExistence') && output.targetPath) {
       const shouldExist = ['read_file', 'apply_patch', 'delete_file'].includes(output.action);
       const fileCheck = await checkFileExistence({
         path: output.targetPath,
@@ -90,10 +106,13 @@ export class HallucinationGuard {
         shouldExist,
       });
       results.push(fileCheck);
+    } else if (output.targetPath) {
+      const containmentCheck = this.validatePathContainment(output.targetPath);
+      if (containmentCheck) results.push(containmentCheck);
     }
 
     // 2. 导入有效性检查
-    if (this.enabledChecks.importValidity && output.content && output.targetPath) {
+    if (this.isCheckEnabled('importValidity') && output.content && output.targetPath) {
       const imports = output.imports ?? extractImports(output.content);
       if (imports.length > 0) {
         const importChecks = await checkAllImports(
@@ -106,7 +125,7 @@ export class HallucinationGuard {
     }
 
     // 3. 语法有效性检查
-    if (this.enabledChecks.syntaxValidity && output.content && output.language) {
+    if (this.isCheckEnabled('syntaxValidity') && output.content && output.language) {
       const syntaxCheck = await checkSyntaxValidity({
         code: output.content,
         language: output.language,
@@ -116,7 +135,7 @@ export class HallucinationGuard {
     }
 
     // 4. SDD 合规性检查
-    if (this.enabledChecks.sddCompliance && this.config.sddConfig) {
+    if (this.isCheckEnabled('sddCompliance') && this.config.sddConfig) {
       const agentAction: AgentAction = {
         type: output.action,
         targetPath: output.targetPath,
@@ -152,18 +171,10 @@ export class HallucinationGuard {
    * 快速验证文件路径
    */
   async validateFilePath(path: string, shouldExist = true): Promise<HallucinationCheckResult> {
-    if (!this.enabledChecks.fileExistence) {
+    if (!this.isCheckEnabled('fileExistence')) {
       // 包含性判断是安全边界而非幻觉检查，禁用 fileExistence 时仍需生效
-      const resolvedRoot = resolve(this.config.projectRoot);
-      if (!isInsidePath(resolve(resolvedRoot, path), resolvedRoot)) {
-        return {
-          pass: false,
-          type: 'file_existence',
-          severity: 'block',
-          message: `Security violation: Path "${path}" is outside project root`,
-          details: { path, projectRoot: this.config.projectRoot },
-        };
-      }
+      const containmentCheck = this.validatePathContainment(path);
+      if (containmentCheck) return containmentCheck;
       return {
         pass: true,
         type: 'file_existence',
@@ -191,14 +202,14 @@ export class HallucinationGuard {
     const results: HallucinationCheckResult[] = [];
 
     // 语法检查
-    if (this.enabledChecks.syntaxValidity) {
+    if (this.isCheckEnabled('syntaxValidity')) {
       const syntaxCheck = await checkSyntaxValidity({ code, language, filePath });
       results.push(syntaxCheck);
     }
 
     // 导入检查（仅 TS/JS）
     if (
-      this.enabledChecks.importValidity &&
+      this.isCheckEnabled('importValidity') &&
       (language === 'typescript' || language === 'javascript') &&
       filePath
     ) {
@@ -225,10 +236,9 @@ export class HallucinationGuard {
   }
 
   /**
-   * 启用/禁用检查；总开关关闭时不生效
+   * 启用/禁用单项检查
    */
   setCheckEnabled(check: keyof NonNullable<GuardConfig['enabledChecks']>, enabled: boolean): void {
-    if (!this.enabled) return;
     this.enabledChecks[check] = enabled;
   }
 }

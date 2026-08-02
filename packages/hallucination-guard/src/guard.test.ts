@@ -239,6 +239,9 @@ describe('HallucinationGuard', () => {
     await expect(
       guard.validate({ action: 'read_file', targetPath: 'ghost.ts' }),
     ).resolves.toMatchObject({ pass: true, results: [] });
+    await expect(
+      guard.validate({ action: 'read_file', targetPath: '../outside.ts' }),
+    ).resolves.toMatchObject({ pass: false });
     guard.setCheckEnabled('fileExistence', true);
     await expect(guard.validateFilePath('ghost.ts')).resolves.toMatchObject({ pass: true });
     await expect(guard.validateFilePath('../outside.ts')).resolves.toMatchObject({ pass: false });

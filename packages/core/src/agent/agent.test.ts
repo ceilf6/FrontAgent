@@ -20,6 +20,17 @@ function makeStep(overrides: Partial<ExecutionStep> = {}): ExecutionStep {
   };
 }
 
+function guardOf(agent: ReturnType<typeof createAgent>) {
+  return (
+    agent as unknown as {
+      hallucinationGuard: {
+        validateCode: (code: string, language: 'typescript') => Promise<{ pass: boolean }>;
+        validateFilePath: (path: string) => Promise<{ pass: boolean }>;
+      };
+    }
+  ).hallucinationGuard;
+}
+
 describe('generateOutput', () => {
   it('reports all steps completed', () => {
     const steps = [
@@ -109,14 +120,7 @@ describe('createAgent', () => {
         checks: { fileExistence: true, syntaxValidity: true },
       },
     });
-    const guard = (
-      agent as unknown as {
-        hallucinationGuard: {
-          validateCode: (code: string, language: 'typescript') => Promise<{ pass: boolean }>;
-          validateFilePath: (path: string) => Promise<{ pass: boolean }>;
-        };
-      }
-    ).hallucinationGuard;
+    const guard = guardOf(agent);
 
     await expect(
       guard.validateCode('export const broken = {', 'typescript'),
@@ -133,14 +137,7 @@ describe('createAgent', () => {
         checks: { syntaxValidity: false, importValidity: false },
       },
     });
-    const guard = (
-      agent as unknown as {
-        hallucinationGuard: {
-          validateCode: (code: string, language: 'typescript') => Promise<{ pass: boolean }>;
-          validateFilePath: (path: string) => Promise<{ pass: boolean }>;
-        };
-      }
-    ).hallucinationGuard;
+    const guard = guardOf(agent);
 
     await expect(
       guard.validateCode('export const broken = {', 'typescript'),

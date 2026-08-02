@@ -624,15 +624,17 @@ test('biome ignores a nested worktree from the root but still checks one from in
   // the misdirected error message #439 and #444 are both about. Fail on the
   // real cause instead. The `suspicious` group already disables five rules, so
   // this is not a hypothetical edit.
-  // Six ways to switch the probe off, all verified against biome 2.5.6 by
-  // planting `a == b` in a temp project and checking whether the rule is
-  // reported: `"off"`, `{ level: "off" }`, and dropping the preset at either
-  // the linter or the group level — and the preset key answers to both its
-  // current name (`preset`) and the pre-2.5 one (`recommended`), which 2.5.6
-  // still honours. Checking only the spelling in use today is how this guard
-  // silently died once already: the 2.4.16 → 2.5.6 migration renamed
-  // `recommended` to `preset`, and the assertion kept reading `undefined`.
-  const linterRules = JSON.parse(readFileSync('biome.json', 'utf8')).linter?.rules;
+  // Every way biome 2.5.6 can switch the probe off, each verified by planting
+  // `a == b` in a temp project and checking whether the rule is reported:
+  // `"off"`, `{ level: "off" }`, dropping the preset at either the linter or
+  // the group level — under both the current key (`preset`) and the pre-2.5 one
+  // (`recommended`, still honoured) — and, since this repo now has an
+  // `overrides` array, any override that touches the rule or its preset.
+  // Checking only the spelling in use today is how this guard silently died
+  // once already: the 2.4.16 → 2.5.6 migration renamed `recommended` to
+  // `preset` and the assertion kept reading `undefined`.
+  const biomeConfigJson = JSON.parse(readFileSync('biome.json', 'utf8'));
+  const linterRules = biomeConfigJson.linter?.rules;
   const probeRule = linterRules?.suspicious?.noDoubleEquals;
   const probeMessage =
     'this test probes traversal via a planted noDoubleEquals diagnostic; pick another enabled rule if it gets disabled';
@@ -653,6 +655,27 @@ test('biome ignores a nested worktree from the root but still checks one from in
   );
   assert.ok(presetEnabled(linterRules), probeMessage);
   assert.ok(presetEnabled(linterRules?.suspicious), probeMessage);
+  // An override wins over the top-level config for the files it matches, so one
+  // that silences this rule would be invisible to the assertions above. Nothing
+  // may touch it at all — narrowing to "only overrides matching the fixture"
+  // would mean reimplementing biome's glob semantics here, and the probe is
+  // cheap to relocate if some override ever legitimately needs the rule off.
+  for (const override of biomeConfigJson.overrides ?? []) {
+    const overrideRules = override.linter?.rules;
+    assert.equal(
+      overrideRules?.suspicious?.noDoubleEquals,
+      undefined,
+      `${probeMessage} (a biome.json override targets it)`,
+    );
+    assert.ok(
+      presetEnabled(overrideRules),
+      `${probeMessage} (a biome.json override drops the preset)`,
+    );
+    assert.ok(
+      presetEnabled(overrideRules?.suspicious),
+      `${probeMessage} (a biome.json override drops the suspicious preset)`,
+    );
+  }
   const root = mkdtempSync(join(tmpdir(), 'frontagent-worktree-lint-'));
   try {
     const worktree = join(root, '.claude', 'worktrees', 'example-branch');

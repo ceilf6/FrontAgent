@@ -76,12 +76,12 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.6",
-    "@types/node": "^25.9.1",
-    "esbuild": "^0.28.0",
+    "@types/node": "^25.9.5",
+    "esbuild": "^0.28.1",
     "gitnexus": "1.6.9",
-    "turbo": "^2.9.14",
+    "turbo": "^2.10.8",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.10"
   },
   "pnpm": {
     "overrides": {

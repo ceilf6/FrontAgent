@@ -624,20 +624,27 @@ test('biome ignores a nested worktree from the root but still checks one from in
   // the misdirected error message #439 and #444 are both about. Fail on the
   // real cause instead. The `suspicious` group already disables five rules, so
   // this is not a hypothetical edit.
-  // Biome accepts three ways to switch the probe off — `"off"`, `{ level:
-  // "off" }`, and dropping the recommended preset at either level — so check
-  // all of them rather than the one spelling in use today.
+  // Six ways to switch the probe off, all verified against biome 2.5.6 by
+  // planting `a == b` in a temp project and checking whether the rule is
+  // reported: `"off"`, `{ level: "off" }`, and dropping the preset at either
+  // the linter or the group level — and the preset key answers to both its
+  // current name (`preset`) and the pre-2.5 one (`recommended`), which 2.5.6
+  // still honours. Checking only the spelling in use today is how this guard
+  // silently died once already: the 2.4.16 → 2.5.6 migration renamed
+  // `recommended` to `preset`, and the assertion kept reading `undefined`.
   const linterRules = JSON.parse(readFileSync('biome.json', 'utf8')).linter?.rules;
   const probeRule = linterRules?.suspicious?.noDoubleEquals;
   const probeMessage =
     'this test probes traversal via a planted noDoubleEquals diagnostic; pick another enabled rule if it gets disabled';
+  /** A preset slot is live unless switched off under either spelling. */
+  const presetEnabled = (rules) => rules?.preset !== 'none' && rules?.recommended !== false;
   assert.notEqual(
     typeof probeRule === 'string' ? probeRule : probeRule?.level,
     'off',
     probeMessage,
   );
-  assert.notEqual(linterRules?.recommended, false, probeMessage);
-  assert.notEqual(linterRules?.suspicious?.recommended, false, probeMessage);
+  assert.ok(presetEnabled(linterRules), probeMessage);
+  assert.ok(presetEnabled(linterRules?.suspicious), probeMessage);
   const root = mkdtempSync(join(tmpdir(), 'frontagent-worktree-lint-'));
   try {
     const worktree = join(root, '.claude', 'worktrees', 'example-branch');

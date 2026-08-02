@@ -19,11 +19,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@frontagent/shared": "workspace:*",
-    "@frontagent/sdd": "workspace:*"
+    "@frontagent/sdd": "workspace:*",
+    "@frontagent/shared": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^25.9.1",
+    "@types/node": "^25.9.5",
     "typescript": "^6.0.3"
   }
 }

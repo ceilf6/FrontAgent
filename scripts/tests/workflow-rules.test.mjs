@@ -23,9 +23,10 @@ const validImpactSummary = [
 //
 // Apply this only where entries are actually readFileSync'd. Filtering inside
 // listPublicClaudeAssets() would hide such an entry from the callers that are
-// supposed to catch it: the public-prefix assertion and the single-entrypoint
-// deepEqual both fail informatively on a stray directory, and dropping it
-// first would turn those into silent passes.
+// supposed to catch it: the public-prefix assertion rejects any trailing-slash
+// entry, so it reports a stray nested repository anywhere under .claude/ —
+// including under an otherwise-allowed prefix — and dropping it first would
+// turn that into a silent pass.
 function dropDirectoryEntries(entries) {
   return entries.filter((file) => !file.endsWith('/'));
 }
@@ -514,9 +515,9 @@ test('a git worktree under .claude/worktrees does not break the local gates', ()
   const biomeConfig = JSON.parse(readFileSync('biome.json', 'utf8'));
   assert.ok(biomeConfig.files.includes.includes('!!**/.claude/worktrees'));
 
-  // Assert the filter against synthetic input. Calling listPublicClaudeAssets()
-  // here would be tautological: the helper applies this filter itself, and with
-  // the ignore rule in place git no longer emits a directory entry to catch.
+  // Assert the filter against synthetic input: with the ignore rule in place
+  // git no longer emits a directory entry, so listPublicClaudeAssets() cannot
+  // produce one to catch here.
   assert.deepEqual(
     dropDirectoryEntries(['.claude/skills/a/SKILL.md', '.claude/worktrees/some-branch/']),
     ['.claude/skills/a/SKILL.md'],
@@ -531,7 +532,13 @@ test('Claude reusable assets are public while local state stays private', () => 
   assert.ok(publicClaudeAssets.includes('.claude/skills/gitnexus/gitnexus-cli/SKILL.md'));
   assert.ok(
     publicClaudeAssets.every(
-      (file) => file.startsWith('.claude/workflows/') || file.startsWith('.claude/skills/'),
+      (file) =>
+        // Reject directory entries explicitly. Without this a nested repository
+        // under an allowed prefix — `.claude/skills/some-skill/` — satisfies
+        // startsWith and slips past, which is exactly the case the trailing
+        // filter in the portability test would then silently skip (#439).
+        !file.endsWith('/') &&
+        (file.startsWith('.claude/workflows/') || file.startsWith('.claude/skills/')),
     ),
   );
 });

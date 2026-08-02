@@ -3,6 +3,7 @@
  * 整合所有检查，验证 Agent 输出
  */
 
+import { resolve } from 'node:path';
 import type { AgentAction } from '@frontagent/sdd';
 import type {
   ActionType,
@@ -12,6 +13,7 @@ import type {
 } from '@frontagent/shared';
 import { checkFileExistence } from './checks/file-existence.js';
 import { checkAllImports, extractImports } from './checks/import-validity.js';
+import { isInsidePath } from './checks/path-containment.js';
 import { checkSDDCompliance } from './checks/sdd-compliance.js';
 import { checkSyntaxValidity } from './checks/syntax-validity.js';
 
@@ -146,6 +148,27 @@ export class HallucinationGuard {
    * 快速验证文件路径
    */
   async validateFilePath(path: string, shouldExist = true): Promise<HallucinationCheckResult> {
+    if (!this.enabledChecks.fileExistence) {
+      // 包含性判断是安全边界而非幻觉检查，禁用 fileExistence 时仍需生效
+      const resolvedRoot = resolve(this.config.projectRoot);
+      if (!isInsidePath(resolve(resolvedRoot, path), resolvedRoot)) {
+        return {
+          pass: false,
+          type: 'file_existence',
+          severity: 'block',
+          message: `Security violation: Path "${path}" is outside project root`,
+          details: { path, projectRoot: this.config.projectRoot },
+        };
+      }
+      return {
+        pass: true,
+        type: 'file_existence',
+        severity: 'info',
+        message: 'File existence check is disabled',
+        details: { path, shouldExist },
+      };
+    }
+
     return checkFileExistence({
       path,
       projectRoot: this.config.projectRoot,
@@ -164,11 +187,17 @@ export class HallucinationGuard {
     const results: HallucinationCheckResult[] = [];
 
     // 语法检查
-    const syntaxCheck = await checkSyntaxValidity({ code, language, filePath });
-    results.push(syntaxCheck);
+    if (this.enabledChecks.syntaxValidity) {
+      const syntaxCheck = await checkSyntaxValidity({ code, language, filePath });
+      results.push(syntaxCheck);
+    }
 
     // 导入检查（仅 TS/JS）
-    if ((language === 'typescript' || language === 'javascript') && filePath) {
+    if (
+      this.enabledChecks.importValidity &&
+      (language === 'typescript' || language === 'javascript') &&
+      filePath
+    ) {
       const importChecks = await checkAllImports(code, filePath, this.config.projectRoot);
       results.push(...importChecks);
     }

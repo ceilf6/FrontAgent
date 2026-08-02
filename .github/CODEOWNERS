@@ -1,3 +1,6 @@
+# Catch-all: every PR requires owner review (must be first; later, more specific rules still point to @ceilf6)
+* @ceilf6
+
 .github/workflows/ @ceilf6
 .github/PULL_REQUEST_TEMPLATE.md @ceilf6
 .github/ISSUE_TEMPLATE/ @ceilf6

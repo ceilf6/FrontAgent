@@ -1,0 +1,281 @@
+[
+  {
+    "id": "deep-query-route-source",
+    "category": "query",
+    "smoke": true,
+    "task": "用户点开应用后能访问哪几个页面？这些可访问路径是在哪个文件里声明的？给出该文件路径和它列出的全部路径。",
+    "type": "query",
+    "checks": [
+      {
+        "kind": "result_contains",
+        "pattern": "routeTable"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "/checkout"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "/catalog"
+      }
+    ],
+    "targetDirs": [
+      "src/app"
+    ]
+  },
+  {
+    "id": "deep-query-structure",
+    "category": "query",
+    "smoke": false,
+    "task": "这个代码库按什么原则分层？说明各层之间允许的依赖方向，以及一个业务域内部是怎么组织的。",
+    "type": "query",
+    "checks": [
+      {
+        "kind": "result_contains",
+        "pattern": "features"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "shared"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "entities"
+      }
+    ],
+    "targetDirs": [
+      "src"
+    ]
+  },
+  {
+    "id": "deep-query-format-convention",
+    "category": "query",
+    "smoke": false,
+    "task": "结算流程里把金额转成展示文本的那个函数，输出是什么格式？给出它所在的文件路径。注意代码库里有多个同名函数。",
+    "type": "query",
+    "checks": [
+      {
+        "kind": "result_contains",
+        "pattern": "features/checkout"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "toFixed"
+      }
+    ],
+    "targetDirs": [
+      "src/features/checkout"
+    ]
+  },
+  {
+    "id": "deep-query-shared-lib",
+    "category": "query",
+    "smoke": false,
+    "task": "代码库里有哪些不依赖任何业务域、可以被任意模块复用的纯函数？逐个说明用途并给出它们所在目录。",
+    "type": "query",
+    "checks": [
+      {
+        "kind": "result_contains",
+        "pattern": "clamp"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "formatDate"
+      },
+      {
+        "kind": "result_contains",
+        "pattern": "pluralize"
+      }
+    ],
+    "targetDirs": [
+      "src/shared"
+    ]
+  },
+  {
+    "id": "deep-create-shared-truncate",
+    "category": "create",
+    "smoke": true,
+    "task": "新增一个 truncate(text, maxLength) 纯函数：超长时截断到 maxLength 个字符并追加省略号。它不属于任何业务域，任何模块都该能用它——放到代码库中同类函数已经在的地方，遵循那里的文件与导出风格。",
+    "type": "create",
+    "checks": [
+      {
+        "kind": "file_exists",
+        "path": "src/shared/lib/truncate.ts"
+      },
+      {
+        "kind": "file_contains",
+        "path": "src/shared/lib/truncate.ts",
+        "pattern": "truncate"
+      },
+      {
+        "kind": "typecheck"
+      }
+    ],
+    "targetDirs": [
+      "src/shared"
+    ]
+  },
+  {
+    "id": "deep-create-checkout-hook",
+    "category": "create",
+    "smoke": false,
+    "task": "结算流程需要一个 useCheckoutTotal hook 来读取当前订单总额。把它放到负责结算的那个业务域里、与该域既有 hook 相同的位置，遵循该域的分层约定。",
+    "type": "create",
+    "checks": [
+      {
+        "kind": "file_exists",
+        "path": "src/features/checkout/hooks/useCheckoutTotal.ts"
+      },
+      {
+        "kind": "typecheck"
+      }
+    ],
+    "targetDirs": [
+      "src/features/checkout"
+    ]
+  },
+  {
+    "id": "deep-create-entity-guard",
+    "category": "create",
+    "smoke": false,
+    "task": "优惠券需要一个 isExpired(coupon, now) 判定函数。代码库里各个实体的类型守卫都放在固定的一层，把它加到优惠券实体对应的那个文件里，风格与既有守卫一致。",
+    "type": "create",
+    "checks": [
+      {
+        "kind": "file_contains",
+        "path": "src/entities/coupon/model/guards.ts",
+        "pattern": "isExpired"
+      },
+      {
+        "kind": "typecheck"
+      }
+    ],
+    "targetDirs": [
+      "src/entities/coupon"
+    ]
+  },
+  {
+    "id": "deep-bugfix-checkout-total",
+    "category": "bugfix",
+    "smoke": true,
+    "task": "结算金额算错了：3 件单价 10 元的商品算出来是 10 而不是 30，数量被忽略了。找到负责这个计算的模块并修复，保证它现有的测试通过。不要修改测试文件。",
+    "type": "modify",
+    "checks": [
+      {
+        "kind": "cmd",
+        "argv": [
+          "npx",
+          "vitest",
+          "run",
+          "src/features/checkout/lib/computeTotal.test.ts"
+        ]
+      },
+      {
+        "kind": "typecheck"
+      },
+      {
+        "kind": "file_unchanged",
+        "path": "src/features/checkout/lib/computeTotal.test.ts"
+      }
+    ],
+    "targetDirs": [
+      "src/features/checkout"
+    ]
+  },
+  {
+    "id": "deep-bugfix-cart-merge",
+    "category": "bugfix",
+    "smoke": false,
+    "task": "购物车里同一个 SKU 出现两次时，数量被覆盖而不是累加（2 件 + 3 件得到 3 件）。找到负责合并的模块并修复，保证它现有的测试通过。不要修改测试文件。",
+    "type": "modify",
+    "checks": [
+      {
+        "kind": "cmd",
+        "argv": [
+          "npx",
+          "vitest",
+          "run",
+          "src/features/cart/lib/mergeLines.test.ts"
+        ]
+      },
+      {
+        "kind": "typecheck"
+      },
+      {
+        "kind": "file_unchanged",
+        "path": "src/features/cart/lib/mergeLines.test.ts"
+      }
+    ],
+    "targetDirs": [
+      "src/features/cart"
+    ]
+  },
+  {
+    "id": "deep-bugfix-shipping-eta",
+    "category": "bugfix",
+    "smoke": false,
+    "task": "配送时效估算在距离恰好是 500 公里整数倍时多算了一天（1000 公里应为 2 天，实际返回 3）。找到负责估算的模块并修复，保证它现有的测试通过。不要修改测试文件。",
+    "type": "modify",
+    "checks": [
+      {
+        "kind": "cmd",
+        "argv": [
+          "npx",
+          "vitest",
+          "run",
+          "src/features/shipping/lib/estimateEta.test.ts"
+        ]
+      },
+      {
+        "kind": "typecheck"
+      },
+      {
+        "kind": "file_unchanged",
+        "path": "src/features/shipping/lib/estimateEta.test.ts"
+      }
+    ],
+    "targetDirs": [
+      "src/features/shipping"
+    ]
+  },
+  {
+    "id": "deep-refactor-route-title",
+    "category": "refactor",
+    "smoke": true,
+    "task": "声明可访问页面路径的那份数据，每一项都要加一个人类可读的页面标题字段。类型定义与现有数据都要同步更新。",
+    "type": "modify",
+    "checks": [
+      {
+        "kind": "file_contains",
+        "path": "src/app/routes/routeTable.ts",
+        "pattern": "title"
+      },
+      {
+        "kind": "typecheck"
+      }
+    ],
+    "targetDirs": [
+      "src/app"
+    ]
+  },
+  {
+    "id": "deep-refactor-spinner-variant",
+    "category": "refactor",
+    "smoke": false,
+    "task": "那个跨业务域复用的加载指示组件，需要支持行内和块级两种展示形态：加一个可选的 variant 属性（'inline' | 'block'）并透传到渲染结果上。",
+    "type": "modify",
+    "checks": [
+      {
+        "kind": "file_contains",
+        "path": "src/shared/ui/Spinner.tsx",
+        "pattern": "variant"
+      },
+      {
+        "kind": "typecheck"
+      }
+    ],
+    "targetDirs": [
+      "src/shared"
+    ]
+  }
+]

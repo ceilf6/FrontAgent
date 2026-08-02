@@ -260,6 +260,8 @@ ${options.skillContext ?? '无已激活内容技能'}
 - **read_file**: params 需要 path
 - **list_directory**: params 需要 path 和可选的 recursive
 - **search_code**: 可用 globOnly=true + filePattern 做写入前的全局路径候选发现；内容搜索时使用 query 或 pattern
+  - pattern 是正则，只匹配文件内容，不接受 glob——把目录路径写进 pattern 是无效的
+  - 要限定搜哪些目录或文件类型，一律用 filePattern（glob 语法）
 
 ## 命令执行
 - **run_command**: params 需要 command
@@ -422,7 +424,7 @@ async function generatePlanSinglePhase(
 - **create_file**: { path: "完整路径含扩展名", codeDescription: "描述" }, needsCodeGeneration: true
 - **apply_patch**: { path: "完整路径含扩展名", changeDescription: "描述" }, needsCodeGeneration: true
 - **run_command**: { command: "命令" }
-- **search_code**: { pattern: "搜索模式" } 或 { globOnly: true, filePattern: "glob模式", maxResults: 50 }
+- **search_code**: { query: "要找的文本" } 或 { pattern: "正则（非 glob）" }；限定范围加 { filePattern: "glob模式" }；仅找路径用 { globOnly: true, filePattern: "glob模式", maxResults: 50 }
 - **browser_navigate**: { url: "地址" }
 - **browser_screenshot**: { fullPage: true }
 - **get_page_structure**: {}

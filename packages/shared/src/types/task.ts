@@ -19,6 +19,7 @@ export type ActionType =
   | 'browser_type'
   | 'browser_screenshot'
   | 'get_page_structure'
+  | 'web_fetch'
   | 'filesense_sync_and_summarize'
   | 'filesense_query'
   | 'filesense_navigate';

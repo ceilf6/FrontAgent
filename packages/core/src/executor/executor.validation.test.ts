@@ -1117,4 +1117,53 @@ describe('Executor write validation', () => {
       }
     });
   });
+
+  describe('a tool failure is not dressed up as a write-validation failure', () => {
+    // 写工具可以先建快照再失败（EACCES 之类）。此前这种返回会命中「读不回」分支，
+    // 把 `could not read back …; rollback was not attempted` 拼到一个与读回毫无
+    // 关系的错误后面——而 runPhaseRecovery 正是拿 stepResult.error 去喂重试用的
+    // 模型，等于把恢复引向错误方向。既有用例用的是不带 snapshotId 的返回，绕开了它。
+    it('keeps the tool error intact when the failed tool still returned a snapshot', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-toolfail-snap-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const events: AgentEvent[] = [];
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+            security: { permissions: { allow: ['rollback'] } },
+            emitEvent: (event) => events.push(event),
+          }),
+        );
+        const callTool = vi.fn().mockResolvedValue({
+          success: false,
+          error: 'EACCES: permission denied',
+          snapshotId: 'snap-1',
+        });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('create_file', 'files');
+
+        const result = await executor.executeStep(
+          makeStep({ params: { path: 'src/a.ts', content: 'export const a = 1;\n' } }),
+          makeExecutionContext(),
+        );
+
+        expect(result.stepResult.success).toBe(false);
+        expect(result.stepResult.error).toBe('EACCES: permission denied');
+        expect(result.stepResult.error).not.toContain('could not read back');
+        expect(result.rollbackFailed).toBe(false);
+        expect(callTool).not.toHaveBeenCalledWith('rollback', expect.anything());
+        // 工具失败不是校验拦截，不该污染 #388 的计数
+        expect(events.filter((event) => event.type === 'validation_failed')).toHaveLength(0);
+        // 写动作的工具失败照旧中止剩余计划
+        expect(result.needsRollback).toBe(true);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+  });
 });

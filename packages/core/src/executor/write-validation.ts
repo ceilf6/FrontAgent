@@ -1,4 +1,6 @@
-import type { ValidationResult } from '@frontagent/shared';
+import type { ExecutionStep, ValidationResult } from '@frontagent/shared';
+import { detectLanguage } from './phase-ordering.js';
+import type { ExecutorCollectedContext } from './types.js';
 
 /** 会把内容写到磁盘的动作——校验必须发生在调用它们之前 */
 export const WRITE_ACTIONS = ['apply_patch', 'create_file'];
@@ -138,4 +140,43 @@ export function resolveFullFileReplaceContent(
   return typeof patch.endLine === 'number' && patch.endLine >= originalLines
     ? patch.content
     : undefined;
+}
+
+/**
+ * 解析出「写盘前即可确定的完整文件内容」；返回 null 表示该步骤无法前置校验
+ * （如只改动局部行的补丁，最终内容要落盘后才知道）。
+ */
+export function resolveWriteContent(
+  step: ExecutionStep,
+  toolParams: Record<string, unknown>,
+  /** 调用方已解析好的写入路径,写盘前后共用同一份 */
+  path: string | undefined,
+  context?: { collectedContext: ExecutorCollectedContext },
+): {
+  path: string;
+  content: string;
+  language: 'typescript' | 'javascript' | 'json' | 'yaml';
+} | null {
+  if (!WRITE_ACTIONS.includes(step.action)) {
+    return null;
+  }
+
+  if (!path) {
+    return null;
+  }
+
+  // 按动作分派，不做跨动作兜底。apply_patch 写入的是 `patches`，
+  // 而 `content` 在其 params 上是可达的残留字段（计划参数原样透传、技能整体
+  // spread）。若允许它兜底，校验的就是一份**不会被写入**的内容，而真正落盘的
+  // 补丁内容一次都不过 guard——比修复前更糟。
+  const content =
+    step.action === 'create_file'
+      ? ((toolParams.content ?? step.params.content) as string | undefined)
+      : resolveFullFileReplaceContent(toolParams, context?.collectedContext.files.get(path));
+  if (typeof content !== 'string') {
+    return null;
+  }
+
+  const language = detectLanguage(path);
+  return language ? { path, content, language } : null;
 }

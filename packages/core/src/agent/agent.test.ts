@@ -24,6 +24,17 @@ function makeStep(overrides: Partial<ExecutionStep> = {}): ExecutionStep {
   };
 }
 
+function guardOf(agent: ReturnType<typeof createAgent>) {
+  return (
+    agent as unknown as {
+      hallucinationGuard: {
+        validateCode: (code: string, language: 'typescript') => Promise<{ pass: boolean }>;
+        validateFilePath: (path: string) => Promise<{ pass: boolean }>;
+      };
+    }
+  ).hallucinationGuard;
+}
+
 describe('generateOutput', () => {
   it('reports all steps completed', () => {
     const steps = [
@@ -102,6 +113,40 @@ describe('createAgent', () => {
       },
     });
     expect(agent).toBeDefined();
+  });
+
+  it('disables all hallucination guard checks when configured', async () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+      hallucinationGuard: {
+        enabled: false,
+        checks: { fileExistence: true, syntaxValidity: true },
+      },
+    });
+    const guard = guardOf(agent);
+
+    await expect(
+      guard.validateCode('export const broken = {', 'typescript'),
+    ).resolves.toMatchObject({ pass: true });
+    await expect(guard.validateFilePath('src/missing.ts')).resolves.toMatchObject({ pass: true });
+  });
+
+  it('honors individual hallucination guard checks when enabled', async () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+      hallucinationGuard: {
+        enabled: true,
+        checks: { syntaxValidity: false, importValidity: false },
+      },
+    });
+    const guard = guardOf(agent);
+
+    await expect(
+      guard.validateCode('export const broken = {', 'typescript'),
+    ).resolves.toMatchObject({ pass: true });
+    await expect(guard.validateFilePath('src/missing.ts')).resolves.toMatchObject({ pass: false });
   });
 
   it('returns undefined session snapshot when no task is running', () => {
@@ -237,7 +282,9 @@ describe('executor event forwarding contract', () => {
       agent.registerToolMapping('create_file', 'files');
 
       // 执行器的校验事件必须经 emitEvent 汇入 agent 的事件流，
-      // 否则「校验是否拦截」在遥测层不可观测（issue #388）。
+      // 否则「校验是否拦截」在遥测层不可观测（issue #388）。这条用例走真实
+      // executeStep，覆盖面严格大于此前那两条合成用例（断言接线存在 + 手动调
+      // emitEvent），后者已删除。
       //
       // 注：这里取私有 executor 是刻意的取舍——公开入口 `agent.execute` 需要真实
       // LLM 才能产出计划。为不让 cast 掩盖接线断裂，先直接断言 executor 的
@@ -346,43 +393,6 @@ describe('code quality sub-agent isolation contract', () => {
     expect(response?.success).toBe(true);
     // 没有 apiKey：若 backend 被绕开，createModel 会抛错、generateObject 调用数为 0
     expect(generateObject).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('executor events reach the agent event stream (#388)', () => {
-  it('wires an emitEvent outlet into the executor', () => {
-    const agent = createAgent({
-      projectRoot: '/test',
-      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
-    });
-
-    // 公开入口 agent.execute 需要真实 LLM 才能产出计划，所以这里直接断言接线存在：
-    // 接线一旦从构造期移走，这条会先失败，不会被下面的 cast 掩盖。
-    const executor = (agent as unknown as { executor: { config: { emitEvent?: unknown } } })
-      .executor;
-    expect(typeof executor.config.emitEvent).toBe('function');
-  });
-
-  it('forwards an executor-emitted event to registered listeners', () => {
-    const agent = createAgent({
-      projectRoot: '/test',
-      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
-    });
-    const events: Array<{ type: string }> = [];
-    agent.addEventListener((event) => events.push(event as { type: string }));
-
-    const executor = (
-      agent as unknown as {
-        executor: { config: { emitEvent: (e: unknown) => void } };
-      }
-    ).executor;
-    executor.config.emitEvent({
-      type: 'validation_failed',
-      stage: 'post_write',
-      result: { pass: false, results: [], blockedBy: ['x'] },
-    });
-
-    expect(events.map((event) => event.type)).toContain('validation_failed');
   });
 });
 

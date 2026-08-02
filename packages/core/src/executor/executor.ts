@@ -911,6 +911,18 @@ export class Executor {
       if (content && path) {
         const language = detectLanguage(path);
         if (language) {
+          // 对 `apply_patch` 这次调用是**纯遥测**：validateCode 只产出
+          // syntax_validity 与 import_validity，而 NON_DECIDING_CHECKS 把两者都
+          // 降级了，所以它决定不了这个动作的成败。保留是因为遥测本身是目标
+          // （#388 要一个能计数的量），代价是每个 modify 步骤多一次整文件的
+          // import 解析。两项检查都被 ablation 关掉时就没有产出，直接跳过。
+          const telemetryOnly =
+            step.action === 'apply_patch' &&
+            !this.config.hallucinationGuard.isCheckEnabled('syntaxValidity') &&
+            !this.config.hallucinationGuard.isCheckEnabled('importValidity');
+          if (telemetryOnly) {
+            return { pass: true, results: [] };
+          }
           const codeValidation = await this.config.hallucinationGuard.validateCode(
             content,
             language,

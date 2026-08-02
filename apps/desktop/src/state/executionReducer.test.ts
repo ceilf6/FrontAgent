@@ -289,6 +289,55 @@ describe('consoleReducer', () => {
     expect(state.error).toBe('验证未通过');
     expect(state.phases[0].steps[0].status).toBe('failed');
   });
+
+  // 这个事件有两种含义，只有 `result.pass` 能分开。执行器把「发事件」与「判成败」
+  // 解耦了：被降级的判定（写动作上的 syntax_validity、apply_patch 上的
+  // import_validity）仍以 pass:false 留在 results 里并照常发事件，但步骤是成功的、
+  // blockedBy 是空的。只按 stage 归类会让大量成功写入落一条没有理由的 warn。
+  it('separates a blocked post-write verdict from a merely recorded one', () => {
+    const blocked = consoleReducer(initialConsoleState, {
+      type: 'validation_failed',
+      stage: 'post_write',
+      path: 'src/a.tsx',
+      stepId: 's1',
+      result: {
+        pass: false,
+        results: [
+          { pass: false, type: 'syntax_validity', severity: 'block', message: 'Markdown fence' },
+        ],
+        blockedBy: ['Markdown fence'],
+      },
+    });
+
+    expect(blocked.log.at(-1)?.level).toBe('warn');
+    expect(blocked.log.at(-1)?.text).toContain('写盘后校验失败');
+    expect(blocked.log.at(-1)?.text).toContain('Markdown fence');
+
+    const recorded = consoleReducer(initialConsoleState, {
+      type: 'validation_failed',
+      stage: 'post_write',
+      path: 'src/b.tsx',
+      stepId: 's2',
+      result: {
+        // 降级后的形状：条目仍判失败，但 pass 为 true、blockedBy 为空
+        pass: true,
+        results: [
+          {
+            pass: false,
+            type: 'import_validity',
+            severity: 'block',
+            message: 'Cannot resolve @/ui/Card',
+          },
+        ],
+      },
+    });
+
+    expect(recorded.log.at(-1)?.level).toBe('info');
+    expect(recorded.log.at(-1)?.text).toContain('未否决');
+    expect(recorded.log.at(-1)?.text).not.toContain('校验失败');
+    // 理由必须回落到 results，否则这条日志只剩一个前缀
+    expect(recorded.log.at(-1)?.text).toContain('Cannot resolve @/ui/Card');
+  });
 });
 
 describe('approval actions', () => {

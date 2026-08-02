@@ -45,7 +45,14 @@ export interface GuardConfig {
   projectRoot: string;
   /** SDD 配置 */
   sddConfig?: SDDConfig;
-  /** 是否启用所有幻觉检查；路径包含性校验始终生效 */
+  /**
+   * 是否启用所有幻觉检查。
+   *
+   * 路径包含性校验不受此开关影响，但只覆盖接收路径的两个入口:`validate()` 与
+   * `validateFilePath()`。`validateCode(code, language, filePath)` 对 `filePath`
+   * 从不做包含性判断（底层的 checkSyntaxValidity / checkAllImports 也不做），
+   * 所以别把这条读成「设了 enabled:false 之后所有路径面仍有 guard 兜底」。
+   */
   enabled?: boolean;
   /** 启用的检查 */
   enabledChecks?: {

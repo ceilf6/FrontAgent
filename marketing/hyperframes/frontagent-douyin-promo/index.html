@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FrontAgent Douyin Promo</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div
+      id="stage"
+      data-composition-id="frontagent-douyin-promo"
+      data-start="0"
+      data-duration="30"
+      data-width="1080"
+        data-height="1920"
+        data-fps="30"
+      >
+      <audio
+        id="bgm-track"
+        class="clip"
+        src="assets/bgm.m4a"
+        data-start="0"
+        data-duration="30"
+        data-media-start="0"
+        data-volume="0.16"
+        data-track-index="0"
+        preload="auto"
+      >
+        <track
+          kind="captions"
+          src="assets/bgm-captions.vtt"
+          srclang="zh-CN"
+          label="BGM cue"
+          default
+        />
+      </audio>
+
+      <section
+        id="scene-hook"
+        class="scene clip hook"
+        data-start="0"
+        data-duration="3"
+        data-track-index="1"
+      >
+        <div class="hook-stack">
+          <div class="code-card">
+            <div class="code-line">
+              <span class="status-dot"></span>
+              import Button from "@/ui/ButtonGhost"
+            </div>
+          </div>
+          <div class="code-card">
+            <div class="code-line">
+              <span class="status-dot"></span>
+              fetch("/api/agent/unknown-route")
+            </div>
+          </div>
+          <div class="code-card">
+            <div class="code-line">
+              <span class="status-dot"></span>
+              writeFile("src/random/path.tsx")
+            </div>
+          </div>
+        </div>
+        <h1 class="headline">AI 会乱猜</h1>
+        <p class="subtitle">不存在的路径 / 不存在的 API / 绕过工程规范</p>
+        <div class="safe-bottom">
+          <div class="caption">AI 编程最大的问题，不是不会写代码</div>
+        </div>
+      </section>
+
+      <section
+        id="scene-product"
+        class="scene clip product"
+        data-start="3"
+        data-duration="5"
+        data-track-index="2"
+      >
+        <div class="product-logo-row">
+          <img class="product-logo" src="assets/icon.png" alt="FrontAgent" />
+          <div>
+            <div class="eyebrow">Open Source</div>
+            <div class="brand-name">FrontAgent</div>
+          </div>
+        </div>
+        <h2 class="headline">前端工程 <span class="accent">Agent</span></h2>
+        <p class="subtitle">不是聊天式代码助手，是规划、执行、验证、修复的一套工程流。</p>
+        <div class="surface-row">
+          <div class="surface">
+            <strong>CLI</strong>
+            <span>fa run / fa init</span>
+          </div>
+          <div class="surface">
+            <strong>VS Code</strong>
+            <span>侧边栏任务台</span>
+          </div>
+          <div class="surface">
+            <strong>Desktop</strong>
+            <span>可视化执行控制</span>
+          </div>
+        </div>
+        <div class="safe-bottom">
+          <div class="caption">FrontAgent：前端工程 Agent</div>
+        </div>
+      </section>
+
+      <section
+        id="scene-sdd"
+        class="scene clip sdd"
+        data-start="8"
+        data-duration="7"
+        data-track-index="3"
+      >
+        <div class="eyebrow">Specification Driven Development</div>
+        <h2 class="headline">SDD 先定边界</h2>
+        <p class="subtitle">让 AI 动手前，先把项目规则变成硬约束。</p>
+        <div class="blueprint panel">
+          <div class="rule">
+            <code>tech_stack</code>
+            <span>React / TypeScript / Vite</span>
+            <span class="lock">LOCK</span>
+          </div>
+          <div class="rule">
+            <code>module_boundaries</code>
+            <span>组件、Hooks、工具函数边界</span>
+            <span class="lock">LOCK</span>
+          </div>
+          <div class="rule">
+            <code>protected_files</code>
+            <span>关键配置需要显式确认</span>
+            <span class="lock">LOCK</span>
+          </div>
+          <div class="rule">
+            <code>quality_gates</code>
+            <span>lint / typecheck / test</span>
+            <span class="lock">LOCK</span>
+          </div>
+        </div>
+        <div class="safe-bottom">
+          <div class="caption">先有规格，再让 AI 动手</div>
+        </div>
+      </section>
+
+      <section
+        id="scene-mcp"
+        class="scene clip mcp"
+        data-start="15"
+        data-duration="7"
+        data-track-index="4"
+      >
+        <div class="eyebrow">Model Context Protocol</div>
+        <h2 class="headline">MCP 控制感知与执行</h2>
+        <p class="subtitle">不靠猜，所有关键动作都走可检查工具。</p>
+        <div class="pipeline">
+          <div class="rail">
+            <div class="rail-label">Files</div>
+            <div class="rail-action">read_file / apply_patch / minimal diff</div>
+            <div class="rail-check">OK</div>
+          </div>
+          <div class="rail">
+            <div class="rail-label">Browser</div>
+            <div class="rail-action">DOM / accessibility tree / interaction</div>
+            <div class="rail-check">OK</div>
+          </div>
+          <div class="rail">
+            <div class="rail-label">Shell</div>
+            <div class="rail-action">typecheck / tests / local gates</div>
+            <div class="rail-check">OK</div>
+          </div>
+          <div class="rail">
+            <div class="rail-label">Git</div>
+            <div class="rail-action">diff / branch / commit / PR workflow</div>
+            <div class="rail-check">OK</div>
+          </div>
+        </div>
+        <div class="tree-card">
+          accessibility-tree<br />
+          ├─ button: "Run task"<br />
+          ├─ input: "Browser URL"<br />
+          └─ status: "quality gates passing"
+        </div>
+        <div class="safe-bottom">
+          <div class="caption">不靠猜，靠工具确认</div>
+        </div>
+      </section>
+
+      <section
+        id="scene-gates"
+        class="scene clip gates"
+        data-start="22"
+        data-duration="4"
+        data-track-index="5"
+      >
+        <div class="eyebrow">Quality Gates</div>
+        <h2 class="headline">交付前跑门禁</h2>
+        <p class="subtitle">不是说完成就完成，验证结果必须过线。</p>
+        <div class="gate-stack">
+          <div class="gate-step">
+            <span class="step-index">01</span>
+            <div class="step-copy">
+              <strong>计划对齐</strong>
+              <span>SDD / 文件边界 / 最小改动</span>
+            </div>
+            <span class="gate-status">CHECK</span>
+          </div>
+          <div class="gate-step">
+            <span class="step-index">02</span>
+            <div class="step-copy">
+              <strong>本地校验</strong>
+              <span>lint / typecheck / test</span>
+            </div>
+            <span class="gate-status">PASS</span>
+          </div>
+          <div class="gate-step">
+            <span class="step-index">03</span>
+            <div class="step-copy">
+              <strong>失败回修</strong>
+              <span>把错误反馈给计划，再生成补丁</span>
+            </div>
+            <span class="gate-status">LOOP</span>
+          </div>
+        </div>
+        <div class="safe-bottom">
+          <div class="caption">lint / typecheck / test，过了再交付</div>
+        </div>
+      </section>
+
+      <section
+        id="scene-cta"
+        class="scene clip cta"
+        data-start="26"
+        data-duration="4"
+        data-track-index="6"
+      >
+        <div class="cta-card">
+          <div class="cta-logo" aria-label="FrontAgent"></div>
+          <div class="cta-title">FrontAgent</div>
+          <div class="cta-copy">把 AI 编程关进工程护栏</div>
+          <div class="install">npm install -g frontagent</div>
+          <div class="repo">GitHub: ceilf6/FrontAgent</div>
+        </div>
+        <div class="safe-bottom">
+          <div class="caption">开源前端工程 Agent</div>
+        </div>
+      </section>
+    </div>
+    <script>
+      (() => {
+        const duration = 30;
+        const stage = document.getElementById("stage");
+        stage.classList.add("timeline-driven");
+
+        const sceneSpecs = [
+          ["scene-hook", 0, 3],
+          ["scene-product", 3, 8],
+          ["scene-sdd", 8, 15],
+          ["scene-mcp", 15, 22],
+          ["scene-gates", 22, 26],
+          ["scene-cta", 26, 30],
+        ].map(([id, start, end]) => ({
+          id,
+          start,
+          end,
+          el: document.getElementById(id),
+        }));
+
+        const query = (selector) => Array.from(document.querySelectorAll(selector));
+        const clamp = (value, min = 0, max = 1) =>
+          Math.max(min, Math.min(max, value));
+        const ease = (value) => 1 - (1 - clamp(value)) ** 3;
+        const reveal = (time, start, span) => ease((time - start) / span);
+        const set = (el, styles) => {
+          if (!el) return;
+          Object.assign(el.style, styles);
+        };
+        const setMany = (items, stylesForItem) => {
+          items.forEach((item, index) => {
+            set(item, stylesForItem(index));
+          });
+        };
+
+        function setSceneVisibility(time) {
+          sceneSpecs.forEach((scene) => {
+            const visible = time >= scene.start && time < scene.end;
+            set(scene.el, {
+              opacity: visible ? "1" : "0",
+              visibility: visible ? "visible" : "hidden",
+            });
+          });
+        }
+
+        function drawHook(time) {
+          const stack = reveal(time, 0.1, 0.8);
+          const title = reveal(time, 0.65, 0.55);
+          const subtitle = reveal(time, 1.4, 0.6);
+          const exit = time > 2.58 ? 1 - clamp((time - 2.58) / 0.42) : 1;
+          set(document.querySelector(".hook-stack"), {
+            opacity: String(stack * exit),
+            transform: `translateX(${(1 - stack) * -70}px) rotate(${-4 + stack * 2}deg)`,
+            filter: `blur(${(1 - stack) * 8}px)`,
+          });
+          set(document.querySelector(".hook .headline"), {
+            opacity: String(title * exit),
+            transform: `scale(${0.92 + title * 0.08})`,
+          });
+          set(document.querySelector(".hook .subtitle"), {
+            opacity: String(subtitle * exit),
+            transform: `translateY(${(1 - subtitle) * 24}px)`,
+          });
+          set(document.querySelector(".hook .caption"), {
+            opacity: String(reveal(time, 0.2, 0.45) * exit),
+            transform: `translateY(${(1 - reveal(time, 0.2, 0.45)) * 26}px)`,
+          });
+        }
+
+        function drawProduct(time) {
+          const logo = reveal(time, 3.15, 0.8);
+          const title = reveal(time, 3.55, 0.7);
+          set(document.querySelector(".product-logo-row"), {
+            opacity: String(logo),
+            transform: `translateY(${(1 - logo) * 48}px)`,
+          });
+          set(document.querySelector(".product .headline"), {
+            opacity: String(title),
+            transform: `translateY(${(1 - title) * 36}px)`,
+          });
+          set(document.querySelector(".product .subtitle"), {
+            opacity: String(reveal(time, 3.85, 0.7)),
+          });
+          setMany(query(".surface"), (index) => {
+            const item = reveal(time, 3.9 + index * 0.25, 0.55);
+            return {
+              opacity: String(item),
+              transform: `translateY(${(1 - item) * 44}px)`,
+            };
+          });
+        }
+
+        function drawSdd(time) {
+          const title = reveal(time, 8.25, 0.55);
+          set(document.querySelector(".sdd .eyebrow"), {
+            opacity: String(reveal(time, 8.1, 0.45)),
+          });
+          set(document.querySelector(".sdd .headline"), {
+            opacity: String(title),
+            transform: `translateY(${(1 - title) * 32}px)`,
+          });
+          set(document.querySelector(".sdd .subtitle"), {
+            opacity: String(reveal(time, 8.45, 0.55)),
+          });
+          setMany(query(".rule"), (index) => {
+            const item = reveal(time, 8.65 + index * 0.3, 0.45);
+            return {
+              opacity: String(item),
+              transform: `translateX(${(1 - item) * -54}px)`,
+            };
+          });
+        }
+
+        function drawMcp(time) {
+          const title = reveal(time, 15.25, 0.55);
+          set(document.querySelector(".mcp .eyebrow"), {
+            opacity: String(reveal(time, 15.1, 0.45)),
+          });
+          set(document.querySelector(".mcp .headline"), {
+            opacity: String(title),
+            transform: `translateY(${(1 - title) * 32}px)`,
+          });
+          set(document.querySelector(".mcp .subtitle"), {
+            opacity: String(reveal(time, 15.45, 0.55)),
+          });
+          setMany(query(".rail"), (index) => {
+            const item = reveal(time, 15.6 + index * 0.3, 0.45);
+            return {
+              opacity: String(item),
+              transform: `translateX(${(1 - item) * 64}px)`,
+            };
+          });
+          const tree = reveal(time, 17.2, 0.7);
+          set(document.querySelector(".tree-card"), {
+            opacity: String(tree),
+            transform: `translateY(${(1 - tree) * 24}px)`,
+          });
+        }
+
+        function drawGates(time) {
+          set(document.querySelector(".gates .eyebrow"), {
+            opacity: String(reveal(time, 22.1, 0.45)),
+          });
+          set(document.querySelector(".gates .headline"), {
+            opacity: String(reveal(time, 22.25, 0.55)),
+            transform: `translateY(${(1 - reveal(time, 22.25, 0.55)) * 30}px)`,
+          });
+          set(document.querySelector(".gates .subtitle"), {
+            opacity: String(reveal(time, 22.45, 0.55)),
+          });
+          setMany(query(".gate-step"), (index) => {
+            const item = reveal(time, 22.7 + index * 0.28, 0.46);
+            return {
+              opacity: String(item),
+              transform: `translateX(${(1 - item) * 54}px)`,
+            };
+          });
+        }
+
+        function drawCta(time) {
+          const card = reveal(time, 26.1, 0.7);
+          set(document.querySelector(".cta-card"), {
+            opacity: String(card),
+            transform: `translateY(${(1 - card) * 50}px) scale(${0.98 + card * 0.02})`,
+          });
+          set(document.querySelector(".cta .caption"), {
+            opacity: String(reveal(time, 27.2, 0.5)),
+          });
+        }
+
+        const state = {
+          currentTime: 0,
+          isPaused: true,
+        };
+
+        function seekTo(value) {
+          const time = clamp(Number(value) || 0, 0, duration);
+          state.currentTime = time;
+          setSceneVisibility(time);
+          drawHook(time);
+          drawProduct(time);
+          drawSdd(time);
+          drawMcp(time);
+          drawGates(time);
+          drawCta(time);
+        }
+
+        const timeline = {
+          duration: () => duration,
+          totalDuration: () => duration,
+          time(value) {
+            if (typeof value === "number") {
+              seekTo(value);
+              return this;
+            }
+            return state.currentTime;
+          },
+          seek(value) {
+            seekTo(value);
+            return this;
+          },
+          pause() {
+            state.isPaused = true;
+            return this;
+          },
+          play() {
+            state.isPaused = false;
+            return this;
+          },
+          paused(value) {
+            if (typeof value === "boolean") {
+              state.isPaused = value;
+              return this;
+            }
+            return state.isPaused;
+          },
+        };
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines["frontagent-douyin-promo"] = timeline;
+        seekTo(0);
+      })();
+    </script>
+  </body>
+</html>

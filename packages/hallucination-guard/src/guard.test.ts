@@ -218,6 +218,26 @@ describe('HallucinationGuard', () => {
     expect(result.pass).toBe(false);
   });
 
+  it('disables all checks when disabled despite enabled individual checks', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabled: false,
+      enabledChecks: {
+        fileExistence: true,
+        importValidity: true,
+        syntaxValidity: true,
+        sddCompliance: true,
+      },
+    });
+
+    await expect(guard.validateFilePath('ghost.ts')).resolves.toMatchObject({ pass: true });
+    await expect(guard.validateCode('export const broken = {', 'typescript')).resolves.toEqual({
+      pass: true,
+      results: [],
+      blockedBy: undefined,
+    });
+  });
+
   it('honors disabled file existence checks on the fast path', async () => {
     const guard = new HallucinationGuard({
       projectRoot: TEST_ROOT,

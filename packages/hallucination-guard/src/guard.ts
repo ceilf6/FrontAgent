@@ -45,6 +45,8 @@ export interface GuardConfig {
   projectRoot: string;
   /** SDD 配置 */
   sddConfig?: SDDConfig;
+  /** 是否启用全部检查 */
+  enabled?: boolean;
   /** 启用的检查 */
   enabledChecks?: {
     fileExistence?: boolean;
@@ -63,11 +65,12 @@ export class HallucinationGuard {
 
   constructor(config: GuardConfig) {
     this.config = config;
+    const enabled = config.enabled ?? true;
     this.enabledChecks = {
-      fileExistence: config.enabledChecks?.fileExistence ?? true,
-      importValidity: config.enabledChecks?.importValidity ?? true,
-      syntaxValidity: config.enabledChecks?.syntaxValidity ?? true,
-      sddCompliance: config.enabledChecks?.sddCompliance ?? true,
+      fileExistence: enabled && (config.enabledChecks?.fileExistence ?? true),
+      importValidity: enabled && (config.enabledChecks?.importValidity ?? true),
+      syntaxValidity: enabled && (config.enabledChecks?.syntaxValidity ?? true),
+      sddCompliance: enabled && (config.enabledChecks?.sddCompliance ?? true),
     };
   }
 

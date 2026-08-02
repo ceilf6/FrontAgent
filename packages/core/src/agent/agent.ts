@@ -93,15 +93,8 @@ export class FrontAgent {
     this.hallucinationGuard = new HallucinationGuard({
       projectRoot: config.projectRoot,
       sddConfig: this.sddConfig,
-      enabledChecks:
-        config.hallucinationGuard?.enabled === false
-          ? {
-              fileExistence: false,
-              importValidity: false,
-              syntaxValidity: false,
-              sddCompliance: false,
-            }
-          : config.hallucinationGuard?.checks,
+      enabled: config.hallucinationGuard?.enabled,
+      enabledChecks: config.hallucinationGuard?.checks,
     });
 
     this.planner = new Planner({

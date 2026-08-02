@@ -6,6 +6,7 @@ import type { AgentTask, ExecutionStep } from '@frontagent/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../types.js';
 import { Executor } from './executor.js';
+import { executeStepsWithProgressEnforcement } from './progress-enforcement.js';
 import type { ExecutorCollectedContext, ExecutorConfig } from './types.js';
 
 function makeStep(overrides: Partial<ExecutionStep> = {}): ExecutionStep {
@@ -840,6 +841,251 @@ describe('Executor write validation', () => {
         expect(result.stepResult.success).toBe(true);
         expect(callTool).not.toHaveBeenCalledWith('rollback', expect.anything());
         expect(readFileSync(target, 'utf-8')).toBe(patched);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  // repo-guard 在 #402 上指出的三条空白。前两条锁住「哪些判据可以决定步骤成败」，
+  // 第三条把中止语义从单步层推到调度层——它们各自对应一次真实的行为改变。
+  describe('which verdicts may decide a write step', () => {
+    // 修复前 apply_patch 的内容根本到不了 validateCode（计划 schema 不发 patches，
+    // content 三个来源全 undefined），所以 import 检查从未约束过补丁路径。
+    // resolveWriteContent 让整文件 replace 第一次可校验；如果顺手把 block 权也给
+    // import_validity，一个合法的 modify 步骤就会失败，needsRollback 再把剩余计划
+    // 整个跳过——而 @/x 与「后续步骤才创建的相对模块」正是它最常见的两类误报。
+    const unresolvableImports = {
+      'a path alias': "import { Card } from '@/components/Card';\n",
+      'a module a later step will create': "import { Later } from './Later.js';\n",
+    };
+
+    for (const [name, header] of Object.entries(unresolvableImports)) {
+      it(`lets a full-file replace patch land over ${name}`, async () => {
+        const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-patch-import-'));
+        try {
+          mkdirSync(join(projectRoot, 'src'), { recursive: true });
+          const target = join(projectRoot, 'src', 'a.ts');
+          const original = 'export const a = 1;\n';
+          writeFileSync(target, original);
+          const patched = `${header}export const a = 2;\n`;
+
+          const events: AgentEvent[] = [];
+          const executor = new Executor(
+            makeConfig({
+              projectRoot,
+              hallucinationGuard: new HallucinationGuard({ projectRoot }),
+              emitEvent: (event) => events.push(event),
+            }),
+          );
+          const callTool = vi.fn().mockImplementation(async (tool: string) => {
+            if (tool === 'apply_patch') {
+              writeFileSync(target, patched);
+              return { success: true, snapshotId: 'snap-1' };
+            }
+            return { success: true };
+          });
+          executor.registerMCPClient('files', {
+            callTool,
+            listTools: vi.fn().mockResolvedValue([]),
+          });
+          executor.registerToolMapping('apply_patch', 'files');
+
+          const result = await executor.executeStep(
+            makeStep({
+              action: 'apply_patch',
+              tool: 'apply_patch',
+              params: {
+                path: 'src/a.ts',
+                patches: [
+                  {
+                    operation: 'replace',
+                    startLine: 1,
+                    endLine: original.split('\n').length,
+                    content: patched,
+                  },
+                ],
+              },
+            }),
+            makeExecutionContext({
+              collectedContext: { files: new Map([['src/a.ts', original]]) },
+            }),
+          );
+
+          expect(result.stepResult.success).toBe(true);
+          // 中止调度的是 !success && needsRollback；两者都不得因 import 判定成立。
+          expect(result.needsRollback).toBe(false);
+          expect(readFileSync(target, 'utf-8')).toBe(patched);
+          expect(callTool).not.toHaveBeenCalledWith('rollback', expect.anything());
+        } finally {
+          rmSync(projectRoot, { recursive: true, force: true });
+        }
+      });
+    }
+
+    // 降级不是删除。删掉条目会让一个真的语法错误既不失败、也不出现在
+    // validation.results 里，于是 validation_failed 的载荷和消融基准都看不到它。
+    it('records a real syntax error without failing the step', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-syntax-demote-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const events: AgentEvent[] = [];
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+            emitEvent: (event) => events.push(event),
+          }),
+        );
+        const callTool = vi.fn().mockImplementation(async () => {
+          writeFileSync(join(projectRoot, 'src', 'broken.ts'), 'export const a = {\n');
+          return { success: true };
+        });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('create_file', 'files');
+
+        const result = await executor.executeStep(
+          // 围栏之外的真语法错误：未闭合的对象字面量。
+          makeStep({ params: { path: 'src/broken.ts', content: 'export const a = {\n' } }),
+          makeExecutionContext(),
+        );
+
+        expect(result.stepResult.success).toBe(true);
+        expect(result.needsRollback).toBe(false);
+        const failed = events.filter((event) => event.type === 'validation_failed');
+        expect(failed).toHaveLength(1);
+        expect(failed[0]).toMatchObject({ stage: 'post_write', path: 'src/broken.ts' });
+        // 遥测里必须仍看得见这条判定，否则降级顺手把可观测性也关掉了。
+        expect(
+          (failed[0] as { result: { results: Array<{ type: string }> } }).result.results.some(
+            (entry) => entry.type === 'syntax_validity',
+          ),
+        ).toBe(true);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    // 前置校验只覆盖「整文件 replace」——只改局部行的补丁最终内容要落盘才知道，
+    // resolveFullFileReplaceContent 对它返回 undefined。#387 对补丁路径的保护
+    // 因此是有条件的，该降级路径必须仍然落到写盘后判定，而不是静默变成「不校验」。
+    it('falls back to post-write validation for a partial-line patch', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-patch-partial-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const target = join(projectRoot, 'src', 'a.ts');
+        const original = 'export const a = 1;\nexport const b = 2;\n';
+        writeFileSync(target, original);
+        const fenced = 'export const a = 1;\n```ts\nexport const b = 3;\n```\n';
+
+        const events: AgentEvent[] = [];
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+            security: { permissions: { allow: ['rollback'] } },
+            emitEvent: (event) => events.push(event),
+          }),
+        );
+        const callTool = vi.fn().mockImplementation(async (tool: string) => {
+          if (tool === 'apply_patch') {
+            writeFileSync(target, fenced);
+            return { success: true, snapshotId: 'snap-1' };
+          }
+          return { success: true, content: readFileSync(target, 'utf-8') };
+        });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('apply_patch', 'files');
+        executor.registerToolMapping('read_file', 'files');
+
+        const result = await executor.executeStep(
+          makeStep({
+            action: 'apply_patch',
+            tool: 'apply_patch',
+            params: {
+              path: 'src/a.ts',
+              // startLine 2：不是整文件替换，写盘前算不出最终内容
+              patches: [
+                { operation: 'replace', startLine: 2, endLine: 2, content: '```ts\nb\n```\n' },
+              ],
+            },
+          }),
+          makeExecutionContext({
+            collectedContext: { files: new Map([['src/a.ts', original]]) },
+          }),
+        );
+
+        // 写盘前没拦住（工具确实被调用了），但写盘后的围栏判据抓到并判失败。
+        expect(callTool).toHaveBeenCalledWith('apply_patch', expect.anything());
+        expect(result.stepResult.success).toBe(false);
+        expect(result.stepResult.error).toContain('Markdown code fence');
+        expect(
+          events.filter(
+            (event) => event.type === 'validation_failed' && event.stage === 'post_write',
+          ),
+        ).toHaveLength(1);
+        expect(
+          events.filter(
+            (event) => event.type === 'validation_failed' && event.stage === 'pre_write',
+          ),
+        ).toHaveLength(0);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('abort semantics reach the scheduler', () => {
+    // 单步层已经断言了 needsRollback；但真正的后果发生在调度层——
+    // 写盘前否决之后，剩余步骤必须被标记为 skipped，否则计划会在一个没落盘的
+    // 文件之上继续推演，整轮以「零文件产出」呈现为成功。
+    it('skips the remaining steps after a pre-write veto', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-abort-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+          }),
+        );
+        const callTool = vi.fn().mockResolvedValue({ success: true });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('create_file', 'files');
+
+        const vetoed = makeStep({
+          stepId: 'step-1',
+          params: {
+            path: 'src/Card.tsx',
+            content: '```tsx\nexport const Card = () => null;\n```\n',
+          },
+        });
+        const later = makeStep({
+          stepId: 'step-2',
+          params: { path: 'src/Page.tsx', content: 'export const Page = () => null;\n' },
+        });
+
+        const outputs = await executeStepsWithProgressEnforcement(
+          [vetoed, later],
+          makeExecutionContext(),
+          { executeStep: (step, ctx) => executor.executeStep(step, ctx) },
+        );
+
+        expect(outputs).toHaveLength(1);
+        expect(outputs[0].stepResult.success).toBe(false);
+        expect(outputs[0].needsRollback).toBe(true);
+        expect(later.status).toBe('skipped');
+        // 被否决的那一步没有落盘，后续步骤也没有被执行
+        expect(callTool).not.toHaveBeenCalled();
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }

@@ -162,6 +162,13 @@ export function consoleReducer(state: ConsoleState, event: AgentEvent): ConsoleS
         `Filesense 导航: ${event.paths.length} 路径 / ${event.entries} 条目`,
       );
 
+    // 放弃校正也要出现在日志里，且用 warn。只显示成功改写会让人以为
+    // 路径接地全都命中了，而放弃的那几条恰恰是需要人去看的（#434）。
+    case 'filesense_path_grounded':
+      return event.outcome === 'corrected'
+        ? appendLog(state, 'info', `路径接地: ${event.from} → ${event.to}`)
+        : appendLog(state, 'warn', `路径接地放弃: ${event.from}（${event.reason}）`);
+
     case 'planning_completed': {
       const seeded = (event.plan.phases ?? []).reduce(
         (phases, phase) =>

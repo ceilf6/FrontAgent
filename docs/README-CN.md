@@ -475,6 +475,9 @@ export FRONTAGENT_RAG_WEAVIATE_TIMEOUT_MS="30000"
 export FRONTAGENT_FILESENSE_ENABLED="true"
 export FRONTAGENT_FILESENSE_OUTPUT="summary"       # summary | candidates | verbose
 export FRONTAGENT_FILESENSE_WRITE_MODE="cache"     # cache | workspace | none
+                                                   # 目前是 no-op：navigate 只读，cache 与 none 行为相同，
+                                                   # workspace 在规划阶段被降级。没有任何 filesense 工具
+                                                   # 读这个值；filesense_sync 恒写索引、不接受该参数。
 export FRONTAGENT_FILESENSE_MAX_ENTRIES="300"
 export FRONTAGENT_FILESENSE_MAX_BYTES="131072"
 export FRONTAGENT_FILESENSE_TIMEOUT_MS="3000"

@@ -346,6 +346,7 @@ describe('Executor', () => {
               message: 'File src/missing.ts does not exist',
             }),
             validateCode: vi.fn(),
+            isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
         }),
       );
@@ -527,6 +528,96 @@ describe('Executor', () => {
       expect(result).toHaveProperty('stepResult');
       expect(result).toHaveProperty('validation');
       expect(result).toHaveProperty('needsRollback');
+    });
+  });
+
+  describe('validation_failed observability (#388)', () => {
+    // #388 的核心：事件有类型定义、桌面端有消费方，却在全仓没有发射点，
+    // 于是「校验是否拦截」在遥测层恒为 0——那个 0 证明的是「没接线」，
+    // 不是「没拦住」。以下三条锁住修复后的口径。
+    it('emits post_write with the failing checks when a real check fails', async () => {
+      const events: AgentEvent[] = [];
+      const executor = new Executor(
+        makeConfig({
+          hallucinationGuard: {
+            validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
+            validateCode: vi.fn().mockResolvedValue({
+              pass: false,
+              results: [
+                {
+                  pass: false,
+                  type: 'syntax_validity',
+                  severity: 'block',
+                  message: 'Syntax errors found in src/a.ts',
+                },
+              ],
+              blockedBy: ['Syntax errors found in src/a.ts'],
+            }),
+            isCheckEnabled: () => true,
+          } as unknown as ExecutorConfig['hallucinationGuard'],
+          emitEvent: (event) => events.push(event),
+          getFileSystemFacts: () => ({
+            existingFiles: new Set<string>(),
+            existingDirectories: new Set(['src']),
+            nonExistentPaths: new Set<string>(),
+            directoryContents: new Map<string, string[]>(),
+          }),
+        }),
+      );
+      executor.registerMCPClient('files', {
+        callTool: vi.fn().mockResolvedValue({ success: true, content: 'export const a = {' }),
+        listTools: vi.fn().mockResolvedValue([]),
+      });
+      executor.registerToolMapping('create_file', 'files');
+
+      await executor.executeStep(
+        makeStep({ params: { path: 'src/a.ts', content: 'export const a = {' } }),
+        makeExecutionContext(),
+      );
+
+      expect(events).toEqual([
+        expect.objectContaining({
+          type: 'validation_failed',
+          stage: 'post_write',
+          path: 'src/a.ts',
+          stepId: 'step-1',
+        }),
+      ]);
+    });
+
+    it('stays silent when only the tool itself failed', async () => {
+      const events: AgentEvent[] = [];
+      const executor = new Executor(
+        makeConfig({
+          hallucinationGuard: {
+            validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
+            validateCode: vi.fn().mockResolvedValue({ pass: true, results: [] }),
+            isCheckEnabled: () => true,
+          } as unknown as ExecutorConfig['hallucinationGuard'],
+          emitEvent: (event) => events.push(event),
+          getFileSystemFacts: () => ({
+            existingFiles: new Set<string>(),
+            existingDirectories: new Set(['src']),
+            nonExistentPaths: new Set<string>(),
+            directoryContents: new Map<string, string[]>(),
+          }),
+        }),
+      );
+      executor.registerMCPClient('files', {
+        // 工具自身报错（磁盘满、权限等），没有任何检查判失败
+        callTool: vi.fn().mockResolvedValue({ success: false, error: 'EACCES: permission denied' }),
+        listTools: vi.fn().mockResolvedValue([]),
+      });
+      executor.registerToolMapping('create_file', 'files');
+
+      const result = await executor.executeStep(
+        makeStep({ params: { path: 'src/a.ts', content: 'export const a = 1;' } }),
+        makeExecutionContext(),
+      );
+
+      expect(result.stepResult.success).toBe(false);
+      // 步骤失败但没有拦截：混进来的话拦截数就不能用了
+      expect(events.map((event) => event.type)).not.toContain('validation_failed');
     });
   });
 

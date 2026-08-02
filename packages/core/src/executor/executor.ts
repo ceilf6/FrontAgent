@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { AgentTask, ExecutionStep, StepResult, ValidationResult } from '@frontagent/shared';
 import { logger } from '@frontagent/shared';
+import { groundStepPath } from '../filesense/path-grounding.js';
 import {
   createDefaultExecutorSkillRegistry,
   type ExecutorActionSkill,
@@ -20,115 +21,12 @@ import type {
   MCPClient,
   PhaseExecutionGroup,
 } from './types.js';
-
-/** 会把内容写到磁盘的动作——校验必须发生在调用它们之前 */
-const WRITE_ACTIONS = ['apply_patch', 'create_file'];
-
-/**
- * 写盘否决判据：代码文件里出现 markdown 围栏。
- *
- * **为什么不用 guard 的 `syntax_validity`**：它是逐行数引号奇偶 + 括号栈的启发式
- * （`checks/syntax-validity.ts`），对合法代码会误判 block——实测 `"it's fine"`、
- * 多行模板字符串、JSX 里的撇号全部判失败。把否决写盘的权力交给它，等于让任何
- * 含撇号的字符串都写不出来，比它要修的缺陷严重得多。
- *
- * 围栏判据则是高精度的：以 ``` 开头的行在 .ts/.tsx/.js 里永远不是合法代码，
- * 而这正是评测里实际观测到的失效形态（TS1127: Invalid character，模型把
- * markdown 代码块原样当成文件内容写了出来）。宁可只挡确定的那一类，
- * 也不要用一个会误伤的判据去挡「所有语法错误」。
- *
- * 其余校验结论照旧留给写盘后判定，与本 PR 之前的语义一致。
- * 启发式本身的误判是既有缺陷，跟踪于 issue #413。
- */
-function detectMarkdownFence(content: string): { line: number; text: string } | undefined {
-  const lines = content.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    if (/^\s*```/.test(lines[i])) {
-      return { line: i + 1, text: lines[i].trim().slice(0, 40) };
-    }
-  }
-  return undefined;
-}
-
-/** 把围栏检出结果表达成 ValidationResult，好让事件与错误文案与其余校验同形。 */
-/**
- * 剔除 `syntax_validity` 的判定，保留其余检查。
- *
- * 这个检查器逐行数引号奇偶，对 `"it's fine"`、多行模板字符串、JSX 撇号一律判 block
- * （issue #413 有实测）。本文件已经论证过「它不可靠到不能否决写盘」——那就不能
- * 反手让它决定步骤成败：`needsRollback` 会因此为真，`progress-enforcement` 跳过
- * 全部剩余步骤，agent 主路径白耗 recovery 次数，`validation_failed:post_write`
- * 的计数也被误报污染。同一份判据在两处不能有两套可信度。
- *
- * 写盘前的围栏否决不受影响——那条判据是确定性的。
- * #413 落地（换真 parser）后这个函数应当删除。
- */
-function dropUnreliableSyntaxVerdicts(validation: ValidationResult): ValidationResult {
-  const kept = validation.results.filter((result) => result.type !== 'syntax_validity');
-  const blockedBy = kept
-    .filter((result) => !result.pass && result.severity === 'block')
-    .map((result) => result.message ?? result.type);
-  return {
-    pass: blockedBy.length === 0,
-    results: kept,
-    blockedBy: blockedBy.length > 0 ? blockedBy : undefined,
-  };
-}
-
-/**
- * 围栏判据只适用于 TS/JS 家族。`.yaml` 的块标量里放一段 markdown（含围栏）
- * 是完全合法的内容，`.json` 的字符串同理——对它们套用这条判据就是误伤。
- */
-const FENCE_VETO_LANGUAGES = new Set(['typescript', 'javascript']);
-
-function buildFenceVeto(content: string, path: string, language: string): ValidationResult {
-  if (!FENCE_VETO_LANGUAGES.has(language)) {
-    return { pass: true, results: [] };
-  }
-  const fence = detectMarkdownFence(content);
-  if (!fence) {
-    return { pass: true, results: [] };
-  }
-  const message = `Markdown code fence written into ${path} at line ${fence.line}: ${fence.text}`;
-  return {
-    pass: false,
-    results: [{ pass: false, type: 'syntax_validity', severity: 'block', message }],
-    blockedBy: [message],
-  };
-}
-
-/**
- * codegen 生成的 apply_patch 是「覆盖整文件的单个 replace」——
- * 计划 schema 不产出 patches，所有 modify 步骤都走这条路（executor-skills 的
- * apply_patch 分支固定发 {operation:'replace', startLine:1, endLine:原文件行数}）。
- * 这类补丁的最终内容在写盘前完全已知，理应和 create_file 一样受前置校验保护。
- * 只改局部行的补丁仍返回 undefined，落回写盘后判定。
- */
-function resolveFullFileReplaceContent(
-  toolParams: Record<string, unknown>,
-  originalContent: string | undefined,
-): string | undefined {
-  const patches = toolParams.patches;
-  if (!Array.isArray(patches) || patches.length !== 1) {
-    return undefined;
-  }
-  const patch = patches[0] as {
-    operation?: string;
-    startLine?: number;
-    endLine?: number;
-    content?: string;
-  };
-  if (patch.operation !== 'replace' || typeof patch.content !== 'string') {
-    return undefined;
-  }
-  if (patch.startLine !== 1 || originalContent === undefined) {
-    return undefined;
-  }
-  const originalLines = originalContent.split('\n').length;
-  return typeof patch.endLine === 'number' && patch.endLine >= originalLines
-    ? patch.content
-    : undefined;
-}
+import {
+  buildFenceVeto,
+  demoteNonDecidingVerdicts,
+  resolveFullFileReplaceContent,
+  WRITE_ACTIONS,
+} from './write-validation.js';
 
 export class Executor {
   private config: ExecutorConfig;
@@ -235,6 +133,18 @@ export class Executor {
         return trace.finish(this.buildSkippedStepOutput(paramValidation.reason, startTime));
       }
 
+      // 路径接地必须发生在前置校验**之前**（#434 评审意见）。
+      //
+      // 幻觉 `read_file` 会被 `validateBeforeExecution` 里的 fileExistence 检查
+      // 判为 "does not exist"，随后 `getPreValidationSkip` 把整步 skip 掉并提前
+      // 返回——接地放在其后就永远执行不到，恰好在它唯一该起作用的那类步骤上失效。
+      // （这条 skip 分支返回 `success: true`，也正是 #432 里「幻觉步骤 ok 恒为 true」
+      // 的来源。）
+      //
+      // 就地改写 `step.params` 而不是只改一份副本：后续的校验、apply_patch 的
+      // auto-read、prepareToolParams 都读 `step.params`，只改副本会让它们各看各的路径。
+      this.groundStepPathInPlace(step);
+
       const preValidation = await trace.withStage('validate_before', () =>
         this.validateBeforeExecution(step, context),
       );
@@ -283,7 +193,10 @@ export class Executor {
         }),
       );
 
-      const writeContent = this.resolveWriteContent(step, toolParams, context);
+      // 写入路径只解析这一次，写盘前后共用；技能可能改写 params.path，
+      // 两侧各解析一次就会指向不同文件。
+      const writePath = (toolParams.path ?? step.params.path) as string | undefined;
+      const writeContent = this.resolveWriteContent(step, toolParams, writePath, context);
       // 否决判据先跑：它是纯字符串扫描，而 validateCode 会做文件系统解析
       // （import 检查）。围栏一旦命中就直接 return，没必要为一份不会落盘的内容
       // 白跑一次完整 guard。
@@ -342,15 +255,24 @@ export class Executor {
         }
       }
 
+      // 一次步骤只读回一次落盘内容，路径也只解析一次：写盘前用的是
+      // `toolParams.path ?? step.params.path`（技能可能改写路径），写盘后若改用
+      // `step.params.path`，两侧就会指向不同文件——今天的技能都不改写 path，
+      // 所以那是个隐性假设而非现存缺陷，但它正是 emitValidationFailed 的
+      // resolvedPath 参数存在的理由，不该在同一个函数里自相矛盾。
+      const landedPath = writePath;
+      const landedContent = WRITE_ACTIONS.includes(step.action)
+        ? this.readWrittenFile(landedPath)
+        : undefined;
+
       const postValidation = await trace.withStage('validate_after', () =>
-        this.validateAfterExecution(
-          step,
-          toolResult,
-          toolParams,
-          writeContent
+        this.validateAfterExecution(step, toolResult, toolParams, {
+          path: landedPath,
+          landedContent,
+          preWriteContentValidation: writeContent
             ? { validation: rawContentValidation, content: writeContent.content }
             : undefined,
-        ),
+        }),
       );
 
       let rollbackOutcome: { rollbackFailed: boolean; error?: string } = { rollbackFailed: false };
@@ -358,14 +280,10 @@ export class Executor {
       let unreadableAfterWrite: string | undefined;
 
       // 落盘内容里的围栏是**独立**的失败来源，不依附于 postValidation。
-      // 写盘后的 syntax_validity 判定已被剔除（见 dropUnreliableSyntaxVerdicts），
+      // 写盘后的 syntax_validity 判定已降级为不否决（见 demoteNonDecidingVerdicts），
       // 所以一份写进 .ts 的围栏不会再让 postValidation 失败——但它确实是坏内容，
       // 必须自己让步骤失败并触发撤销。这也让「判失败」与「触发回滚」用的是同一条
       // 确定性判据，不会出现一个判失败、另一个不撤销的错位。
-      const landedPath = step.params.path as string | undefined;
-      const landedContent = WRITE_ACTIONS.includes(step.action)
-        ? this.readWrittenFile(landedPath)
-        : undefined;
       const landedFenceVeto =
         landedContent !== undefined && vetoEnabled
           ? buildFenceVeto(
@@ -376,8 +294,13 @@ export class Executor {
           : { pass: true, results: [] };
       const effectivePostValidation = landedFenceVeto.pass ? postValidation : landedFenceVeto;
 
+      // 发事件与判成败刻意解耦：降级后的判定仍留在 `results` 里（`pass: false`），
+      // 只是不再决定步骤成败。emitValidationFailed 自己按「有没有真实检查判失败」
+      // 过滤，所以把它挂在 `!pass` 分支里，等于让降级顺手把遥测也一起关掉——
+      // #388 要的恰恰是一个能计数的拦截量。
+      this.emitValidationFailed('post_write', effectivePostValidation, step, landedPath);
+
       if (!effectivePostValidation.pass) {
-        this.emitValidationFailed('post_write', effectivePostValidation, step, landedPath);
         // 回滚只由确定性的围栏判据触发：`create` 快照的回滚是 unlinkSync，
         // 误判一次就是删掉一个合法文件。
         const landed = landedContent;
@@ -423,9 +346,14 @@ export class Executor {
         // 排除纯工具失败，是为了不让一次 read_file 失败中止整个计划。但写动作不同：
         // 写工具报 EACCES 后若继续跑，后续「引用该模块的另一个文件」的步骤会全绿收尾，
         // 整轮以「缺模块但步骤全成功」呈现。写动作的工具失败照旧中止。
+        //
+        // 判据是 `!pass`，不是 `results.some(!pass)`：降级后的判定仍以
+        // `pass: false` 留在 results 里，用后者会让一条不该否决的检查把整个
+        // 剩余计划标成 skipped——正是降级要消除的那种误伤。`results.length > 0`
+        // 只用来把「纯工具失败」（results 为空）从非写动作里排除掉。
         needsRollback:
-          effectivePostValidation.results.some((result) => !result.pass) ||
-          (!effectivePostValidation.pass && WRITE_ACTIONS.includes(step.action)),
+          !effectivePostValidation.pass &&
+          (effectivePostValidation.results.length > 0 || WRITE_ACTIONS.includes(step.action)),
         rollbackFailed: rollbackOutcome.rollbackFailed,
       });
     } catch (error) {
@@ -749,6 +677,8 @@ export class Executor {
   private resolveWriteContent(
     step: ExecutionStep,
     toolParams: Record<string, unknown>,
+    /** 调用方已解析好的写入路径,写盘前后共用同一份 */
+    path: string | undefined,
     context?: { collectedContext: ExecutorCollectedContext },
   ): {
     path: string;
@@ -759,7 +689,6 @@ export class Executor {
       return null;
     }
 
-    const path = (toolParams.path ?? step.params.path) as string | undefined;
     if (!path) {
       return null;
     }
@@ -781,9 +710,61 @@ export class Executor {
   }
 
   /**
-   * 只有「至少一项真实检查判定失败」才算校验失败。
-   * validateAfterExecution 在工具自身报错时返回 results 为空的失败结果——那是工具失败，
-   * 不是校验拦截；两者混在同一事件里会让 validation_failed 无法当作拦截数使用。
+   * 用导航枚举出的真实目录清单校正步骤路径，**就地改写 `step.params`**（#434）。
+   *
+   * 就地而不是返回副本：后续的前置校验、`apply_patch` 的 auto-read、
+   * `prepareToolParams` 全都读 `step.params`，只改副本会让它们各看各的路径。
+   *
+   * 拒绝的情形也要发事件。只统计成功校正会让「接地覆盖率」读成 100%，
+   * 而被拒绝的那部分正是这套启发式的能力边界——那才是下一轮该改的东西。
+   */
+  private groundStepPathInPlace(step: ExecutionStep): void {
+    const path = step.params.path;
+    if (typeof path !== 'string' || !path) return;
+
+    const facts = this.config.getFileSystemFacts?.();
+    if (!facts) return;
+
+    const outcome = groundStepPath(path, step.action, facts);
+
+    if (outcome.corrected) {
+      const { from, to, score, candidateCount } = outcome.corrected;
+      this.debugLog(`[Executor] 🧭 路径接地：${from} → ${to}（相似度 ${score}）`);
+      step.params.path = to;
+      this.config.emitEvent?.({
+        type: 'filesense_path_grounded',
+        outcome: 'corrected',
+        stepId: step.stepId,
+        action: step.action,
+        from,
+        to,
+        score,
+        candidateCount,
+      });
+      return;
+    }
+
+    if (outcome.declined) {
+      this.debugLog(
+        `[Executor] 🧭 路径接地放弃：${outcome.declined.path}（${outcome.declined.reason}）`,
+      );
+      this.config.emitEvent?.({
+        type: 'filesense_path_grounded',
+        outcome: 'declined',
+        stepId: step.stepId,
+        action: step.action,
+        from: outcome.declined.path,
+        reason: outcome.declined.reason,
+        candidateCount: outcome.declined.candidates.length,
+      });
+    }
+  }
+
+  /**
+   * 只有「至少一项真实检查判定失败」才算校验拦截。
+   * `validateAfterExecution` 在工具自身报错时返回 results 为空的失败结果——
+   * 那是工具失败，不是拦截；两者混在同一事件里，`validation_failed`
+   * 就不能当拦截数用，而 #388 要的正是一个能计数的拦截量。
    */
   private emitValidationFailed(
     stage: 'pre_execution' | 'pre_write' | 'post_write',
@@ -859,7 +840,12 @@ export class Executor {
      * 写盘前已在同一份内容上算出的完整校验结果（含 import 检查）。
      * 有它就直接沿用：内容一模一样，再跑一遍只是重复开销。
      */
-    preWriteContentValidation?: { validation: ValidationResult; content: string },
+    write?: {
+      /** 解析后的写入路径与落盘内容，由 executeStep 各读一次后传入 */
+      path: string | undefined;
+      landedContent: string | undefined;
+      preWriteContentValidation?: { validation: ValidationResult; content: string };
+    },
   ): Promise<ValidationResult> {
     if (typeof result === 'object' && result !== null) {
       const resultObj = result as { success?: boolean; error?: string };
@@ -872,21 +858,23 @@ export class Executor {
       }
     }
 
-    if (preWriteContentValidation) {
+    if (write?.preWriteContentValidation) {
       // 只有「实际落盘的就是被校验过的那份」才能复用。整文件判定依赖
       // collectedContext.files 的行数快照，而 apply_patch 成功后该 Map 不刷新——
       // 同一计划内二次改同一文件时，工具可能只替换了前 N 行并保留尾部，
       // 落盘内容 ≠ 被校验的 patch.content。不一致就按读回内容重新判。
-      const landed = this.readWrittenFile(step.params.path as string | undefined);
-      if (landed === undefined || landed === preWriteContentValidation.content) {
-        // 同样剔除 syntax_validity：这份结果是写盘**前**算的，但它现在被当作
+      if (
+        write.landedContent === undefined ||
+        write.landedContent === write.preWriteContentValidation.content
+      ) {
+        // 同样按 action 降级：这份结果是写盘**前**算的，但它现在被当作
         // 写盘**后**的结论用——判据的可信度不因复用而改变。
-        return dropUnreliableSyntaxVerdicts(preWriteContentValidation.validation);
+        return demoteNonDecidingVerdicts(write.preWriteContentValidation.validation, step.action);
       }
     }
 
     if (WRITE_ACTIONS.includes(step.action)) {
-      const path = step.params.path as string;
+      const path = write?.path;
       // 与写盘前同样按 action 分派。`apply_patch` 的 params 上可能残留一个从不落盘的
       // `content`（计划参数是自由形状，技能又整体 spread），让它参与取值就是在校验
       // 一份不会被写入的内容——`resolveWriteContent` 已经躲开这个陷阱，
@@ -900,8 +888,8 @@ export class Executor {
           ? ((result as { content?: string })?.content ??
             (toolParams?.content as string | undefined) ??
             (step.params.content as string | undefined) ??
-            this.readWrittenFile(path))
-          : this.readWrittenFile(path);
+            write?.landedContent)
+          : write?.landedContent;
 
       if (content && path) {
         const language = detectLanguage(path);
@@ -911,7 +899,7 @@ export class Executor {
             language,
             path,
           );
-          return dropUnreliableSyntaxVerdicts(codeValidation);
+          return demoteNonDecidingVerdicts(codeValidation, step.action);
         }
       }
     }

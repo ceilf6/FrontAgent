@@ -71,8 +71,12 @@ console.log(`# FrontAgent 消融评测：SDD 规格约束对一次通过率的�
 2. **校验发生在写盘之后，且默认不回滚**
    \`validateAfterExecution\` 在工具执行完成后才校验；失败仅将 step 标记为 \`success: false\`，回滚条件是 \`step.validation.some(v => v.required)\`——而 LLM 生成的计划中 \`validation\` 常为空数组，于是**不触发回滚，已写入的坏文件留在磁盘上**。
 
-3. **\`validation_failed\` 事件从未触发**
-   两臂合计 ${sumEvent(arms.full, 'validation_failed') + sumEvent(arms.ablation, 'validation_failed')} 次。该事件挂在执行器不走的那条校验路径上，导致「校验是否起作用」在遥测层面不可观测。
+3. **\`validation_failed\` 拦截计数**
+   两臂合计 ${sumEvent(arms.full, 'validation_failed') + sumEvent(arms.ablation, 'validation_failed')} 次。${
+     sumEvent(arms.full, 'validation_failed') + sumEvent(arms.ablation, 'validation_failed') > 0
+       ? '注意这是复合值，不是拦截数——见下方分阶段分解，以及 `benchmarks/results/2026-07-31-validation-telemetry.md`。'
+       : '该事件当时在全仓没有任何发射点，所以它不可能是 0 以外的值：这个 0 证明的是「事件没接线」，不是「校验没拦住」。限定见 `benchmarks/results/2026-07-31-validation-telemetry.md`。'
+   }
 
    **按阶段分解**（只有 \`pre_write\` 是真拦截；\`post_write\` 含「前向引用 import」这类
    刻意放行落盘的失败，\`pre_execution\` 是执行前结构性拦截）：
@@ -102,7 +106,7 @@ console.log(`
 ## 结论与后续
 
 - **不宣称 SDD 提升了一次通过率**：本任务集上差值 ${diffPp}pp，样本量 ${commonIds.length}，不构成证据。
-- **不宣称多层校验拦截了幻觉**：在 ${sum(arms.full, 'llmCalls') + sum(arms.ablation, 'llmCalls')} 次 LLM 调用中零拦截记录，且语法错误文件确实落盘。
+- **不宣称多层校验拦截了幻觉**：在 ${sum(arms.full, 'llmCalls') + sum(arms.ablation, 'llmCalls')} 次 LLM 调用中零拦截记录，且语法错误文件确实落盘。**该「零」已被限定**——见 \`benchmarks/results/2026-07-31-validation-telemetry.md\`：事件当时无发射点，零是观测缺陷而非拦截结果。
 - **后续（按优先级）**：
   1. 修复缺陷 1——让 \`enabledChecks\` 贯通 \`validateFilePath\`/\`validateCode\`，使 guard 可配置、可消融。
   2. 修复缺陷 2——校验前置到写盘前，或在校验失败时无条件回滚。

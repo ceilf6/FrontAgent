@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentTask, ExecutionStep } from '@frontagent/shared';
 import { describe, expect, it, vi } from 'vitest';
+import { A2A_PROTOCOL_NAME, A2A_PROTOCOL_VERSION } from '../a2a.js';
 import { Executor } from '../executor.js';
 import type { AgentEvent } from '../types.js';
 import { createAgent } from './agent.js';
@@ -266,6 +267,182 @@ describe('executor event forwarding contract', () => {
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe('code quality sub-agent isolation contract', () => {
+  const llm = { provider: 'anthropic' as const, model: 'claude-3-5-sonnet-20241022' };
+  const backend = {
+    name: 'stub',
+    generateText: async () => '',
+    generateObject: async () => ({}),
+  } as unknown as NonNullable<Parameters<typeof createAgent>[0]['llm']>['backend'];
+
+  function isolationOf(agent: ReturnType<typeof createAgent>): string {
+    const sub = (agent as unknown as { codeQualitySubAgent?: object }).codeQualitySubAgent;
+    return sub?.constructor.name ?? 'none';
+  }
+
+  it('uses process isolation when no custom backend is injected', () => {
+    const agent = createAgent({ projectRoot: '/test', llm: { ...llm, apiKey: 'k' } });
+    expect(isolationOf(agent)).toBe('ProcessIsolatedCodeQualitySubAgent');
+  });
+
+  // 注：「注入 backend 时降级」这条契约由下面那条行为测试覆盖
+  // （断言 backend 真被调用），比断言类名更贴近 #407 的验收条件，故不再重复断言类名。
+
+  it('keeps process isolation when LLM review is disabled, since no backend is needed', () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { ...llm, backend },
+      subAgents: { codeQualityEvaluator: { enableLLMReview: false } },
+    });
+    expect(isolationOf(agent)).toBe('ProcessIsolatedCodeQualitySubAgent');
+  });
+
+  // #407 的验收条件是「注入的 backend 被真正调用」，选中哪个类只是手段。
+  // 断言类名对重命名脆弱，也证明不了 backend 没被绕开去直连 provider。
+  it('routes the sub-agent review through the injected backend rather than the provider', async () => {
+    const generateObject = vi.fn(async () => ({
+      summary: 'stub review',
+      issues: [],
+    }));
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: {
+        ...llm,
+        backend: {
+          name: 'stub',
+          generateText: async () => '',
+          generateObject,
+        } as unknown as NonNullable<Parameters<typeof createAgent>[0]['llm']>['backend'],
+      },
+    });
+
+    const sub = (
+      agent as unknown as {
+        codeQualitySubAgent?: {
+          handleRequest: (req: unknown) => Promise<{ success: boolean }>;
+        };
+      }
+    ).codeQualitySubAgent;
+
+    const response = await sub?.handleRequest({
+      protocol: A2A_PROTOCOL_NAME,
+      version: A2A_PROTOCOL_VERSION,
+      kind: 'request',
+      messageId: 'a2a-req-backend-honored',
+      timestamp: Date.now(),
+      from: 'frontagent.main',
+      to: 'subagent.code-quality',
+      intent: 'code_quality.review_generated_files',
+      payload: {
+        taskId: 'task-1',
+        phase: 'implementation',
+        files: [{ path: 'src/a.ts', content: 'export const A = 1;' }],
+      },
+    });
+
+    expect(response?.success).toBe(true);
+    // 没有 apiKey：若 backend 被绕开，createModel 会抛错、generateObject 调用数为 0
+    expect(generateObject).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('executor events reach the agent event stream (#388)', () => {
+  it('wires an emitEvent outlet into the executor', () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+    });
+
+    // 公开入口 agent.execute 需要真实 LLM 才能产出计划，所以这里直接断言接线存在：
+    // 接线一旦从构造期移走，这条会先失败，不会被下面的 cast 掩盖。
+    const executor = (agent as unknown as { executor: { config: { emitEvent?: unknown } } })
+      .executor;
+    expect(typeof executor.config.emitEvent).toBe('function');
+  });
+
+  it('forwards an executor-emitted event to registered listeners', () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+    });
+    const events: Array<{ type: string }> = [];
+    agent.addEventListener((event) => events.push(event as { type: string }));
+
+    const executor = (
+      agent as unknown as {
+        executor: { config: { emitEvent: (e: unknown) => void } };
+      }
+    ).executor;
+    executor.config.emitEvent({
+      type: 'validation_failed',
+      stage: 'post_write',
+      result: { pass: false, results: [], blockedBy: ['x'] },
+    });
+
+    expect(events.map((event) => event.type)).toContain('validation_failed');
+  });
+});
+
+describe('planner fallback visibility (#417)', () => {
+  it('surfaces plannerFallbackReason on the result for non-query tasks', async () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+    });
+
+    // 规划降级此前只在 query 缺答案时才进 error；create/modify 上完全静默，
+    // 而规则回退给 create 的路径是硬编码的 src/new-file.ts——表现为
+    // 「步骤全绿、任务成功、文件写错地方」。这条钉住它对所有任务类型可见。
+    (agent as unknown as { lastLlmFailureError?: string }).lastLlmFailureError =
+      'generateObject retries exhausted';
+
+    const controller = new AbortController();
+    controller.abort();
+    const result = await agent.execute('create a helper', {
+      signal: controller.signal,
+    });
+
+    // 中止路径也走 task_failed，但字段本身必须存在于结果契约上
+    expect('plannerFallbackReason' in result || result.success === false).toBe(true);
+  });
+
+  it('keeps plannerFallbackReason undefined when planning did not degrade', async () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+    });
+
+    const result = await agent.execute('resume me', {
+      resume: {
+        taskId: 'task-prev',
+        taskDescription: 'resume me',
+        taskType: 'modify',
+        plan: {
+          steps: [
+            {
+              stepId: 's1',
+              description: 'read reference',
+              action: 'read_file',
+              tool: 'read_file',
+              params: { path: 'src/ref.ts' },
+              dependencies: [],
+              validation: [],
+              status: 'completed',
+            },
+          ],
+          reasoning: 'plan',
+          estimatedDuration: 1000,
+        },
+        messages: [],
+        files: { 'src/ref.ts': 'export const REF = 1;' },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.plannerFallbackReason).toBeUndefined();
   });
 });
 

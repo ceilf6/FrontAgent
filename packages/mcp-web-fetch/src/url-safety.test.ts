@@ -94,6 +94,25 @@ describe('parseAndValidateUrl', () => {
     expect(url.hostname).toBe('example.com');
   });
 
+  it('host filters use exact hostname matching — subdomains are not implied', () => {
+    // denyHosts: ['example.com'] must NOT deny www.example.com (exact match only).
+    const allowed = parseAndValidateUrl('https://www.example.com/', {
+      denyHosts: ['example.com'],
+    });
+    expect(allowed.hostname).toBe('www.example.com');
+
+    // allowHosts: ['example.com'] must NOT authorize www.example.com either.
+    expect(() =>
+      parseAndValidateUrl('https://www.example.com/', { allowHosts: ['example.com'] }),
+    ).toThrow(/not in allow list/i);
+
+    // Listing the subdomain explicitly is required to cover it.
+    const explicit = parseAndValidateUrl('https://www.example.com/', {
+      allowHosts: ['example.com', 'www.example.com'],
+    });
+    expect(explicit.hostname).toBe('www.example.com');
+  });
+
   it('rejects IPv4-mapped IPv6 literals that resolve to private addresses', () => {
     expect(() => parseAndValidateUrl('http://[::ffff:7f00:1]/')).toThrow(UrlSafetyError);
     expect(() => parseAndValidateUrl('http://[::ffff:0a00:1]/')).toThrow(UrlSafetyError);

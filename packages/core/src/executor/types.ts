@@ -16,6 +16,12 @@ export interface MCPClient {
 }
 
 export interface ExecutorConfig {
+  /**
+   * 执行器事件出口。没有它，执行器这条校验路径上发生的一切在遥测层不可观测——
+   * 这正是 issue #388 的内容：`validation_failed` 有类型定义、有 UI 消费方，
+   * 却在全仓没有任何发射点。
+   */
+  emitEvent?: (event: AgentEvent) => void;
   projectRoot: string;
   hallucinationGuard: HallucinationGuard;
   llmService: LLMService;
@@ -39,11 +45,6 @@ export interface ExecutorConfig {
   /** 用户选择"始终允许"时的规则持久化回调 */
   onPersistAllowRule?: (rule: string) => void;
   onSecurityDecision?: (decision: SecurityDecision) => void;
-  /**
-   * 执行器侧事件出口：校验拦截与回滚只在此上报。
-   * 缺省时校验是否生效在遥测层不可观测（issue #388）。
-   */
-  emitEvent?: (event: AgentEvent) => void;
   /** 生命周期 hooks：preToolUse 可拦截调用，postToolUse 仅观察 */
   lifecycleHooks?: AgentLifecycleHooks;
   trace?: ExecutorTraceConfig;

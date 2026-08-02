@@ -16,6 +16,21 @@ const validImpactSummary = [
   '- Verification: node --test scripts/tests/workflow-rules.test.mjs passed.',
 ].join('\n');
 
+// `git ls-files --others` normally recurses into an untracked directory and
+// lists its files. It collapses to a single trailing-slash entry when the
+// directory is a nested repository — a linked worktree or an uninitialised
+// submodule (#439).
+//
+// Apply this only where entries are actually readFileSync'd. Filtering inside
+// listPublicClaudeAssets() would hide such an entry from the callers that are
+// supposed to catch it: the public-prefix assertion rejects any trailing-slash
+// entry, so it reports a stray nested repository anywhere under .claude/ —
+// including under an otherwise-allowed prefix — and dropping it first would
+// turn that into a silent pass.
+function dropDirectoryEntries(entries) {
+  return entries.filter((file) => !file.endsWith('/'));
+}
+
 function listPublicClaudeAssets() {
   const tracked = execFileSync('git', ['ls-files', '.claude'], { encoding: 'utf8' });
   const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard', '.claude'], {
@@ -486,6 +501,29 @@ test('local Claude state markdown remains ignored', () => {
   );
 });
 
+// A git worktree under .claude/worktrees/ — Claude Code's default location —
+// is a full nested checkout. Two independent gates broke on it, so both levers
+// are pinned here: git must ignore the path, and Biome must not descend into
+// it (Biome sets no vcs.useIgnoreFile, so .gitignore alone does not stop the
+// nested-config error, which aborts the whole run before any file is checked).
+// See #439.
+test('a git worktree under .claude/worktrees does not break the local gates', () => {
+  assert.doesNotThrow(() =>
+    execFileSync('git', ['check-ignore', '-q', '.claude/worktrees/example-branch']),
+  );
+
+  const biomeConfig = JSON.parse(readFileSync('biome.json', 'utf8'));
+  assert.ok(biomeConfig.files.includes.includes('!!**/.claude/worktrees'));
+
+  // Assert the filter against synthetic input: with the ignore rule in place
+  // git no longer emits a directory entry, so listPublicClaudeAssets() cannot
+  // produce one to catch here.
+  assert.deepEqual(
+    dropDirectoryEntries(['.claude/skills/a/SKILL.md', '.claude/worktrees/some-branch/']),
+    ['.claude/skills/a/SKILL.md'],
+  );
+});
+
 test('Claude reusable assets are public while local state stays private', () => {
   const publicClaudeAssets = listPublicClaudeAssets();
 
@@ -494,13 +532,22 @@ test('Claude reusable assets are public while local state stays private', () => 
   assert.ok(publicClaudeAssets.includes('.claude/skills/gitnexus/gitnexus-cli/SKILL.md'));
   assert.ok(
     publicClaudeAssets.every(
-      (file) => file.startsWith('.claude/workflows/') || file.startsWith('.claude/skills/'),
+      (file) =>
+        // Reject directory entries explicitly. Without this a nested repository
+        // under an allowed prefix — `.claude/skills/some-skill/` — satisfies
+        // startsWith and slips past, which is exactly the case the trailing
+        // filter in the portability test would then silently skip (#439).
+        !file.endsWith('/') &&
+        (file.startsWith('.claude/workflows/') || file.startsWith('.claude/skills/')),
     ),
   );
 });
 
 test('public Harness workflow assets are portable', () => {
-  const publicClaudeAssets = listPublicClaudeAssets();
+  // Only this test reads the entries, so the directory filter belongs here:
+  // a stray nested repository would otherwise abort the suite with EISDIR
+  // instead of failing the public-prefix assertion above (#439).
+  const publicClaudeAssets = dropDirectoryEntries(listPublicClaudeAssets());
   const publicAssets = ['docs/oss-harness-engineering-workflow.md', ...publicClaudeAssets];
   const secretEnvNamePattern = /\b[A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET)\b/u;
 

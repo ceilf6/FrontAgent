@@ -61,16 +61,17 @@ export interface GuardConfig {
  */
 export class HallucinationGuard {
   private config: GuardConfig;
+  private readonly enabled: boolean;
   private enabledChecks: Required<NonNullable<GuardConfig['enabledChecks']>>;
 
   constructor(config: GuardConfig) {
     this.config = config;
-    const enabled = config.enabled ?? true;
+    this.enabled = config.enabled ?? true;
     this.enabledChecks = {
-      fileExistence: enabled && (config.enabledChecks?.fileExistence ?? true),
-      importValidity: enabled && (config.enabledChecks?.importValidity ?? true),
-      syntaxValidity: enabled && (config.enabledChecks?.syntaxValidity ?? true),
-      sddCompliance: enabled && (config.enabledChecks?.sddCompliance ?? true),
+      fileExistence: this.enabled && (config.enabledChecks?.fileExistence ?? true),
+      importValidity: this.enabled && (config.enabledChecks?.importValidity ?? true),
+      syntaxValidity: this.enabled && (config.enabledChecks?.syntaxValidity ?? true),
+      sddCompliance: this.enabled && (config.enabledChecks?.sddCompliance ?? true),
     };
   }
 
@@ -224,10 +225,10 @@ export class HallucinationGuard {
   }
 
   /**
-   * 启用/禁用检查
+   * 启用/禁用检查；总开关关闭时不生效
    */
   setCheckEnabled(check: keyof NonNullable<GuardConfig['enabledChecks']>, enabled: boolean): void {
-    if (this.config.enabled === false) return;
+    if (!this.enabled) return;
     this.enabledChecks[check] = enabled;
   }
 }

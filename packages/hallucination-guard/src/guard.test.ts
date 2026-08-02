@@ -241,6 +241,7 @@ describe('HallucinationGuard', () => {
     ).resolves.toMatchObject({ pass: true, results: [] });
     guard.setCheckEnabled('fileExistence', true);
     await expect(guard.validateFilePath('ghost.ts')).resolves.toMatchObject({ pass: true });
+    await expect(guard.validateFilePath('../outside.ts')).resolves.toMatchObject({ pass: false });
   });
 
   it('honors disabled file existence checks on the fast path', async () => {
@@ -289,7 +290,12 @@ describe('HallucinationGuard', () => {
   it('still blocks paths outside project root when fileExistence is disabled', async () => {
     const guard = new HallucinationGuard({
       projectRoot: TEST_ROOT,
-      enabled: false,
+      enabledChecks: {
+        fileExistence: false,
+        syntaxValidity: false,
+        importValidity: false,
+        sddCompliance: false,
+      },
     });
 
     const result = await guard.validateFilePath('../outside.ts', true);

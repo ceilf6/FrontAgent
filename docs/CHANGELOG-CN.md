@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **guard**：`hallucinationGuard.enabled: false` 现在会关闭 agent 路径上的所有幻觉检查，同时保留项目根目录包含性的安全边界。（#400）
+
 ## [2.2.0] - 2026-07-30
 
 ### 新增

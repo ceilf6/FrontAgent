@@ -16,6 +16,12 @@ export interface MCPClient {
 }
 
 export interface ExecutorConfig {
+  /**
+   * 执行器事件出口。没有它，执行器这条校验路径上发生的一切在遥测层不可观测——
+   * 这正是 issue #388 的内容：`validation_failed` 有类型定义、有 UI 消费方，
+   * 却在全仓没有任何发射点。
+   */
+  emitEvent?: (event: import('../types.js').AgentEvent) => void;
   projectRoot: string;
   hallucinationGuard: HallucinationGuard;
   llmService: LLMService;

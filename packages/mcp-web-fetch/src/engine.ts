@@ -53,6 +53,28 @@ export function clampLimit(value: unknown, def: number, hardMax: number): number
 }
 
 /**
+ * Normalizes a caller-supplied domain allow/deny list into a clean
+ * `string[] | undefined`, mirroring the defensive posture of `clampLimit`.
+ *
+ * - Non-array input (e.g. a bare string the model emitted by mistake) is
+ *   treated as "not provided" (`undefined`) instead of throwing inside the
+ *   engine — a malformed value never surfaces as `.some is not a function`.
+ * - Non-string entries and empty/whitespace-only strings are dropped.
+ * - An empty result collapses to `undefined` so the engine treats it as
+ *   "filter disabled" rather than "deny all" (see `url-safety.ts`).
+ */
+export function normalizeHostList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const cleaned: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue;
+    const trimmed = entry.trim();
+    if (trimmed.length > 0) cleaned.push(trimmed);
+  }
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+/**
  * DNS lookup used by the safe undici dispatcher. Resolves the hostname and
  * rejects (via UrlSafetyError) if the resolved address is private/loopback/
  * link-local — enforced at CONNECTION time so the validated address is the
@@ -115,10 +137,13 @@ export async function fetchUrl(rawUrl: string, opts: FetchOptions = {}): Promise
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const doFetch = opts.fetchImpl ?? fetch;
 
+  const allowHosts = normalizeHostList(opts.allowHosts);
+  const denyHosts = normalizeHostList(opts.denyHosts);
+
   try {
     let currentUrl = parseAndValidateUrl(rawUrl, {
-      allowHosts: opts.allowHosts,
-      denyHosts: opts.denyHosts,
+      allowHosts,
+      denyHosts,
     });
 
     let response: Response | undefined;
@@ -154,8 +179,8 @@ export async function fetchUrl(rawUrl: string, opts: FetchOptions = {}): Promise
       const location = res.headers.get('location')!;
       const nextUrl = new URL(location, currentUrl);
       currentUrl = parseAndValidateUrl(nextUrl.toString(), {
-        allowHosts: opts.allowHosts,
-        denyHosts: opts.denyHosts,
+        allowHosts,
+        denyHosts,
       });
     }
 

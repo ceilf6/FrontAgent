@@ -65,10 +65,54 @@ function defaultParams(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 // ─── Tests: Query task planning (rule-based) ────────────────────────────────
+//
+// 这些用例断言的是**规则生成**下 query 的步骤形状，所以显式 useLLM: false。
+// query 曾经被硬编码短路到规则生成（#419），因此这里不写也能过；
+// 现在 query 与其他任务类型一样先走 LLM，规则生成退为回退路径，
+// 要测回退就得把它显式选出来。
+
+// query 现在与其他任务类型一样先走 LLM 规划。此前 `planner.ts` 把它硬编码短路到
+// 规则生成，而规则生成只对 `relevantFiles` 发 read_file——调用方没点名文件时，
+// 计划里一个读取步骤都没有，agent 只能回答「没有可用证据」，
+// 于是「哪个文件定义了 X」这类问题结构上无法回答（issue #419）。
+describe('Planner query tasks reach LLM planning (#419)', () => {
+  it('attempts LLM planning for a query task instead of short-circuiting', async () => {
+    let calledWith: string | undefined;
+    const planner = createPlanner({
+      llm: {
+        provider: 'openai',
+        model: 'test-model',
+        apiKey: 'test-key',
+        backend: {
+          name: 'stub',
+          generateText: async () => '',
+          generateObject: async ({ messages }: { messages: Array<{ content: string }> }) => {
+            calledWith = messages?.at(-1)?.content;
+            throw new Error('stub refuses, so planning falls back');
+          },
+        },
+      } as unknown as ConstructorParameters<typeof Planner>[0]['llm'],
+    });
+
+    await planner.plan(
+      createTask({
+        id: 'task-query-llm',
+        type: 'query',
+        description: '哪个文件定义了路由表？',
+        context: { workingDirectory: '/project' },
+      }),
+      emptyContext(),
+      [],
+    );
+
+    // 被调用过就说明没有短路；抛错后回退到规则生成，与其他任务类型一致
+    expect(calledWith).toBeDefined();
+  });
+});
 
 describe('Planner query tasks', () => {
   it('plans relevant files directly without shell steps', async () => {
-    const planner = createPlanner();
+    const planner = createPlanner({ useLLM: false });
     const result = await planner.plan(
       createTask({
         id: 'task-query',
@@ -91,7 +135,7 @@ describe('Planner query tasks', () => {
   });
 
   it('falls back to local code search when no explicit evidence source is provided', async () => {
-    const planner = createPlanner();
+    const planner = createPlanner({ useLLM: false });
     const result = await planner.plan(
       createTask({
         id: 'task-query',
@@ -113,7 +157,7 @@ describe('Planner query tasks', () => {
   });
 
   it('adds browser steps when browserUrl is provided and pageStructure exists', async () => {
-    const planner = createPlanner();
+    const planner = createPlanner({ useLLM: false });
     const result = await planner.plan(
       createTask({
         type: 'query',

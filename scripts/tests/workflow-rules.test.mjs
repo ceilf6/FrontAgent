@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { assertGitWorkspaceRootMatchesCwd, getChangedFiles } from '../workflows/contract-check.mjs';
 import {
@@ -506,14 +517,26 @@ test('local Claude state markdown remains ignored', () => {
 // are pinned here: git must ignore the path, and Biome must not descend into
 // it (Biome sets no vcs.useIgnoreFile, so .gitignore alone does not stop the
 // nested-config error, which aborts the whole run before any file is checked).
-// See #439.
+// See #439, and #444 for why Biome's exclusion is anchored while git's is not.
 test('a git worktree under .claude/worktrees does not break the local gates', () => {
   assert.doesNotThrow(() =>
     execFileSync('git', ['check-ignore', '-q', '.claude/worktrees/example-branch']),
   );
 
   const biomeConfig = JSON.parse(readFileSync('biome.json', 'utf8'));
-  assert.ok(biomeConfig.files.includes.includes('!!**/.claude/worktrees'));
+  assert.ok(
+    biomeConfig.files.includes.includes('!!.claude/worktrees'),
+    'biome must exclude .claude/worktrees, or a nested checkout aborts the whole run',
+  );
+  // Anchored, not `**/`-prefixed. Biome matches the traversal root by absolute
+  // path, so a `**/.claude/worktrees` pattern also matches the worktree itself
+  // when biome runs from inside one — `biome check .` then ignores everything
+  // and exits non-zero, killing every local gate in the worktree (#444). The
+  // behavioural test below pins both directions.
+  assert.ok(
+    !biomeConfig.files.includes.some((pattern) => /^!!\*\*\/\.claude\/worktrees/u.test(pattern)),
+    'a `**/`-prefixed worktrees exclusion matches the traversal root and disables lint inside a worktree (#444)',
+  );
 
   // Assert the filter against synthetic input: with the ignore rule in place
   // git no longer emits a directory entry, so listPublicClaudeAssets() cannot
@@ -522,6 +545,84 @@ test('a git worktree under .claude/worktrees does not break the local gates', ()
     dropDirectoryEntries(['.claude/skills/a/SKILL.md', '.claude/worktrees/some-branch/']),
     ['.claude/skills/a/SKILL.md'],
   );
+});
+
+// The config assertion above pins the pattern's *shape*; this pins what the
+// shape is for, by running the real binary against a synthetic project root.
+// Both directions matter and they pull against each other: excluding the
+// worktree hard enough to survive its nested biome.json (#439) is what made a
+// `**/` pattern also swallow the worktree when it *is* the traversal root
+// (#444). Skipped when the binary is absent (no `pnpm install`) or on Windows,
+// where the shim name differs — CI runs this on Linux.
+const biomeBin = join('node_modules', '.bin', 'biome');
+test('biome ignores a nested worktree from the root but still checks one from inside', {
+  skip: process.platform === 'win32' || !existsSync(biomeBin) ? 'biome binary unavailable' : false,
+}, () => {
+  const biomeAbsolute = join(process.cwd(), biomeBin);
+  // The probe below reads "did biome traverse here?" off a planted
+  // noDoubleEquals diagnostic. Turning that rule off in biome.json would make
+  // the worktree run report nothing and fail as if traversal had regressed —
+  // the misdirected error message #439 and #444 are both about. Fail on the
+  // real cause instead. The `suspicious` group already disables five rules, so
+  // this is not a hypothetical edit.
+  // Biome accepts three ways to switch the probe off — `"off"`, `{ level:
+  // "off" }`, and dropping the recommended preset at either level — so check
+  // all of them rather than the one spelling in use today.
+  const linterRules = JSON.parse(readFileSync('biome.json', 'utf8')).linter?.rules;
+  const probeRule = linterRules?.suspicious?.noDoubleEquals;
+  const probeMessage =
+    'this test probes traversal via a planted noDoubleEquals diagnostic; pick another enabled rule if it gets disabled';
+  assert.notEqual(
+    typeof probeRule === 'string' ? probeRule : probeRule?.level,
+    'off',
+    probeMessage,
+  );
+  assert.notEqual(linterRules?.recommended, false, probeMessage);
+  assert.notEqual(linterRules?.suspicious?.recommended, false, probeMessage);
+  const root = mkdtempSync(join(tmpdir(), 'frontagent-worktree-lint-'));
+  try {
+    const worktree = join(root, '.claude', 'worktrees', 'example-branch');
+    mkdirSync(worktree, { recursive: true });
+    // Both project roots get the real config — the behaviour under test is a
+    // property of biome.json, so a hand-written stub would not be evidence.
+    copyFileSync('biome.json', join(root, 'biome.json'));
+    copyFileSync('biome.json', join(worktree, 'biome.json'));
+    // The root file is clean; the worktree file carries one recommended-rule
+    // error. Which run reports it is the traversal evidence — a file count
+    // would also be satisfied by biome checking the config files alone.
+    writeFileSync(join(root, 'sample.ts'), "export const sample = 'root';\n");
+    writeFileSync(
+      join(worktree, 'sample.ts'),
+      'export function sample(a: unknown, b: unknown) {\n  return a == b;\n}\n',
+    );
+
+    const fromRoot = spawnSync(biomeAbsolute, ['check', '.'], { cwd: root, encoding: 'utf8' });
+    const rootOutput = `${fromRoot.stdout}${fromRoot.stderr}`;
+    // The nested biome.json is itself a root config: without the exclusion
+    // biome aborts with a nested-root-configuration error before checking
+    // anything, which is the #439 failure this must keep out.
+    assert.equal(fromRoot.status, 0, `biome failed at the root checkout:\n${rootOutput}`);
+    assert.doesNotMatch(
+      rootOutput,
+      /noDoubleEquals/u,
+      `the root run must not descend into the worktree (#439):\n${rootOutput}`,
+    );
+
+    const fromWorktree = spawnSync(biomeAbsolute, ['check', '.'], {
+      cwd: worktree,
+      encoding: 'utf8',
+    });
+    const worktreeOutput = `${fromWorktree.stdout}${fromWorktree.stderr}`;
+    // With a `**/` pattern this run reports "Checked 0 files" and exits 1 —
+    // the gate looks like it ran and failed, without inspecting anything.
+    assert.match(
+      worktreeOutput,
+      /noDoubleEquals/u,
+      `worktree contents must still be checked (#444):\n${worktreeOutput}`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('Claude reusable assets are public while local state stays private', () => {

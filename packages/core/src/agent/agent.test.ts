@@ -100,6 +100,27 @@ describe('createAgent', () => {
     expect(agent).toBeDefined();
   });
 
+  it('disables all hallucination guard checks when configured', async () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+      hallucinationGuard: { enabled: false },
+    });
+    const guard = (
+      agent as unknown as {
+        hallucinationGuard: {
+          validateCode: (code: string, language: 'typescript') => Promise<{ pass: boolean }>;
+          validateFilePath: (path: string) => Promise<{ pass: boolean }>;
+        };
+      }
+    ).hallucinationGuard;
+
+    await expect(
+      guard.validateCode('export const broken = {', 'typescript'),
+    ).resolves.toMatchObject({ pass: true });
+    await expect(guard.validateFilePath('src/missing.ts')).resolves.toMatchObject({ pass: true });
+  });
+
   it('returns undefined session snapshot when no task is running', () => {
     const agent = createAgent({
       projectRoot: '/test',

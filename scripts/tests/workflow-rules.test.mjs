@@ -408,7 +408,13 @@ test('CI and contract guard target develop and call named quality scripts', () =
 // github.actor——维护者对 dependabot 分支做 update-branch 后 actor 会变成维护者,
 // 用 actor 判定会让门禁重新变红。
 test('contract guard skips dependabot-authored PRs by author, not actor', () => {
-  const contractGuard = readFileSync('.github/workflows/contract-guard.yml', 'utf8');
+  // 只看有效行:负向断言必须不带 `if:` 前缀(见下),而那样的宽模式会连注释一起
+  // 匹配——把被拒绝的 actor 写法作为反例写进注释,本身是完全正确的做法,不该让
+  // 门禁变红。
+  const contractGuard = readFileSync('.github/workflows/contract-guard.yml', 'utf8')
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n');
   const rules = readFileSync('scripts/workflows/contract-rules.mjs', 'utf8');
 
   assert.match(

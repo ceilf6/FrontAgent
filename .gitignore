@@ -60,9 +60,10 @@ temp/
 # 子目录下的 worktree(如 packages/x/.claude/worktrees/b)只被 git 忽略,不在
 # biome 的排除范围内——从仓库根跑 `biome check .` 仍会撞上 #439 的
 # nested-root-configuration 中止。已知限制,不是疏漏:`**/` 的反向失效(worktree
-# 里所有门禁全灭)比它更严重,而 `!!**/.claude/worktrees/**` 虽然两边都成立,却会
-# 被 biome 自己的 useBiomeIgnoreFolder safe fix 改回坏形式,`pnpm lint:fix` 一跑
-# 就把 bug 写回来。真出现子目录 worktree 时,把它移到仓库根的 .claude/worktrees/。
+# 里所有门禁全灭)比它更严重,而 `!!**/.claude/worktrees/**` 在 biome 2.4.16 上实测
+# 两边都成立,却会被 biome 自己的 useBiomeIgnoreFolder safe fix 改回坏形式,
+# `pnpm lint:fix` 一跑就把 bug 写回来——这条实测结论没有回归覆盖,换 biome 版本
+# 后要重新验证再采信。真出现子目录 worktree 时,把它移到仓库根的 .claude/worktrees/。
 **/.claude/worktrees/
 
 .turbo/

@@ -565,12 +565,20 @@ test('biome ignores a nested worktree from the root but still checks one from in
   // the misdirected error message #439 and #444 are both about. Fail on the
   // real cause instead. The `suspicious` group already disables five rules, so
   // this is not a hypothetical edit.
+  // Biome accepts three ways to switch the probe off — `"off"`, `{ level:
+  // "off" }`, and dropping the recommended preset at either level — so check
+  // all of them rather than the one spelling in use today.
   const linterRules = JSON.parse(readFileSync('biome.json', 'utf8')).linter?.rules;
+  const probeRule = linterRules?.suspicious?.noDoubleEquals;
+  const probeMessage =
+    'this test probes traversal via a planted noDoubleEquals diagnostic; pick another enabled rule if it gets disabled';
   assert.notEqual(
-    linterRules?.suspicious?.noDoubleEquals,
+    typeof probeRule === 'string' ? probeRule : probeRule?.level,
     'off',
-    'this test probes traversal via a planted noDoubleEquals diagnostic; pick another enabled rule if it gets disabled',
+    probeMessage,
   );
+  assert.notEqual(linterRules?.recommended, false, probeMessage);
+  assert.notEqual(linterRules?.suspicious?.recommended, false, probeMessage);
   const root = mkdtempSync(join(tmpdir(), 'frontagent-worktree-lint-'));
   try {
     const worktree = join(root, '.claude', 'worktrees', 'example-branch');

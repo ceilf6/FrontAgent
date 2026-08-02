@@ -636,8 +636,16 @@ test('biome ignores a nested worktree from the root but still checks one from in
   const probeRule = linterRules?.suspicious?.noDoubleEquals;
   const probeMessage =
     'this test probes traversal via a planted noDoubleEquals diagnostic; pick another enabled rule if it gets disabled';
-  /** A preset slot is live unless switched off under either spelling. */
-  const presetEnabled = (rules) => rules?.preset !== 'none' && rules?.recommended !== false;
+  // 用「已知启用值的白名单」而不是「不等于关闭值」：后者是这条 guard 上次静默
+  // 失效的同一形状——键被改名、读到 undefined、断言恒真。不认识的拼写直接判失败，
+  // 由改配置的人来更新这里，而不是让 guard 悄悄放行。
+  // biome 的 PresetConfig 枚举是 recommended | all | none（取自
+  // node_modules/@biomejs/biome/configuration_schema.json）；缺省即 recommended。
+  const ENABLED_PRESETS = new Set([undefined, 'recommended', 'all']);
+  /** A preset slot is live only under a spelling we know keeps rules on. */
+  const presetEnabled = (rules) =>
+    ENABLED_PRESETS.has(rules?.preset) &&
+    (rules?.recommended === undefined || rules?.recommended === true);
   assert.notEqual(
     typeof probeRule === 'string' ? probeRule : probeRule?.level,
     'off',

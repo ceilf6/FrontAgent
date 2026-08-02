@@ -162,6 +162,12 @@ function readOptionalGitText(gitText, args) {
   }
 }
 
+// 这三个环境变量（GITNEXUS_IMPACT_SUMMARY / GITHUB_EVENT_PATH /
+// GITNEXUS_ANALYZE_TIMEOUT_MS）没有 turbo 声明处可放:本脚本不是 turbo task,
+// 由 package.json 的 contract:* 直接 node 调起。biome 的 noUndeclaredEnvVars
+// 因此在 biome.json 的 overrides 里对 scripts/workflows/** 关掉——不要改成往
+// turbo.json 的 globalPassThroughEnv 里加,那会让这些变量对每个包的
+// build/test/typecheck 都可见,用构建图配置去抑制一条 lint,代价不对等。
 function getImpactSummary() {
   if (process.env.GITNEXUS_IMPACT_SUMMARY) {
     return extractImpactSummary(process.env.GITNEXUS_IMPACT_SUMMARY);

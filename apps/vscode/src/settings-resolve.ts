@@ -47,6 +47,15 @@ function readScopedSetting(config: vscode.WorkspaceConfiguration, key: string): 
     // dialog report it as "your setting" the moment any of these keys gains a
     // non-empty default.
     userValue: emptyToUndefined(inspected?.globalValue),
+    // These three keys declare no `scope` in package.json, so they are `window`
+    // scoped and VS Code does not apply folder-level values to them in a
+    // multi-root workspace. If `inspect()` still reports a
+    // `workspaceFolderValue` there, this picks a value VS Code itself would
+    // ignore — the gate would prompt about an endpoint that is not in effect,
+    // and hand the approved value to the runtime. Not verified in an Extension
+    // Host; single-root is the common case and takes the `workspaceValue`
+    // branch, which is correct. Erring toward over-prompting is the safe
+    // direction: nothing is redirected without an explicit approval either way.
     workspaceValue: emptyToUndefined(inspected?.workspaceFolderValue ?? inspected?.workspaceValue),
   };
 }
@@ -237,7 +246,11 @@ export async function resolveRuntimeOptions(
     // threat than endpoint redirection — `securityMode` can only downgrade how
     // often the approval UI asks (it cannot bypass the built-in hard denies),
     // and `rag.repo` is a clone source whose content enters the LLM context.
-    // Tracked separately rather than widened into this fix; see #427.
+    // `runLog.enabled` is a fourth one, read the same way in
+    // view-provider.ts's startRun: a repository that both proposes an endpoint
+    // and turns the run log off also removes the record of what this gate
+    // caught. Tracked separately rather than widened into this fix; see #427,
+    // which lists all four.
     provider: status.provider ?? undefined,
     model: status.model ?? undefined,
     baseUrl: status.baseUrl ?? undefined,

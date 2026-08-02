@@ -133,6 +133,12 @@ ${helpers.join('\n')}
     // env-configured user does not see an empty form next to a "ready" banner.
     expect(script).toContain("$('configBaseUrl').placeholder = config.baseUrl");
     expect(script).toContain("$('configModel').placeholder = config.model");
+    // A <select> takes no placeholder, so provider needs the empty option's
+    // label instead — otherwise it alone stays on "Select provider" while the
+    // banner says the provider is ready. The option's value stays empty so
+    // Save still skips the field.
+    expect(script).toContain("$('configProvider').options[0].textContent");
+    expect(script).toContain("'Select provider (currently: ' + config.provider + ')'");
 
     // The trust copy is computed host-side and rendered verbatim. Duplicating
     // the wording here is how the banner and the run-failure message drifted

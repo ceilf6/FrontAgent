@@ -602,7 +602,17 @@ export function renderWebviewConfigScript(): string {
       // can still see what is actually in use without Save writing it into
       // User Settings.
       const own = config.userScoped || {};
-      if (document.activeElement !== $('configProvider')) $('configProvider').value = own.provider || '';
+      if (document.activeElement !== $('configProvider')) {
+        $('configProvider').value = own.provider || '';
+        // A <select> has no placeholder, so the effective value goes in the
+        // empty option's label instead. Without this, a user configured from
+        // the environment or an approved workspace endpoint reads "Select
+        // provider" next to a banner saying the provider is ready. The option
+        // keeps its empty value, so Save still skips the field.
+        $('configProvider').options[0].textContent = config.provider
+          ? 'Select provider (currently: ' + config.provider + ')'
+          : 'Select provider';
+      }
       if (document.activeElement !== $('configModel')) {
         $('configModel').value = own.model || '';
         $('configModel').placeholder = config.model || 'zai-org/GLM-4.6';

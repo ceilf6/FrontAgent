@@ -50,6 +50,9 @@ temp/
 .claude/**/*.local.md
 .claude/settings.local.json
 .claude/**/settings.local.json
+# 本地 git worktree(Claude Code 的默认位置)。跟踪它会让工具把一个完整
+# 的嵌套 checkout 当成仓库内容 —— 见 biome.json 的 includes 与 #439。
+.claude/worktrees/
 
 .turbo/
 

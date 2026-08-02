@@ -21,7 +21,12 @@ function listPublicClaudeAssets() {
   const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard', '.claude'], {
     encoding: 'utf8',
   });
-  return [...new Set(`${tracked}\n${untracked}`.split('\n').filter(Boolean))].sort();
+  const entries = [...new Set(`${tracked}\n${untracked}`.split('\n').filter(Boolean))];
+  // `git ls-files --others` reports an untracked directory as a single entry
+  // with a trailing slash rather than recursing into it. Callers readFileSync
+  // these paths, so a stray directory would abort the suite with EISDIR
+  // instead of a useful assertion failure (#439).
+  return entries.filter((file) => !file.endsWith('/')).sort();
 }
 
 test('classifyContractPaths separates critical and non-critical changes', () => {
@@ -484,6 +489,25 @@ test('local Claude state markdown remains ignored', () => {
   assert.doesNotThrow(() =>
     execFileSync('git', ['check-ignore', '-q', '.claude/ralph-loop.local.md']),
   );
+});
+
+// A git worktree under .claude/worktrees/ — Claude Code's default location —
+// is a full nested checkout. Two independent gates broke on it, so both levers
+// are pinned here: git must ignore the path, and Biome must not descend into
+// it (Biome sets no vcs.useIgnoreFile, so .gitignore alone does not stop the
+// nested-config error, which aborts the whole run before any file is checked).
+// See #439.
+test('a git worktree under .claude/worktrees does not break the local gates', () => {
+  assert.doesNotThrow(() =>
+    execFileSync('git', ['check-ignore', '-q', '.claude/worktrees/example-branch']),
+  );
+
+  const biomeConfig = JSON.parse(readFileSync('biome.json', 'utf8'));
+  assert.ok(biomeConfig.files.includes.includes('!!**/.claude/worktrees'));
+
+  // Callers readFileSync these entries, and `git ls-files --others` reports an
+  // untracked directory as one trailing-slash entry, which would throw EISDIR.
+  assert.ok(listPublicClaudeAssets().every((file) => !file.endsWith('/')));
 });
 
 test('Claude reusable assets are public while local state stays private', () => {

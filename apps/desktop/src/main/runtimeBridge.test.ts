@@ -168,8 +168,11 @@ describe('createRuntimeBridge', () => {
     await tick();
 
     const failed = sent.find((s) => s.payload.event?.type === 'task_failed');
+    // 断言而不是 `?.`:后者在 find 没命中时会静默短路成 undefined，
+    // 下一行的属性读取才抛 TypeError，报错指向的位置与真正的原因无关。
+    expect(failed).toBeDefined();
     expect(failed?.payload.event).toMatchObject({ type: 'task_failed' });
-    expect((failed?.payload.event as { error: string }).error).toContain('boom');
+    expect((failed?.payload.event as { error: string } | undefined)?.error).toContain('boom');
     expect(bridge.activeRunCount()).toBe(0);
   });
 

@@ -1,6 +1,14 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalDependencies": ["vitest.config.ts"],
+  // scripts/workflows/contract-check.mjs 读这三个变量。它不是 turbo task,
+  // 但 biome 的 noUndeclaredEnvVars 按仓库范围扫描;声明在这里既消掉告警,
+  // 也如实记录了「这些变量会穿透到子进程,且不参与缓存键」。
+  "globalPassThroughEnv": [
+    "GITNEXUS_IMPACT_SUMMARY",
+    "GITHUB_EVENT_PATH",
+    "GITNEXUS_ANALYZE_TIMEOUT_MS"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

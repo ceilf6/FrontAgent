@@ -294,7 +294,11 @@ test('extractImpactSummary reads only the PR template impact section', () => {
 test('package exposes required OSS Harness scripts', () => {
   const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 
-  assert.equal(pkg.devDependencies.gitnexus, '1.6.6');
+  // 精确钉版本,不用 caret:契约门禁靠 `gitnexus analyze` 产出索引,这条依赖
+  // 一度需要打补丁才能用(见 057aa6a)。升级必须是一次经审阅的改动,而不是
+  // 某次 lockfile 刷新的副产物——`patchedDependencies` 必须保持为空,否则
+  // 说明又退回到打补丁的状态。
+  assert.equal(pkg.devDependencies.gitnexus, '1.6.9');
   assert.equal(pkg.pnpm.patchedDependencies, undefined);
   assert.equal(pkg.scripts.prepare, 'pnpm hooks:install');
   assert.equal(pkg.scripts['hooks:install'], 'node scripts/workflows/install-hooks.mjs');

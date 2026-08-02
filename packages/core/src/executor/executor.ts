@@ -127,6 +127,18 @@ export class Executor {
         return trace.finish(this.buildSkippedStepOutput(paramValidation.reason, startTime));
       }
 
+      // 路径接地必须发生在前置校验**之前**（#434 评审意见）。
+      //
+      // 幻觉 `read_file` 会被 `validateBeforeExecution` 里的 fileExistence 检查
+      // 判为 "does not exist"，随后 `getPreValidationSkip` 把整步 skip 掉并提前
+      // 返回——接地放在其后就永远执行不到，恰好在它唯一该起作用的那类步骤上失效。
+      // （这条 skip 分支返回 `success: true`，也正是 #432 里「幻觉步骤 ok 恒为 true」
+      // 的来源。）
+      //
+      // 就地改写 `step.params` 而不是只改一份副本：后续的校验、apply_patch 的
+      // auto-read、prepareToolParams 都读 `step.params`，只改副本会让它们各看各的路径。
+      this.groundStepPathInPlace(step);
+
       const preValidation = await trace.withStage('validate_before', () =>
         this.validateBeforeExecution(step, context),
       );
@@ -155,11 +167,6 @@ export class Executor {
       }
 
       let toolParams = { ...step.params };
-
-      // 路径接地（#434）：导航步骤是前插到一份已定路径的计划上的，导航结果此前
-      // 从不回改这些路径。这里拿导航枚举出的真实目录清单校正读取类步骤的文件名。
-      // 只在把握明确时改写；含糊即保持原样让它自然失败——见 path-grounding.ts。
-      toolParams = this.groundToolPath(step, toolParams);
 
       if (this.config.debug) {
         const stepAny = step as { needsCodeGeneration?: boolean };
@@ -533,45 +540,38 @@ export class Executor {
   }
 
   /**
-   * 只有「至少一项真实检查判定失败」才算校验拦截。
-   * `validateAfterExecution` 在工具自身报错时返回 results 为空的失败结果——
-   * 那是工具失败，不是拦截；两者混在同一事件里，`validation_failed`
-   * 就不能当拦截数用，而 #388 要的正是一个能计数的拦截量。
-   */
-  /**
-   * 用导航枚举出的真实目录清单校正步骤路径（#434）。
+   * 用导航枚举出的真实目录清单校正步骤路径，**就地改写 `step.params`**（#434）。
+   *
+   * 就地而不是返回副本：后续的前置校验、`apply_patch` 的 auto-read、
+   * `prepareToolParams` 全都读 `step.params`，只改副本会让它们各看各的路径。
    *
    * 拒绝的情形也要发事件。只统计成功校正会让「接地覆盖率」读成 100%，
    * 而被拒绝的那部分正是这套启发式的能力边界——那才是下一轮该改的东西。
    */
-  private groundToolPath(
-    step: ExecutionStep,
-    params: Record<string, unknown>,
-  ): Record<string, unknown> {
-    const path = params.path;
-    if (typeof path !== 'string' || !path) return params;
+  private groundStepPathInPlace(step: ExecutionStep): void {
+    const path = step.params.path;
+    if (typeof path !== 'string' || !path) return;
 
     const facts = this.config.getFileSystemFacts?.();
-    if (!facts) return params;
+    if (!facts) return;
 
     const outcome = groundStepPath(path, step.action, facts);
 
     if (outcome.corrected) {
-      this.debugLog(
-        `[Executor] 🧭 路径接地：${outcome.corrected.from} → ${outcome.corrected.to}（相似度 ${outcome.corrected.score}）`,
-      );
+      const { from, to, score, candidateCount } = outcome.corrected;
+      this.debugLog(`[Executor] 🧭 路径接地：${from} → ${to}（相似度 ${score}）`);
+      step.params.path = to;
       this.config.emitEvent?.({
         type: 'filesense_path_grounded',
         outcome: 'corrected',
         stepId: step.stepId,
         action: step.action,
-        from: outcome.corrected.from,
-        to: outcome.corrected.to,
-        score: outcome.corrected.score,
-        candidateCount:
-          facts.directoryContents.get(path.slice(0, path.lastIndexOf('/')))?.length ?? 0,
+        from,
+        to,
+        score,
+        candidateCount,
       });
-      return { ...params, path: outcome.corrected.to };
+      return;
     }
 
     if (outcome.declined) {
@@ -588,10 +588,14 @@ export class Executor {
         candidateCount: outcome.declined.candidates.length,
       });
     }
-
-    return params;
   }
 
+  /**
+   * 只有「至少一项真实检查判定失败」才算校验拦截。
+   * `validateAfterExecution` 在工具自身报错时返回 results 为空的失败结果——
+   * 那是工具失败，不是拦截；两者混在同一事件里，`validation_failed`
+   * 就不能当拦截数用，而 #388 要的正是一个能计数的拦截量。
+   */
   private emitValidationFailed(
     stage: 'pre_execution' | 'post_write',
     validation: ValidationResult,

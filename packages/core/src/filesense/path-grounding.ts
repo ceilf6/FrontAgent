@@ -27,12 +27,30 @@
  * （#386 #400 #403 #388 #415 #417 #432）。
  */
 
-/** 会读取既有文件的动作。`create_file` 不在内且不能在内，理由见文件头。 */
-const READ_LIKE_ACTIONS = new Set(['read_file', 'apply_patch', 'get_ast']);
+/**
+ * 只读取、不落盘的动作。
+ *
+ * `create_file` 不在内且不能在内，理由见文件头。
+ *
+ * `apply_patch` 也**不在内**：它会落盘，且补丁原文取自
+ * `collectedContext.files`——那个 map 的键是**未接地**的路径
+ * （`executor.ts` 的 auto-read 用原路径写入）。把它接地要么让补丁生成
+ * 报「file not found in context」，要么在目标恰好已在上下文里时，
+ * 拿另一个文件的内容生成补丁并写进去。改错一个读取只是白读一次，
+ * 改错一个补丁是数据损坏。
+ */
+const READ_LIKE_ACTIONS = new Set(['read_file', 'get_ast']);
 
 export interface PathGroundingFacts {
   existingFiles: Set<string>;
-  /** 目录 → 其下文件清单。只有完整枚举过（导航未截断）的目录才在这里。 */
+  /**
+   * 目录 → 其下文件清单。
+   *
+   * 只有**完整枚举过**的目录才会出现在这里：导航既没有被扫描预算截断
+   * （`scanned.truncated === false`），返回的清单也没有被定长裁剪
+   * （`factsDelta.filesTruncated === false`）。两个条件缺一不可——
+   * 前者管「扫完了没」，后者管「扫到的都带回来了没」。
+   */
   directoryContents: Map<string, string[]>;
 }
 
@@ -40,7 +58,7 @@ export interface PathGroundingOutcome {
   /** 最终应当使用的路径；未改写时等于入参 */
   path: string;
   /** 发生了校正 */
-  corrected?: { from: string; to: string; score: number };
+  corrected?: { from: string; to: string; score: number; candidateCount: number };
   /** 判定为幻觉但没有足够把握校正——保持原样，把候选记下来供诊断 */
   declined?: { path: string; reason: string; candidates: string[] };
 }
@@ -133,6 +151,11 @@ export function groundStepPath(
 
   return {
     path: best.candidate,
-    corrected: { from: path, to: best.candidate, score: Number(best.score.toFixed(3)) },
+    corrected: {
+      from: path,
+      to: best.candidate,
+      score: Number(best.score.toFixed(3)),
+      candidateCount: scored.length,
+    },
   };
 }

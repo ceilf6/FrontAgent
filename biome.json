@@ -58,7 +58,8 @@
       "!!**/workspace",
       "!!**/skills",
       "!!**/docs",
-      "!!**/benchmarks"
+      "!!**/benchmarks",
+      "!!.claude/worktrees"
     ]
   }
 }

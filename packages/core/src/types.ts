@@ -812,6 +812,25 @@ export type AgentEvent =
       candidateCount: number;
       warnings?: string[];
     }
+  /**
+   * 计划里的文件路径被导航枚举出的真实目录清单校正（issue #434）。
+   *
+   * `outcome` 是必要的判别字段：`corrected` 与 `declined` 的含义相反——
+   * 前者是「猜错了并已改对」，后者是「判定猜错但没把握改，保持原样」。
+   * 只发 corrected 的话，「接地覆盖率」会被读成 100%，而实际漏掉的那部分
+   * 恰恰是这套启发式的能力边界所在。
+   */
+  | {
+      type: 'filesense_path_grounded';
+      outcome: 'corrected' | 'declined';
+      stepId: string;
+      action: string;
+      from: string;
+      to?: string;
+      score?: number;
+      reason?: string;
+      candidateCount: number;
+    }
   | { type: 'planning_completed'; plan: ExecutionPlan }
   | { type: 'phase_started'; phase: string; stepCount: number }
   | { type: 'phase_completed'; phase: string; successCount: number; failureCount: number }

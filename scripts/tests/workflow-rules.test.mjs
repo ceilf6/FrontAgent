@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { assertGitWorkspaceRootMatchesCwd, getChangedFiles } from '../workflows/contract-check.mjs';
 import {
@@ -15,6 +26,21 @@ const validImpactSummary = [
   '- GitNexus impact: detect_changes reported Harness scripts only; context on evaluateGitNexusContract shows tests as callers.',
   '- Verification: node --test scripts/tests/workflow-rules.test.mjs passed.',
 ].join('\n');
+
+// `git ls-files --others` normally recurses into an untracked directory and
+// lists its files. It collapses to a single trailing-slash entry when the
+// directory is a nested repository — a linked worktree or an uninitialised
+// submodule (#439).
+//
+// Apply this only where entries are actually readFileSync'd. Filtering inside
+// listPublicClaudeAssets() would hide such an entry from the callers that are
+// supposed to catch it: the public-prefix assertion rejects any trailing-slash
+// entry, so it reports a stray nested repository anywhere under .claude/ —
+// including under an otherwise-allowed prefix — and dropping it first would
+// turn that into a silent pass.
+function dropDirectoryEntries(entries) {
+  return entries.filter((file) => !file.endsWith('/'));
+}
 
 function listPublicClaudeAssets() {
   const tracked = execFileSync('git', ['ls-files', '.claude'], { encoding: 'utf8' });
@@ -506,6 +532,119 @@ test('local Claude state markdown remains ignored', () => {
   );
 });
 
+// A git worktree under .claude/worktrees/ — Claude Code's default location —
+// is a full nested checkout. Two independent gates broke on it, so both levers
+// are pinned here: git must ignore the path, and Biome must not descend into
+// it (Biome sets no vcs.useIgnoreFile, so .gitignore alone does not stop the
+// nested-config error, which aborts the whole run before any file is checked).
+// See #439, and #444 for why Biome's exclusion is anchored while git's is not.
+test('a git worktree under .claude/worktrees does not break the local gates', () => {
+  assert.doesNotThrow(() =>
+    execFileSync('git', ['check-ignore', '-q', '.claude/worktrees/example-branch']),
+  );
+
+  const biomeConfig = JSON.parse(readFileSync('biome.json', 'utf8'));
+  assert.ok(
+    biomeConfig.files.includes.includes('!!.claude/worktrees'),
+    'biome must exclude .claude/worktrees, or a nested checkout aborts the whole run',
+  );
+  // Anchored, not `**/`-prefixed. Biome matches the traversal root by absolute
+  // path, so a `**/.claude/worktrees` pattern also matches the worktree itself
+  // when biome runs from inside one — `biome check .` then ignores everything
+  // and exits non-zero, killing every local gate in the worktree (#444). The
+  // behavioural test below pins both directions.
+  assert.ok(
+    !biomeConfig.files.includes.some((pattern) => /^!!\*\*\/\.claude\/worktrees/u.test(pattern)),
+    'a `**/`-prefixed worktrees exclusion matches the traversal root and disables lint inside a worktree (#444)',
+  );
+
+  // Assert the filter against synthetic input: with the ignore rule in place
+  // git no longer emits a directory entry, so listPublicClaudeAssets() cannot
+  // produce one to catch here.
+  assert.deepEqual(
+    dropDirectoryEntries(['.claude/skills/a/SKILL.md', '.claude/worktrees/some-branch/']),
+    ['.claude/skills/a/SKILL.md'],
+  );
+});
+
+// The config assertion above pins the pattern's *shape*; this pins what the
+// shape is for, by running the real binary against a synthetic project root.
+// Both directions matter and they pull against each other: excluding the
+// worktree hard enough to survive its nested biome.json (#439) is what made a
+// `**/` pattern also swallow the worktree when it *is* the traversal root
+// (#444). Skipped when the binary is absent (no `pnpm install`) or on Windows,
+// where the shim name differs — CI runs this on Linux.
+const biomeBin = join('node_modules', '.bin', 'biome');
+test('biome ignores a nested worktree from the root but still checks one from inside', {
+  skip: process.platform === 'win32' || !existsSync(biomeBin) ? 'biome binary unavailable' : false,
+}, () => {
+  const biomeAbsolute = join(process.cwd(), biomeBin);
+  // The probe below reads "did biome traverse here?" off a planted
+  // noDoubleEquals diagnostic. Turning that rule off in biome.json would make
+  // the worktree run report nothing and fail as if traversal had regressed —
+  // the misdirected error message #439 and #444 are both about. Fail on the
+  // real cause instead. The `suspicious` group already disables five rules, so
+  // this is not a hypothetical edit.
+  // Biome accepts three ways to switch the probe off — `"off"`, `{ level:
+  // "off" }`, and dropping the recommended preset at either level — so check
+  // all of them rather than the one spelling in use today.
+  const linterRules = JSON.parse(readFileSync('biome.json', 'utf8')).linter?.rules;
+  const probeRule = linterRules?.suspicious?.noDoubleEquals;
+  const probeMessage =
+    'this test probes traversal via a planted noDoubleEquals diagnostic; pick another enabled rule if it gets disabled';
+  assert.notEqual(
+    typeof probeRule === 'string' ? probeRule : probeRule?.level,
+    'off',
+    probeMessage,
+  );
+  assert.notEqual(linterRules?.recommended, false, probeMessage);
+  assert.notEqual(linterRules?.suspicious?.recommended, false, probeMessage);
+  const root = mkdtempSync(join(tmpdir(), 'frontagent-worktree-lint-'));
+  try {
+    const worktree = join(root, '.claude', 'worktrees', 'example-branch');
+    mkdirSync(worktree, { recursive: true });
+    // Both project roots get the real config — the behaviour under test is a
+    // property of biome.json, so a hand-written stub would not be evidence.
+    copyFileSync('biome.json', join(root, 'biome.json'));
+    copyFileSync('biome.json', join(worktree, 'biome.json'));
+    // The root file is clean; the worktree file carries one recommended-rule
+    // error. Which run reports it is the traversal evidence — a file count
+    // would also be satisfied by biome checking the config files alone.
+    writeFileSync(join(root, 'sample.ts'), "export const sample = 'root';\n");
+    writeFileSync(
+      join(worktree, 'sample.ts'),
+      'export function sample(a: unknown, b: unknown) {\n  return a == b;\n}\n',
+    );
+
+    const fromRoot = spawnSync(biomeAbsolute, ['check', '.'], { cwd: root, encoding: 'utf8' });
+    const rootOutput = `${fromRoot.stdout}${fromRoot.stderr}`;
+    // The nested biome.json is itself a root config: without the exclusion
+    // biome aborts with a nested-root-configuration error before checking
+    // anything, which is the #439 failure this must keep out.
+    assert.equal(fromRoot.status, 0, `biome failed at the root checkout:\n${rootOutput}`);
+    assert.doesNotMatch(
+      rootOutput,
+      /noDoubleEquals/u,
+      `the root run must not descend into the worktree (#439):\n${rootOutput}`,
+    );
+
+    const fromWorktree = spawnSync(biomeAbsolute, ['check', '.'], {
+      cwd: worktree,
+      encoding: 'utf8',
+    });
+    const worktreeOutput = `${fromWorktree.stdout}${fromWorktree.stderr}`;
+    // With a `**/` pattern this run reports "Checked 0 files" and exits 1 —
+    // the gate looks like it ran and failed, without inspecting anything.
+    assert.match(
+      worktreeOutput,
+      /noDoubleEquals/u,
+      `worktree contents must still be checked (#444):\n${worktreeOutput}`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('Claude reusable assets are public while local state stays private', () => {
   const publicClaudeAssets = listPublicClaudeAssets();
 
@@ -514,13 +653,22 @@ test('Claude reusable assets are public while local state stays private', () => 
   assert.ok(publicClaudeAssets.includes('.claude/skills/gitnexus/gitnexus-cli/SKILL.md'));
   assert.ok(
     publicClaudeAssets.every(
-      (file) => file.startsWith('.claude/workflows/') || file.startsWith('.claude/skills/'),
+      (file) =>
+        // Reject directory entries explicitly. Without this a nested repository
+        // under an allowed prefix — `.claude/skills/some-skill/` — satisfies
+        // startsWith and slips past, which is exactly the case the trailing
+        // filter in the portability test would then silently skip (#439).
+        !file.endsWith('/') &&
+        (file.startsWith('.claude/workflows/') || file.startsWith('.claude/skills/')),
     ),
   );
 });
 
 test('public Harness workflow assets are portable', () => {
-  const publicClaudeAssets = listPublicClaudeAssets();
+  // Only this test reads the entries, so the directory filter belongs here:
+  // a stray nested repository would otherwise abort the suite with EISDIR
+  // instead of failing the public-prefix assertion above (#439).
+  const publicClaudeAssets = dropDirectoryEntries(listPublicClaudeAssets());
   const publicAssets = ['docs/oss-harness-engineering-workflow.md', ...publicClaudeAssets];
   const secretEnvNamePattern = /\b[A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET)\b/u;
 
@@ -555,6 +703,47 @@ test('repo guard remains advisory and training-camp workflows are absent', () =>
   assert.throws(() => readFileSync('.github/workflows/pr-auto-merge.yml', 'utf8'));
   assert.throws(() => readFileSync('.github/workflows/issue-claim.yml', 'utf8'));
   assert.throws(() => readFileSync('docs/progress.json', 'utf8'));
+});
+
+// actions/checkout refuses fork checkout under pull_request_target unless this
+// input is set, and it does not read the job-level allowlist. Without it Repo
+// Guard fails on every fork PR before the review step runs (#437).
+test('repo guard can check out fork PRs from allowlisted contributors', () => {
+  const repoGuard = readFileSync('.github/workflows/repo-guard.yml', 'utf8');
+  // Anchor to the checkout step's own block: a file-wide match would let an
+  // unrelated future checkout step satisfy these on the wrong step. Terminate
+  // on the next step's indentation rather than on a following `- uses:`, so
+  // rewriting the sibling step to `- name:` form does not make this fail with
+  // a misleading "no checkout step" message.
+  const checkoutStep = /- uses: actions\/checkout@[\s\S]*?(?=\n {6}- |$)/u.exec(repoGuard)?.[0];
+
+  assert.ok(checkoutStep, 'repo-guard has no actions/checkout step');
+  // Scoped to pull_request_target, not blanket-true: the trust argument for the
+  // opt-in only covers that path, and the issue_comment branch of the same step
+  // gates on the commenter instead of the PR author.
+  assert.match(
+    checkoutStep,
+    /allow-unsafe-pr-checkout:\s*\$\{\{\s*github\.event_name == 'pull_request_target'\s*\}\}/u,
+  );
+  assert.match(checkoutStep, /persist-credentials:\s*false/u);
+  // The safety argument depends on the fork path resolving to a fixed head SHA.
+  // Match the ternary branch, not the bare string: a branch ref or
+  // refs/pull/{n}/merge there would open a TOCTOU gap between the commit the
+  // gate admitted and the content actually checked out.
+  assert.match(
+    checkoutStep,
+    /github\.event_name == 'pull_request_target' && github\.event\.pull_request\.head\.sha/u,
+  );
+
+  // The opt-in is only defensible while the pull_request_target path stays
+  // gated on the PR author. Match the whole condition group in one pass: the
+  // allowlist names also appear in the issues and issue_comment gates, and
+  // asserting the operands separately stays green if the
+  // `pull_request_target &&` wrapper is dropped or the group is widened.
+  assert.match(
+    repoGuard,
+    /github\.event_name == 'pull_request_target' &&\s*\(\s*github\.event\.pull_request\.head\.repo\.full_name == github\.repository \|\|\s*contains\(fromJSON\([^)]*\), github\.event\.pull_request\.user\.login\)\s*\)/u,
+  );
 });
 
 test('agent prompts describe the OSS Harness review loop', () => {

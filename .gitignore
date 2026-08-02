@@ -50,6 +50,21 @@ temp/
 .claude/**/*.local.md
 .claude/settings.local.json
 .claude/**/settings.local.json
+# 本地 git worktree(Claude Code 的默认位置)。跟踪它会让工具把一个完整
+# 的嵌套 checkout 当成仓库内容 —— 见 biome.json 的 includes 与 #439。
+# 这里保留 **/ 前缀:在子目录里启动 Claude Code 时 worktree 会落在该子目录的
+# .claude/ 下。biome.json 那条反而必须锚定到项目根(不带 **/)——biome 按绝对
+# 路径匹配遍历根,**/ 会让 worktree 自己也命中排除,从而在 worktree 内部把
+# `biome check .` 变成「检查 0 个文件」并非零退出(#444)。git 没有这个反向失效,
+# 因此两边的覆盖范围有意不同,而不是等价保护:
+# 子目录下的 worktree(如 packages/x/.claude/worktrees/b)只被 git 忽略,不在
+# biome 的排除范围内——从仓库根跑 `biome check .` 仍会撞上 #439 的
+# nested-root-configuration 中止。已知限制,不是疏漏:`**/` 的反向失效(worktree
+# 里所有门禁全灭)比它更严重,而 `!!**/.claude/worktrees/**` 在 biome 2.4.16 上实测
+# 两边都成立,却会被 biome 自己的 useBiomeIgnoreFolder safe fix 改回坏形式,
+# `pnpm lint:fix` 一跑就把 bug 写回来——这条实测结论没有回归覆盖,换 biome 版本
+# 后要重新验证再采信。真出现子目录 worktree 时,把它移到仓库根的 .claude/worktrees/。
+**/.claude/worktrees/
 
 .turbo/
 

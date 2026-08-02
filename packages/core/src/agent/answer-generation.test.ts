@@ -61,3 +61,32 @@ describe('query answer evidence', () => {
     expect(prompt).not.toContain('目录导航结果');
   });
 });
+
+describe('search downgrade warnings', () => {
+  // 只断言 searchCode 返回值里有 warning 证明不了模型能看到它：
+  // in-process client 直接返回对象，core 此前只取 files/matches（#433 评审）。
+  it('puts the downgrade into the evidence sent to the model', async () => {
+    const { deps, generateText } = makeDeps();
+    const steps = [
+      {
+        action: 'search_code',
+        result: {
+          success: true,
+          output: {
+            matches: [],
+            warnings: [
+              'pattern 看起来是 glob（src/**）——限定目录请改用 filePattern。已改用 query 搜索。',
+            ],
+          },
+        },
+      },
+    ] as unknown as ExecutionPlan['steps'];
+
+    await buildFinalOutput(deps, queryTask, steps, makeContext());
+
+    const prompt = JSON.stringify(generateText.mock.calls[0]?.[0]);
+    expect(prompt).toContain('filePattern');
+    // 零命中不得被当成否定性证据——这句话必须明确出现
+    expect(prompt).toContain('不能');
+  });
+});

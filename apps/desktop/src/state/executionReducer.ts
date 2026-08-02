@@ -293,13 +293,15 @@ export function consoleReducer(state: ConsoleState, event: AgentEvent): ConsoleS
       const recordedOnly = event.result.pass;
       // 阶段决定了这条日志的含义：pre_write 是「坏内容没能落盘」（好事），
       // post_write 是「已落盘再判失败」（文件可能还在）。混成一句会误导读日志的人。
+      // 「未否决」与 stage 组合而不是短路它：今天只有 post_write 会带 pass:true，
+      // 但写死「写盘后」会让另外两个阶段将来一旦也发记录型事件就被贴错标签。
+      const stagePrefix =
+        event.stage === 'pre_write' ? '写盘前' : event.stage === 'post_write' ? '写盘后' : '执行前';
       const stageLabel = recordedOnly
-        ? '写盘后校验记录（未否决）'
+        ? `${stagePrefix}校验记录（未否决）`
         : event.stage === 'pre_write'
           ? '写盘前拦截'
-          : event.stage === 'post_write'
-            ? '写盘后校验失败'
-            : '执行前校验失败';
+          : `${stagePrefix}校验失败`;
       const target = event.path ? `[${event.path}] ` : '';
       // 降级项的理由不在 blockedBy 里（那是「否决了什么」），退回到 results 上的
       // 检查名，否则这条日志会只剩一个前缀。

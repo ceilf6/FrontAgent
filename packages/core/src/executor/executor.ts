@@ -30,6 +30,7 @@ import {
 } from './write-outcome.js';
 import {
   demoteNonDecidingVerdicts,
+  resolveWriteActionContent,
   resolveWriteContent,
   WRITE_ACTIONS,
 } from './write-validation.js';
@@ -267,6 +268,8 @@ export class Executor {
         action: step.action,
         landedPath,
         landedContent,
+        // 补丁前的原文，供围栏判据判断「这次写入是否引入了围栏」
+        priorContent: landedPath ? context.collectedContext.files.get(landedPath) : undefined,
         landedLanguage: detectLanguage(String(landedPath)) ?? '',
         toolResult,
         postValidation,
@@ -739,21 +742,13 @@ export class Executor {
 
     if (WRITE_ACTIONS.includes(step.action)) {
       const path = write?.path;
-      // 与写盘前同样按 action 分派。`apply_patch` 的 params 上可能残留一个从不落盘的
-      // `content`（计划参数是自由形状，技能又整体 spread），让它参与取值就是在校验
-      // 一份不会被写入的内容——`resolveWriteContent` 已经躲开这个陷阱，
-      // 写盘后路径不能把同一个坑再挖一遍。
-      //
-      // 另外：真实的 create_file / apply_patch 都不返回 `content`
-      // （`{success, path, snapshotId}` / `{success, diff, validation, snapshotId}`），
-      // 局部行补丁也没有 `content` 参数——所以读回磁盘是补丁路径唯一可靠的内容来源。
-      const content =
-        step.action === 'create_file'
-          ? ((result as { content?: string })?.content ??
-            (toolParams?.content as string | undefined) ??
-            (step.params.content as string | undefined) ??
-            write?.landedContent)
-          : write?.landedContent;
+      // 与写盘前共用同一条分派规则（见 resolveWriteActionContent）。这里补丁内容
+      // 来自读回磁盘：真实的 create_file / apply_patch 都不返回 `content`，
+      // 局部行补丁也没有 `content` 参数。
+      const content = resolveWriteActionContent(step, toolParams, {
+        patchContent: () => write?.landedContent,
+        resultContent: (result as { content?: string })?.content,
+      });
 
       if (content && path) {
         const language = detectLanguage(path);

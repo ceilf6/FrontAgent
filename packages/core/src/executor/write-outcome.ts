@@ -19,6 +19,15 @@ export interface WriteOutcomeInput {
   landedPath: string | undefined;
   /** 落盘内容；读不回时为 undefined。一次步骤只读一次，由调用方传入 */
   landedContent: string | undefined;
+  /**
+   * 本次写入之前的文件内容，取自 `collectedContext.files`；不可知时为 undefined。
+   *
+   * 围栏判据要判的是「**这次写入**引入了围栏」，而不是「文件里有围栏」。局部行
+   * 补丁只改几行，却会拿到整份落盘文件——文件别处早就存在的围栏会让一次无关的
+   * 合法编辑失败并触发回滚。undefined 时按 fail-closed 处理（`create_file` 没有
+   * 前置内容，任何围栏都必然是这次引入的）。
+   */
+  priorContent: string | undefined;
   /** 落盘路径的语言，供围栏判据判断适用性 */
   landedLanguage: string;
   /** 工具原始返回值，用于取 snapshotId 与判断工具自身是否失败 */
@@ -88,10 +97,17 @@ export function resolveWriteOutcome(input: WriteOutcomeInput): WriteOutcome {
   // syntax_validity 在 apply_patch 上已降级为不否决，所以一份写进 .ts 的围栏不会
   // 再让 postValidation 失败——但它确实是坏内容，必须自己让步骤失败并触发撤销。
   // 这也让「判失败」与「触发回滚」用同一条确定性判据，不会一个判失败、另一个不撤销。
-  const landedFenceVeto =
+  const landedVeto =
     landedContent !== undefined && input.vetoEnabled
       ? buildFenceVeto(landedContent, String(landedPath), landedLanguage)
       : { pass: true, results: [] };
+  // 补丁前就已存在围栏时，这次写入没有引入任何东西——放行，否则一次只改几行的
+  // 合法补丁会因文件别处的既有围栏被判失败并回滚。原文不可知时不放行。
+  const preExisting =
+    input.priorContent !== undefined && !landedVeto.pass
+      ? !buildFenceVeto(input.priorContent, String(landedPath), landedLanguage).pass
+      : false;
+  const landedFenceVeto = preExisting ? { pass: true, results: [] } : landedVeto;
 
   // 合并而不是替换。整体换成 landedFenceVeto 会让 postValidation 的
   // import_validity / syntax_validity 条目、以及工具自身的错误文案一起消失，

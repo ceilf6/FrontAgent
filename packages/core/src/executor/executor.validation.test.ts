@@ -1166,4 +1166,148 @@ describe('Executor write validation', () => {
       }
     });
   });
+
+  describe('post-write validation trusts only what actually landed', () => {
+    // 复用写盘前的校验结果有一个前提：落盘的就是被校验过的那份。整文件判定依赖
+    // collectedContext.files 的行数快照，而 apply_patch 成功后该 Map 不刷新——
+    // 同一计划内二次改同一文件时，工具可能只替换了前 N 行并保留尾部，落盘内容
+    // ≠ 被校验的 patch.content。这条重校验分支此前无覆盖，而它正是快照陈旧时
+    // 唯一的正确性保障。
+    //
+    // 判据刻意不用围栏：围栏是**独立**于 postValidation 的失败来源，无论走复用
+    // 还是重校验都会被抓到，用它做断言这条用例就测不到分支本身。改用只有
+    // validateCode 才产出的 import 判定——它在 apply_patch 上被降级，所以步骤照常
+    // 成功，但会出现在 validation_failed 的载荷里，那正是重校验唯一的可观测差异。
+    it('revalidates against what landed, not against what was checked', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-stale-snapshot-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const target = join(projectRoot, 'src', 'a.ts');
+        const original = 'export const a = 1;\n';
+        writeFileSync(target, original);
+        // 计划里的补丁内容不含 import；工具实际落盘的那份引了一个不存在的模块。
+        const patchContent = 'export const a = 2;\n';
+        const actuallyLanded = "import './definitely-missing.js';\nexport const a = 2;\n";
+
+        const events: AgentEvent[] = [];
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+            emitEvent: (event) => events.push(event),
+          }),
+        );
+        const callTool = vi.fn().mockImplementation(async (tool: string) => {
+          if (tool === 'apply_patch') {
+            writeFileSync(target, actuallyLanded);
+            return { success: true, snapshotId: 'snap-1' };
+          }
+          return { success: true, content: readFileSync(target, 'utf-8') };
+        });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('apply_patch', 'files');
+        executor.registerToolMapping('read_file', 'files');
+
+        const result = await executor.executeStep(
+          makeStep({
+            action: 'apply_patch',
+            tool: 'apply_patch',
+            params: {
+              path: 'src/a.ts',
+              patches: [
+                {
+                  operation: 'replace',
+                  startLine: 1,
+                  endLine: original.split('\n').length,
+                  content: patchContent,
+                },
+              ],
+            },
+          }),
+          makeExecutionContext({
+            collectedContext: { files: new Map([['src/a.ts', original]]) },
+          }),
+        );
+
+        // import 判定在 apply_patch 上被降级，所以步骤成功、文件留在磁盘上
+        expect(result.stepResult.success).toBe(true);
+        expect(readFileSync(target, 'utf-8')).toBe(actuallyLanded);
+
+        // 但遥测必须反映**落盘的那份**：复用写盘前的结论会让这条判定完全消失，
+        // 因为被校验的 patchContent 里根本没有 import。
+        const failed = events.filter((event) => event.type === 'validation_failed');
+        expect(failed).toHaveLength(1);
+        const verdicts = (failed[0] as { result: { results: Array<{ type: string }> } }).result
+          .results;
+        expect(verdicts.some((entry) => entry.type === 'import_validity')).toBe(true);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    // 围栏判据判的是「**这次写入**引入了围栏」，不是「文件里有围栏」。局部行补丁
+    // 只改几行却会拿到整份落盘文件，若不比对原文，文件别处早就存在的围栏会让一次
+    // 无关的合法编辑失败并触发回滚——回滚虽能还原，但剩余计划会被跳过。
+    it('does not veto a patch over a fence that was already in the file', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-preexisting-fence-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const target = join(projectRoot, 'src', 'a.ts');
+        // 补丁前文件里就有围栏，且是判据真的会命中的形态（行首 ```，
+        // 而不是 `// ```ts` 那种——检测用的是 /^\s*```/，注释掉的围栏根本不命中，
+        // 拿它当 fixture 会让这条用例无论有没有守卫都通过）。
+        const original = '```\nexport const a = 1;\n';
+        writeFileSync(target, original);
+        const patched = '```\nexport const a = 2;\n';
+
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+            security: { permissions: { allow: ['rollback'] } },
+          }),
+        );
+        const callTool = vi.fn().mockImplementation(async (tool: string) => {
+          if (tool === 'apply_patch') {
+            writeFileSync(target, patched);
+            return { success: true, snapshotId: 'snap-1' };
+          }
+          return { success: true, content: readFileSync(target, 'utf-8') };
+        });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('apply_patch', 'files');
+        executor.registerToolMapping('read_file', 'files');
+
+        const result = await executor.executeStep(
+          makeStep({
+            action: 'apply_patch',
+            tool: 'apply_patch',
+            params: {
+              path: 'src/a.ts',
+              // 局部行替换：只改第 2 行，写盘前算不出最终内容
+              patches: [
+                { operation: 'replace', startLine: 2, endLine: 2, content: 'export const a = 2;' },
+              ],
+            },
+          }),
+          makeExecutionContext({
+            collectedContext: { files: new Map([['src/a.ts', original]]) },
+          }),
+        );
+
+        expect(result.stepResult.success).toBe(true);
+        expect(result.needsRollback).toBe(false);
+        expect(callTool).not.toHaveBeenCalledWith('rollback', expect.anything());
+        expect(readFileSync(target, 'utf-8')).toBe(patched);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+  });
 });

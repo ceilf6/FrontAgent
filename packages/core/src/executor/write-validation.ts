@@ -165,18 +165,45 @@ export function resolveWriteContent(
     return null;
   }
 
-  // 按动作分派，不做跨动作兜底。apply_patch 写入的是 `patches`，
-  // 而 `content` 在其 params 上是可达的残留字段（计划参数原样透传、技能整体
-  // spread）。若允许它兜底，校验的就是一份**不会被写入**的内容，而真正落盘的
-  // 补丁内容一次都不过 guard——比修复前更糟。
-  const content =
-    step.action === 'create_file'
-      ? ((toolParams.content ?? step.params.content) as string | undefined)
-      : resolveFullFileReplaceContent(toolParams, context?.collectedContext.files.get(path));
+  const content = resolveWriteActionContent(step, toolParams, {
+    patchContent: () =>
+      resolveFullFileReplaceContent(toolParams, context?.collectedContext.files.get(path)),
+  });
   if (typeof content !== 'string') {
     return null;
   }
 
   const language = detectLanguage(path);
   return language ? { path, content, language } : null;
+}
+
+/**
+ * 按 action 取「这次真正会被写入的内容」。写盘前后共用同一条分派规则。
+ *
+ * 不做跨动作兜底：`apply_patch` 写入的是 `patches`，而 `content` 在它的 params
+ * 上是可达的残留字段（计划参数原样透传、技能整体 spread）。若允许它兜底，校验的
+ * 就是一份**不会被写入**的内容，而真正落盘的补丁内容一次都不过 guard——比修复前
+ * 更糟。这条不变量此前在写盘前后各实现了一遍，漏改一处不会有测试暴露，所以只留
+ * 这一份。
+ *
+ * 两侧的差别只在补丁内容从哪来：写盘前从 `patches` 推导（只有整文件 replace 可
+ * 推），写盘后直接读回磁盘（真实工具都不返回 content，局部补丁也没有 content
+ * 参数，读回是唯一可靠来源）。这一步由调用方以 `patchContent` 注入。
+ */
+export function resolveWriteActionContent(
+  step: ExecutionStep,
+  toolParams: Record<string, unknown> | undefined,
+  sources: {
+    patchContent: () => string | undefined;
+    /** 仅 create_file 使用：工具返回值里的 content，写盘后路径才有 */
+    resultContent?: string | undefined;
+  },
+): string | undefined {
+  if (step.action !== 'create_file') {
+    return sources.patchContent();
+  }
+  return (sources.resultContent ??
+    toolParams?.content ??
+    step.params.content ??
+    sources.patchContent()) as string | undefined;
 }

@@ -195,7 +195,12 @@ function collectEventDetail(details, event) {
   // 2026-07-12 报告的缺陷 3 与后续项 3 说的正是这件事。
   if (event.type === 'validation_failed') {
     details.validationFailed.push({
-      // 判失败的检查项：区分「真·内容拦截」与「纯工具失败」的唯一依据
+      // `pass` 区分「拦下了这一步」与「只记了一笔」：#402 之后被降级的判定
+      // （apply_patch 上的 syntax_validity / import_validity）仍以失败条目留在
+      // results 里并照常发事件，但步骤是成功的、blockedBy 为空。少了这一位，
+      // 「拦截数」就只能靠 blockedBy 是否为空隐式还原——那是没写下来的契约。
+      pass: event.result?.pass,
+      // 判失败的检查项：非空区分「内容判定」与「纯工具失败」（后者 results 为空）
       failedChecks: (event.result?.results ?? [])
         .filter((r) => !r.pass)
         .map((r) => ({ type: r.type, severity: r.severity, message: r.message?.slice(0, 200) })),

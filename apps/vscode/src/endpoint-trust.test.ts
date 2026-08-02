@@ -271,6 +271,25 @@ describe('fingerprintEndpoint', () => {
     expect(fingerprintEndpoint({ baseUrl: 'https://h.test/v1/' })).toBe(approved);
   });
 
+  it('does not let a field separator be moved across the field boundary', () => {
+    // `model` is free text after trimming and normalizeBaseUrl's unparseable
+    // branch keeps interior newlines, so a `\n`-joined digest let a repository
+    // shift the boundary and land on an already-approved fingerprint with a
+    // different — and this time resolvable — destination.
+    expect(
+      fingerprintEndpoint({ model: 'gpt-4', baseUrl: 'not a url\nhttps://evil.test/v1' }),
+    ).not.toBe(fingerprintEndpoint({ model: 'gpt-4\nnot a url', baseUrl: 'https://evil.test/v1' }));
+    // Same hazard between the other adjacent pair.
+    expect(fingerprintEndpoint({ provider: 'openai', model: 'a\nb' })).not.toBe(
+      fingerprintEndpoint({ provider: 'openai\na', model: 'b' }),
+    );
+    // An absent field must not collide with one that is present but empty
+    // after trimming — `?? null` is what keeps those distinct from `''`.
+    expect(fingerprintEndpoint({ provider: 'openai', model: '   ' })).toBe(
+      fingerprintEndpoint({ provider: 'openai' }),
+    );
+  });
+
   it('covers the effective endpoint, so changing the user value re-asks', () => {
     // The fingerprint is taken over what would actually be sent, not just the
     // workspace-supplied fields. Editing your own baseUrl therefore invalidates

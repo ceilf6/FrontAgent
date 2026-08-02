@@ -166,9 +166,18 @@ export function fingerprintEndpoint(endpoint: {
   model?: string;
   baseUrl?: string;
 }): string {
-  const canonical = ENDPOINT_FIELDS.map(
-    (field) => canonicalField(field, endpoint[field]) ?? '',
-  ).join('\n');
+  // JSON-encoded, not `\n`-joined. `model` is trimmed but otherwise free text,
+  // and normalizeBaseUrl's unparseable branch preserves interior newlines, so a
+  // separator that can occur inside a field lets a repository move a newline
+  // across the boundary and reach the same digest with a different endpoint:
+  // approving model `gpt-4` + baseUrl `"not a url\nhttps://evil.test/v1"` would
+  // also approve model `"gpt-4\nnot a url"` + baseUrl `https://evil.test/v1`,
+  // and the second one resolves. That silently upgrades a rejected-looking
+  // approval into a working redirect, breaking this module's one invariant:
+  // any change to any field re-asks.
+  const canonical = JSON.stringify(
+    ENDPOINT_FIELDS.map((field) => canonicalField(field, endpoint[field]) ?? null),
+  );
   return createHash('sha256').update(canonical).digest('hex').slice(0, 32);
 }
 

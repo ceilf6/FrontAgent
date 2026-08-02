@@ -124,6 +124,23 @@ describe('mcp-filesense config-root containment (issue #272)', () => {
     expect(data.factsDelta.existingFiles).not.toContain('secret.txt');
     expect(data.factsDelta.existingFiles.some((file) => file.includes('secret'))).toBe(false);
   });
+
+  it('navigate rejects a workspace writeMode passed through the tool layer', async () => {
+    const root = makeRoot();
+    writeFileSync(join(root, 'package.json'), '{}\n', 'utf-8');
+
+    // navigate 在 SecurityManager 里归类为只读工具，写盘参数必须在工具层就被拒绝，
+    // 而不是被 engine 静默忽略
+    const result = await handleFilesenseTool(
+      'filesense_navigate',
+      { paths: ['.'], writeMode: 'workspace' },
+      root,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/read-only/u);
+    expect(existsSync(join(root, 'FILES.json'))).toBe(false);
+  });
 });
 
 describe('mcp-filesense symlink containment', () => {

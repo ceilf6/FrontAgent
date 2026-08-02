@@ -77,6 +77,21 @@ async function generateQueryAnswer(
     }
   }
 
+  // 目录导航的定位结果也是证据——只是**结构证据**，不是内容证据。
+  // 不放进来的话，navigate 扫出的候选路径对回答完全不可见：任务问「路由表在哪个
+  // 文件」，导航明明返回了带评分的候选，回答却只能说「没有工作区证据」。
+  // 排在已读文件之后：候选路径的证据强度弱于真正读到的文件内容。
+  const filesenseContext = executionContext.collectedContext.filesenseContext;
+  if (filesenseContext) {
+    evidenceParts.push(
+      '\n## 目录导航结果（结构证据）\n' +
+        '以下是按意图扫描当前工作区得到的结构信息与候选路径。' +
+        '它证明这些路径**存在**及其用途推断，但**不含文件内容**——' +
+        '引用时应说明是定位结果，不要当作读过该文件。\n' +
+        truncateForPrompt(filesenseContext, 4000),
+    );
+  }
+
   if (files.length > 0) {
     evidenceParts.push('\n## 已读取文件');
     let remainingBudget = 16000;

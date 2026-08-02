@@ -52,12 +52,12 @@ Use FrontAgent when you need a frontend AI agent that can:
 
 ## Current Release Snapshot
 
-The repository is currently aligned on `frontagent@2.1.1` for both the npm CLI package and the VS Code extension.
+The repository is currently aligned on `frontagent@2.2.0` for both the npm CLI package and the VS Code extension.
 
 - Runtime requirements: Node.js `>=20.0.0`; VS Code extension engine `^1.120.0`.
-- Build output: `pnpm build` builds the monorepo, bundles the CLI, syncs the VS Code version, and packages `apps/vscode/frontagent-2.1.1.vsix`.
+- Build output: `pnpm build` builds the monorepo, bundles the CLI, syncs the VS Code version, and packages `apps/vscode/frontagent-2.2.0.vsix`.
 - Quality gates: `pnpm quality:predev`, `pnpm quality:precommit`, `pnpm quality:ci`, and `pnpm quality:local` combine contract checks, linting, typechecking, tests, workflow tests, and build verification.
-- v2.1.1 focus: smaller agent/executor/context/Filesense/memory/runtime/webview modules, hardened VS Code webview nonce generation, restored GitNexus contract checks, and expanded focused tests.
+- v2.2.0 focus: the Electron desktop client, headless non-interactive CLI mode, session resume, lifecycle hooks, declarative permission rules, context zone budgets, the mcp-web-fetch adapter, and CLI/guard correctness fixes.
 
 ## Three Ways to Use FrontAgent
 
@@ -465,6 +465,10 @@ export FRONTAGENT_RAG_WEAVIATE_TIMEOUT_MS="30000"
 export FRONTAGENT_FILESENSE_ENABLED="true"
 export FRONTAGENT_FILESENSE_OUTPUT="summary"       # summary | candidates | verbose
 export FRONTAGENT_FILESENSE_WRITE_MODE="cache"     # cache | workspace | none
+                                                   # Currently a no-op: navigate is read-only, so `cache`
+                                                   # and `none` behave identically and `workspace` is
+                                                   # downgraded during planning. No filesense tool reads
+                                                   # this value; filesense_sync always writes indexes.
 export FRONTAGENT_FILESENSE_MAX_ENTRIES="300"
 export FRONTAGENT_FILESENSE_MAX_BYTES="131072"
 export FRONTAGENT_FILESENSE_TIMEOUT_MS="3000"
@@ -1297,6 +1301,41 @@ pnpm clean
 - [MuseAI](https://github.com/yejiming/MuseAI) - Local AI companion, text adventure, and interactive fiction app.
 - [RedBox](https://github.com/Jamailar/RedBox) - Local AI creation workspace for Xiaohongshu creators.
 - [1flowbase](https://github.com/taichuy/1flowbase) - Virtual model gateway for publishing multi-model workflows as OpenAI/Claude-compatible endpoints, with trace, token, latency, and cost visibility.
+
+## Ablation Benchmark (reproducible)
+
+A frozen 30-task benchmark measures whether SDD constraints and the hallucination guard actually improve first-pass success. It runs on an isolated fixture project with machine-checkable acceptance (`tsc --noEmit`, `vitest`, file assertions), two arms, and resume-on-interrupt.
+
+```bash
+pnpm build
+pnpm --dir benchmarks/eval/fixture install                     # fixture deps (required)
+node benchmarks/eval/run-eval.mjs --arm full --tasks all       # SDD on
+node benchmarks/eval/run-eval.mjs --arm ablation --tasks all   # SDD off
+node benchmarks/eval/report.mjs benchmarks/eval/out
+```
+
+A separate arm ablates **filesense** alone — it differs from `full` in exactly one
+field, so unlike `full` vs `ablation` (which leaves filesense enabled in both) its
+difference is attributable to navigation. It is meant to be run against the deep
+fixture: on the flat one, filesense scans 17 of the repository's 18 entries and
+never truncates, so budgeted navigation and a plain `ls -R` are indistinguishable
+by construction.
+
+```bash
+# One-time: install fixture dependencies and materialise the generated module tree.
+# The runner refuses to start without node_modules — a dangling symlink would
+# otherwise turn every typecheck into a FAIL and record an arm of noise as data.
+pnpm --dir benchmarks/eval/fixture-deep install
+node benchmarks/eval/fixture-deep/generate.mjs
+
+node benchmarks/eval/run-eval.mjs --arm full          --fixture deep --tasks all
+node benchmarks/eval/run-eval.mjs --arm no-filesense  --fixture deep --tasks all
+node benchmarks/eval/report-filesense.mjs benchmarks/eval/out deep
+```
+
+Latest results: [`benchmarks/results/`](benchmarks/results/). **The current findings are negative and actionable**: SDD showed no measurable effect on first-pass rate, and the hallucination guard recorded zero interceptions while syntactically invalid files still landed on disk. Three root causes are documented in the report and tracked as issues.
+
+That zero-interception count has since been qualified: [`2026-07-31-validation-telemetry.md`](benchmarks/results/2026-07-31-validation-telemetry.md) shows the event had no emit site anywhere in the repo at the time, so it could not have been anything but zero. A deterministic probe (committed alongside the report, no LLM spend) shows the check was running and failing all along — it just emitted nothing and left the file on disk.
 
 ## Download Stats (verifiable)
 

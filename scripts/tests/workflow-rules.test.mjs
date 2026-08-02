@@ -526,7 +526,10 @@ test('Claude Harness workflow has a single portable entrypoint', () => {
 test('repo guard remains advisory and training-camp workflows are absent', () => {
   const repoGuard = readFileSync('.github/workflows/repo-guard.yml', 'utf8');
 
-  assert.match(repoGuard, /runs-on:\s+ubuntu-latest/u);
+  assert.match(
+    repoGuard,
+    /runs-on:\s+(?:ubuntu-latest|\$\{\{\s*vars\.REPO_GUARD_RUNNER\s*\|\|\s*'ubuntu-latest'\s*\}\})/u,
+  );
   assert.doesNotMatch(repoGuard, /repo-guard-intranet/u);
   assert.doesNotMatch(repoGuard, /auto-merge|确认合并|认领|score:/u);
   assert.throws(() => readFileSync('.github/workflows/pr-auto-merge.yml', 'utf8'));
@@ -547,6 +550,74 @@ test('agent prompts describe the OSS Harness review loop', () => {
     assert.match(prompt, /GitHub Actions, Contract Guard, Repo Guard, Codex, Copilot/u);
     assert.match(prompt, /maintainers decide merge readiness/u);
   }
+});
+
+test('README documents the reproducible ablation benchmark and its negative findings', () => {
+  const readme = readFileSync('README.md', 'utf8');
+
+  // The benchmark is discoverable and reproducible from the README.
+  assert.match(readme, /## Ablation Benchmark \(reproducible\)/u);
+  assert.match(readme, /benchmarks\/eval\/run-eval\.mjs --arm full/u);
+  assert.match(readme, /benchmarks\/eval\/run-eval\.mjs --arm ablation/u);
+  assert.match(readme, /benchmarks\/eval\/report\.mjs/u);
+
+  // Findings are stated honestly rather than advertised as a win.
+  assert.match(readme, /negative and actionable/u);
+  assert.match(readme, /zero interceptions/u);
+
+  // The zero-interception count was later shown to be an observability artifact.
+  // Stating it unqualified at the top level reproduces the very misreading the
+  // follow-up report corrects, so the qualifier must travel with the claim.
+  assert.match(readme, /2026-07-31-validation-telemetry\.md/u);
+  assert.match(readme, /no emit site/u);
+});
+
+test('README documents filesense writeMode as currently having no effect', () => {
+  // navigate is a read-only tool and filesense_sync does not accept the parameter,
+  // so no value of this variable changes behaviour today. Documenting it without
+  // that qualifier is what made the setting look usable while silently costing
+  // the whole navigation phase. The assertion must be anchored to the variable
+  // itself — a bare `/navigate/` match would pass on the pre-change README.
+  const cases = [
+    ['README.md', /FRONTAGENT_FILESENSE_WRITE_MODE[\s\S]{0,400}?no-op/u],
+    ['docs/README-CN.md', /FRONTAGENT_FILESENSE_WRITE_MODE[\s\S]{0,400}?no-op/u],
+  ];
+  for (const [path, pattern] of cases) {
+    assert.match(readFileSync(path, 'utf8'), pattern);
+  }
+});
+
+test('filesense navigate schema does not offer writeMode values the engine rejects', () => {
+  // The enum is a public contract for external MCP clients and for the model's
+  // tool-argument generation. Re-adding `workspace` would hand them a value that
+  // is guaranteed to fail, and nothing else in the suite would notice.
+  const tools = readFileSync('packages/mcp-filesense/src/tools.ts', 'utf8');
+  const navigateSchema = tools.slice(tools.indexOf('export const filesenseNavigateSchema'));
+  const writeModeBlock = navigateSchema.slice(
+    navigateSchema.indexOf('writeMode:'),
+    navigateSchema.indexOf('writeMode:') + 400,
+  );
+  // Anchor on the enum line itself: the surrounding comment legitimately names
+  // the removed value, so a block-wide `doesNotMatch` would fail on the comment.
+  const enumLine = writeModeBlock.match(/enum:.*$/mu)?.[0] ?? '';
+  assert.match(enumLine, /\['cache',\s*'none'\]/u);
+  assert.doesNotMatch(enumLine, /workspace/u);
+});
+
+test('README documents the filesense ablation arm and its deep-fixture prerequisite', () => {
+  const readme = readFileSync('README.md', 'utf8');
+
+  // The arm is useless without the deep fixture (on the flat one filesense scans
+  // essentially the whole repo and never truncates), and the fixture does not
+  // exist until the generator has been run. Documenting the arm without both
+  // facts hands a reader a command that silently measures nothing.
+  assert.match(readme, /--arm no-filesense/u);
+  assert.match(readme, /--fixture deep/u);
+  assert.match(readme, /fixture-deep\/generate\.mjs/u);
+  assert.match(readme, /report-filesense\.mjs/u);
+  // The runner now hard-fails without fixture node_modules, so a reader following
+  // the block verbatim stops at the second command unless install is documented.
+  assert.match(readme, /pnpm --dir benchmarks\/eval\/fixture-deep install/u);
 });
 
 test('README exposes the verifiable npm downloads counter with its marker block', () => {

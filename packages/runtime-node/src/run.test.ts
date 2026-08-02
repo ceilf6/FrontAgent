@@ -366,4 +366,35 @@ describe('runFrontAgentTask orchestration', () => {
     const { MemoryMCPClient } = await import('./mcp-clients.js');
     expect(MemoryMCPClient).not.toHaveBeenCalled();
   });
+
+  it('passes hallucinationGuard config through to the agent (ablation seam)', async () => {
+    const guard = {
+      enabled: false,
+      checks: {
+        fileExistence: false,
+        importValidity: false,
+        syntaxValidity: false,
+        sddCompliance: false,
+      },
+    };
+    let captured: AgentConfig | undefined;
+    await runWith(baseOptions({ hallucinationGuard: guard }), (agent) => {
+      captured = agent.config;
+      agent.emit({ type: 'task_completed', result: SUCCESS_RESULT } as AgentEvent);
+      for (const d of pendingHookDeferreds) d.resolve();
+      agent.resolveExecute(SUCCESS_RESULT);
+    });
+    expect(captured?.hallucinationGuard).toEqual(guard);
+  });
+
+  it('leaves hallucinationGuard undefined when the caller omits it', async () => {
+    let captured: AgentConfig | undefined;
+    await runWith(baseOptions(), (agent) => {
+      captured = agent.config;
+      agent.emit({ type: 'task_completed', result: SUCCESS_RESULT } as AgentEvent);
+      for (const d of pendingHookDeferreds) d.resolve();
+      agent.resolveExecute(SUCCESS_RESULT);
+    });
+    expect(captured?.hallucinationGuard).toBeUndefined();
+  });
 });

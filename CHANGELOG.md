@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **ci**: Repo Guard can review fork PRs again. `actions/checkout` refuses fork checkouts under `pull_request_target` unless `allow-unsafe-pr-checkout` is set, and it does not read the workflow's own actor allowlist — so every fork PR failed at checkout before the review step ran. The opt-in is set explicitly and scoped by event to `pull_request_target` only, matching the path its justification covers: that path is gated on the PR author being a repo branch or a named allowlist entry. The `issue_comment` branch of the same step gates on the *commenter* rather than the PR author, and stays opted out, so a future widening of the action's guard cannot silently admit it. (#437)
 - **mcp-filesense**: `filesense_navigate` no longer accepts `writeMode: 'workspace'` — the value is removed from the tool schema and from the exported `NavigateOptions` type, and the engine rejects it at runtime for callers that are not type-checked. navigate is classified as a read-only tool by the executor's `SecurityManager`, so honouring a workspace write there would hand an approval-exempt tool a write primitive. The planner downgrades a configured `workspace` to `none` (warning once) so the navigation phase is not silently dropped. Note that `FRONTAGENT_FILESENSE_WRITE_MODE` currently has no observable effect at any value: `filesense_sync` does not read it and always writes indexes (#403).
 
 ## [2.2.0] - 2026-07-30

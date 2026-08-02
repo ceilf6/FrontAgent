@@ -537,6 +537,47 @@ test('repo guard remains advisory and training-camp workflows are absent', () =>
   assert.throws(() => readFileSync('docs/progress.json', 'utf8'));
 });
 
+// actions/checkout refuses fork checkout under pull_request_target unless this
+// input is set, and it does not read the job-level allowlist. Without it Repo
+// Guard fails on every fork PR before the review step runs (#437).
+test('repo guard can check out fork PRs from allowlisted contributors', () => {
+  const repoGuard = readFileSync('.github/workflows/repo-guard.yml', 'utf8');
+  // Anchor to the checkout step's own block: a file-wide match would let an
+  // unrelated future checkout step satisfy these on the wrong step. Terminate
+  // on the next step's indentation rather than on a following `- uses:`, so
+  // rewriting the sibling step to `- name:` form does not make this fail with
+  // a misleading "no checkout step" message.
+  const checkoutStep = /- uses: actions\/checkout@[\s\S]*?(?=\n {6}- |$)/u.exec(repoGuard)?.[0];
+
+  assert.ok(checkoutStep, 'repo-guard has no actions/checkout step');
+  // Scoped to pull_request_target, not blanket-true: the trust argument for the
+  // opt-in only covers that path, and the issue_comment branch of the same step
+  // gates on the commenter instead of the PR author.
+  assert.match(
+    checkoutStep,
+    /allow-unsafe-pr-checkout:\s*\$\{\{\s*github\.event_name == 'pull_request_target'\s*\}\}/u,
+  );
+  assert.match(checkoutStep, /persist-credentials:\s*false/u);
+  // The safety argument depends on the fork path resolving to a fixed head SHA.
+  // Match the ternary branch, not the bare string: a branch ref or
+  // refs/pull/{n}/merge there would open a TOCTOU gap between the commit the
+  // gate admitted and the content actually checked out.
+  assert.match(
+    checkoutStep,
+    /github\.event_name == 'pull_request_target' && github\.event\.pull_request\.head\.sha/u,
+  );
+
+  // The opt-in is only defensible while the pull_request_target path stays
+  // gated on the PR author. Match the whole condition group in one pass: the
+  // allowlist names also appear in the issues and issue_comment gates, and
+  // asserting the operands separately stays green if the
+  // `pull_request_target &&` wrapper is dropped or the group is widened.
+  assert.match(
+    repoGuard,
+    /github\.event_name == 'pull_request_target' &&\s*\(\s*github\.event\.pull_request\.head\.repo\.full_name == github\.repository \|\|\s*contains\(fromJSON\([^)]*\), github\.event\.pull_request\.user\.login\)\s*\)/u,
+  );
+});
+
 test('agent prompts describe the OSS Harness review loop', () => {
   for (const file of ['AGENTS.md', 'CLAUDE.md']) {
     const prompt = readFileSync(file, 'utf8');

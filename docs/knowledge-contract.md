@@ -58,6 +58,13 @@ Do not use placeholders such as `-`, `none`, `n/a`, `todo`, or `tbd` for critica
 
 For non-critical changes, GitNexus is advisory.
 
+Contract Guard skips PRs authored by dependabot. It requires a `scripts/tests/`
+contract test in the same PR and a structured impact summary in the PR body, and
+dependabot supplies neither, so every bump touching a critical path would fail it
+permanently. Those PRs are gated by CODEOWNERS review and by CI instead. The skip
+is keyed on the PR author, so it also covers commits a maintainer pushes to a
+dependabot branch — review such a push as if the gate had not run. (#443)
+
 ## Versioned Index Files
 
 FrontAgent keeps `.gitnexus/lbug` and `.gitnexus/meta.json` in the repository as a seed index

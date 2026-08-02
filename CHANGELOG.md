@@ -4,6 +4,64 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **vscode**: A repository can no longer redirect FrontAgent LLM requests by committing `frontagent.provider` / `frontagent.model` / `frontagent.baseUrl` in `.vscode/settings.json`. Endpoint settings are now resolved per scope: workspace-supplied values are withheld until the user explicitly approves the exact effective endpoint (approval is bound to a digest of the workspace folder plus provider/model/base URL and is re-asked when any of them changes), and they are ignored outright when the workspace is not trusted. `frontagent.apiKey` is `machine`-scoped and honoured only from User Settings. `FrontAgent: Configure` and the sidebar Configure form now write to User Settings instead of Workspace settings, and both prefill from user scope, so accepting either dialog cannot promote a repository-supplied endpoint into User Settings. Repository-supplied values are flattened and truncated before being rendered in the confirmation dialog so they cannot forge its text. A dismissed endpoint prompt is remembered for the session instead of re-asking on every message. Because the RAG reranker and OpenAI embedding clients fall back to the resolved LLM base URL and key, those request paths are covered by the same gate. Thanks to @glmgbj233 for the detailed report. (#421)
+
+### Added
+
+- **vscode**: `FrontAgent: Reset Workspace Endpoint Approval` command to revoke a previously approved workspace endpoint.
+- **mcp-web-fetch**: Exposed optional `allowed_domains` and `blocked_domains` on the `web_fetch` MCP tool schema, mapped to the engine's existing `allowHosts`/`denyHosts` host filters, and threaded them through the planner's `STEP_PARAMS_SCHEMA` so the agent can actually pass domain restrictions end-to-end (previously stripped before reaching the handler). Matching is by exact hostname (subdomains must be listed individually; empty arrays disable the filter). Enables least-privilege fetches without changing SSRF defaults.
+
+### Changed
+
+- **ci**: Contract Guard now skips dependabot-authored PRs. The gate requires two things dependabot structurally cannot supply — a `scripts/tests/` contract test in the same PR whenever a critical file changes, and a structured GitNexus impact summary in the PR body — so every dependency bump touching `.github/workflows/` failed it permanently. Those bumps are still gated by CODEOWNERS review and by CI, which is the only required status check. The skip is keyed on the PR author rather than `github.actor`, so it survives a maintainer running update-branch or pushing to the dependabot branch. (#443)
+- **ci**: Repo Guard can review fork PRs again. `actions/checkout` refuses fork checkouts under `pull_request_target` unless `allow-unsafe-pr-checkout` is set, and it does not read the workflow's own actor allowlist — so every fork PR failed at checkout before the review step ran. The opt-in is set explicitly and scoped by event to `pull_request_target` only, matching the path its justification covers: that path is gated on the PR author being a repo branch or a named allowlist entry. The `issue_comment` branch of the same step gates on the *commenter* rather than the PR author, and stays opted out, so a future widening of the action's guard cannot silently admit it. (#437)
+- **mcp-filesense**: `filesense_navigate` no longer accepts `writeMode: 'workspace'` — the value is removed from the tool schema and from the exported `NavigateOptions` type, and the engine rejects it at runtime for callers that are not type-checked. navigate is classified as a read-only tool by the executor's `SecurityManager`, so honouring a workspace write there would hand an approval-exempt tool a write primitive. The planner downgrades a configured `workspace` to `none` (warning once) so the navigation phase is not silently dropped. Note that `FRONTAGENT_FILESENSE_WRITE_MODE` currently has no observable effect at any value: `filesense_sync` does not read it and always writes indexes (#403).
+
+### Fixed
+
+- **guard**: `hallucinationGuard.enabled: false` now disables every `HallucinationGuard` check on the agent path while preserving project-root containment. It does not reach the executor's own filesystem-facts grounding, which blocks an `apply_patch` against a known-nonexistent path regardless of guard config — so an ablation arm that sets this flag is not running with *all* interception off. Disabling `fileExistence` alone now also keeps the containment result on `validate()`, where that path previously produced none. (#400)
+- **tooling**: `pnpm lint` works again from inside a worktree under `.claude/worktrees/`. The exclusion added for #439 was `**/`-prefixed, and Biome matches the traversal root by absolute path — so when Biome ran *from* such a worktree the root matched its own exclusion and `biome check .` reported "Checked 0 files" and exited non-zero, taking the pre-commit and pre-push hooks with it. The pattern is now anchored to the project root, which still keeps Biome out of a nested checkout at the root (the #439 failure). `.gitignore` deliberately keeps `**/`: git has no equivalent reverse failure, so it can afford the wider match. The two are therefore not equivalent protection — a worktree under a subdirectory's `.claude/` is git-ignored but *not* excluded from Biome, so a root `biome check .` still hits the #439 abort there; move such a worktree to the repo-root `.claude/worktrees/`. Both directions of the root case are pinned by a test that runs the real binary against a synthetic project root. (#444)
+- **tooling**: A git worktree under `.claude/worktrees/` — Claude Code's default location — no longer breaks the local quality gates, which also made the pre-commit and pre-push hooks unusable without `--no-verify`. The worktree is a full nested checkout, and it broke two gates independently: its own `biome.json` made root `biome check .` abort with a nested-root-configuration error before checking any file, and `git ls-files --others` reported it as a single trailing-slash entry — the way it reports an untracked *nested repository*, rather than recursing as it does for an ordinary directory — which `listPublicClaudeAssets()` then read with `readFileSync`, throwing `EISDIR`. Fixed on both levers, since Biome sets no `vcs.useIgnoreFile` and never consults `.gitignore`: a `**/.claude/worktrees/` ignore rule plus a matching `biome.json` `includes` exclusion. Directory entries are also dropped at the point where assets are read, rather than inside the listing helper, so a stray nested repository elsewhere under `.claude/` still trips the public-prefix and single-entrypoint assertions instead of being silently skipped — while no longer aborting the suite with `EISDIR`. (#439)
+
+## [2.2.0] - 2026-07-30
+
+### Added
+
+- **desktop**: New Electron desktop client — typed IPC contract with execution reducer, Task Console and Settings renderer (React + Vite), main-process runtime bridge with settings store, IPC failure degraded states, accessibility semantics (ARIA live regions, focus-visible, reduced-motion), and electron-builder packaging that publishes multi-platform zip archives to GitHub Releases.
+- **cli/headless**: Non-interactive headless mode with a JSON output contract — validated `--output`, artifacts and security denials exposed in the payload, stdout writes intercepted during JSON runs, and top-level error classification.
+- **core/session**: Session resume — full step schema, order-independent resume unlock, cross-step file context hydration, and session records validated against a schema on load.
+- **runtime/hooks**: Lifecycle hooks — project hooks gated behind explicit opt-in, hardened hook plumbing, per-tool outcome observation in postToolUse, and log-callback failures isolated from hook policy decisions.
+- **security/permissions**: Declarative permission rules with in-session derived allow rules (literal wildcards escaped; bare tool rules never derived from always-allow approvals).
+- **core/context**: Context zone budgets — final serialized prompt budgeted including the fallback path, with guaranteed budget postconditions and a single compaction summary.
+- **core/instructions**: AGENTS.md project instruction loading with byte-capped instruction file reads.
+- **mcp-web-fetch**: New `@frontagent/mcp-web-fetch` adapter package, wired into the agent registry and planner.
+- **prompts**: Codegen and planner prompt disciplines — external knowledge injection, security-engineering and code-minimalism disciplines, and a security review dimension in the code-quality sub-agent.
+- **benchmarks/eval**: Reproducible SDD ablation evaluation — frozen 30-task set with a typecheck-clean fixture project, two-arm orchestrator with resume support, machine-checkable acceptance, and a published results report with reproduction guide.
+- **docs**: Verifiable npm downloads counter in the README with daily refresh; desktop client documentation.
+
+### Fixed
+
+- **cli**: Global bin invocations (`fa` via npm/pnpm/homebrew symlinks) no longer exit silently — the direct-entry guard resolves the symlinked argv path before comparing module URLs. (#396)
+- **guard**: `hallucinationGuard.checks` is honored on the executor validation path (`validateFilePath` / `validateCode`), while project-root containment stays enforced even when `fileExistence` is disabled. (#386)
+- **core/llm**: Migrated to the AI SDK v5 line (clears GHSA-rwvc-j5jr-mgvh) and pinned the OpenAI provider to Chat Completions for OpenAI-compatible base URLs.
+- **planner**: `web_fetch` actions are preserved in generated plans.
+- **agent**: Dependency recovery uses the project's package manager.
+- **desktop**: Default-workspace setting takes effect, telemetry log only auto-scrolls at the bottom, demo content removed from TaskComposer initial values, successful settings saves announced to assistive tech.
+- **runtime-node**: Session ids constrained to the sessions directory with atomic writes; real taskId carried on failed taskComplete hooks; win32 process-tree kill.
+- **workflow**: Workflow-rules gate accepts the vars-based self-hosted Repo Guard runner, keeping pre-commit/pre-push hooks green on clean checkouts. (#397)
+
+### Changed
+
+- **ci**: Repo Guard runs on a self-hosted Claude Code engine with allowlisted fork PR actors via `pull_request_target`; catch-all CODEOWNERS rule requires owner review on every PR; OpenRouter provider order passed through to Repo Guard.
+- **deps**: ts-morph upgraded to ^28; AI SDK moved to the v5 line.
+
+### Tests
+
+- CLI entry-guard symlink coverage; guard switch-independence and containment-under-disabled coverage; discriminating executor read_file coverage.
+- Runtime run orchestration and shutdown ordering; two-phase plan generation; step callback contracts; executor skills; semantic boundary detection across languages.
+
 ## [2.1.1] - 2026-06-09
 
 ### Changed

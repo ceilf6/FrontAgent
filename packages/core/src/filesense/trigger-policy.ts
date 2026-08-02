@@ -128,9 +128,34 @@ function taskMentionedFocusDirs(task: AgentTask): string[] {
   return FOCUS_DIRS.filter((dir) => new RegExp(`(^|[^a-z0-9_-])${dir}([^a-z0-9_-]|$)`).test(text));
 }
 
+/**
+ * 合并「任务文本里提到的目录名」与「计划步骤里的真实目录」。
+ *
+ * 提到的名字是**裸名**（`hooks` / `components` / `api`），不是路径，此前它们排在
+ * 计划推导出的真实目录**前面**。engine 对不存在的路径只是跳过并记 warning
+ * （已实测），所以不会毁掉整次扫描——但 `paths` 上限是 5，一个不解析的名字
+ * 就白占一个名额，把真正该扫的目录挤出预算。实测
+ * `deep-create-checkout-hook` 的 `paths: ["hooks", "src/features/checkout",
+ * "src/features/checkout/hooks"]` 即为此形（issue #420）。
+ *
+ * 现在：① 计划推导出的真实目录排前面——那是即将写入的位置，证据强度高于
+ * 从散文里捞到的名字；② 额外补上拼接变体（`src/features/checkout` + `hooks`
+ * → `src/features/checkout/hooks`），这才是裸名真正想表达的位置；
+ * ③ 裸名本身排最后，仍保留（在根下确有同名目录的仓库里它是对的）。
+ */
 function mergeFocusDirs(task: AgentTask, dirs: string[], limit = 5): string[] {
   const mentioned = taskMentionedFocusDirs(task);
-  return uniqueDirs([...mentioned, ...dirs], limit);
+  const realDirs = uniqueDirs(dirs, limit);
+
+  const derived: string[] = [];
+  for (const base of realDirs) {
+    if (base === '.') continue;
+    for (const name of mentioned) {
+      derived.push(`${base}/${name}`);
+    }
+  }
+
+  return uniqueDirs([...realDirs, ...derived, ...mentioned], limit);
 }
 
 function taskMentionsFreshnessNeed(task: AgentTask): boolean {

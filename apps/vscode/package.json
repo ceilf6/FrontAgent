@@ -2,7 +2,7 @@
   "name": "frontagent",
   "displayName": "FrontAgent",
   "description": "Chat with FrontAgent from a VS Code sidebar.",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "publisher": "ceilf6",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -35,7 +35,8 @@
     "onCommand:frontagent.validateSdd",
     "onCommand:frontagent.openRunLog",
     "onCommand:frontagent.showLogs",
-    "onCommand:frontagent.configure"
+    "onCommand:frontagent.configure",
+    "onCommand:frontagent.resetEndpointApproval"
   ],
   "contributes": {
     "viewsContainers": {
@@ -96,6 +97,11 @@
         "command": "frontagent.configure",
         "title": "FrontAgent: Configure",
         "category": "FrontAgent"
+      },
+      {
+        "command": "frontagent.resetEndpointApproval",
+        "title": "FrontAgent: Reset Workspace Endpoint Approval",
+        "category": "FrontAgent"
       }
     ],
     "menus": {
@@ -140,22 +146,23 @@
             "openai"
           ],
           "default": "",
-          "description": "LLM provider used by FrontAgent. Leave empty to read PROVIDER from the environment."
+          "markdownDescription": "LLM provider used by FrontAgent. Leave empty to read `PROVIDER` from the environment. A value set in workspace settings requires explicit confirmation before the first request, because it selects the host that receives your API key."
         },
         "frontagent.model": {
           "type": "string",
           "default": "",
-          "description": "LLM model name. Leave empty to read MODEL from the environment."
+          "markdownDescription": "LLM model name. Leave empty to read `MODEL` from the environment. A value set in workspace settings requires explicit confirmation before the first request."
         },
         "frontagent.baseUrl": {
           "type": "string",
           "default": "",
-          "description": "OpenAI/Anthropic-compatible API base URL. Leave empty to read provider-specific env vars or BASE_URL."
+          "markdownDescription": "OpenAI/Anthropic-compatible API base URL. Leave empty to read provider-specific env vars or `BASE_URL`. A value set in workspace settings requires explicit confirmation before the first request, because it selects the host that receives your API key and task context."
         },
         "frontagent.apiKey": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Optional API key fallback. Prefer `FrontAgent: Configure` or the sidebar Configure form because they store keys in VS Code SecretStorage. Leave empty to read provider-specific env vars or `API_KEY`."
+          "scope": "machine",
+          "markdownDescription": "Optional API key fallback, honoured only from User Settings. Prefer `FrontAgent: Configure` or the sidebar Configure form because they store keys in VS Code SecretStorage. Leave empty to read provider-specific env vars or `API_KEY`."
         },
         "frontagent.maxTokens": {
           "type": "number",

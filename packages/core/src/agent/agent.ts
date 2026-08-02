@@ -93,6 +93,7 @@ export class FrontAgent {
     this.hallucinationGuard = new HallucinationGuard({
       projectRoot: config.projectRoot,
       sddConfig: this.sddConfig,
+      enabled: config.hallucinationGuard?.enabled,
       enabledChecks: config.hallucinationGuard?.checks,
     });
 
@@ -114,6 +115,11 @@ export class FrontAgent {
       onPersistAllowRule: config.security?.onPersistAllowRule,
       onSecurityDecision: (decision) => {
         this.emit({ type: 'security_decision', decision });
+      },
+      // 执行器的校验事件经此汇入 agent 事件流；没有这条接线，
+      // 「校验是否拦截」在遥测层不可观测（issue #388）
+      emitEvent: (event) => {
+        this.emit(event);
       },
       executionEngine: config.execution?.engine,
       langGraph: config.execution?.langGraph,
@@ -170,8 +176,44 @@ export class FrontAgent {
     const codeQualityConfig = config.subAgents?.codeQualityEvaluator;
     const enableCodeQualitySubAgent = codeQualityConfig?.enabled ?? true;
     if (enableCodeQualitySubAgent) {
-      const isolationMode = codeQualityConfig?.isolationMode ?? 'process';
+      // 保留「是否显式指定」：归一后无法区分「调用方为隔离性显式要了 process」
+      // 与「取了默认值」，而前者被静默改写的代价高得多。
+      const isolationExplicit = codeQualityConfig?.isolationMode !== undefined;
+      const requestedIsolationMode = codeQualityConfig?.isolationMode ?? 'process';
       const enableLLMReview = codeQualityConfig?.enableLLMReview ?? true;
+
+      // 注入的 backend 是一组函数，随 JSON 越不过进程边界：worker 会静默丢掉它、
+      // 改用 provider 直连，调用方指定的路由意图被违背且 LLM 评审静默退化为规则评审。
+      // 故有 backend 时降级为 in-process 隔离——该分支直接复用 this.llmService。
+      const backendBlocksProcessIsolation = Boolean(config.llm?.backend) && enableLLMReview;
+      const isolationMode: NonNullable<
+        NonNullable<AgentConfig['subAgents']>['codeQualityEvaluator']
+      >['isolationMode'] =
+        requestedIsolationMode === 'process' && backendBlocksProcessIsolation
+          ? 'in_memory'
+          : requestedIsolationMode;
+
+      // in_memory 分支没有进程边界可杀，上界只能靠进程内 race。
+      // 默认值只在这里出现——`CodeQualitySubAgent` 自身缺省不设上界，
+      // 否则 worker 会继承一份默认上界并抢在父进程 SIGKILL 之前静默降级。
+      const inMemoryReviewTimeoutMs = codeQualityConfig?.processTimeoutMs ?? 120000;
+
+      if (isolationMode !== requestedIsolationMode) {
+        // 批处理调用方通常不开 debug，故不走 debugWarn。注意 logger 仍受
+        // FA_LOG_LEVEL 控制——silent/error 下这条看不到，所以显式指定被改写时升到 error。
+        const notice =
+          `[FrontAgent] codeQualityEvaluator: custom llm.backend cannot cross a process boundary; ` +
+          `falling back to in_memory isolation so the injected backend is honored. ` +
+          `Only the LLM review call is time-bounded (${inMemoryReviewTimeoutMs}ms, via an in-process race); ` +
+          `the rule scan is synchronous and a race cannot preempt it, so the worker's SIGKILL and ` +
+          `output byte cap no longer bound pathological regexes, OOM, or a crash.`;
+        if (isolationExplicit) {
+          // 调用方明确要了进程隔离却拿到进程内执行——这不是默认值调整，是契约被推翻
+          logger.error(notice);
+        } else {
+          logger.warn(notice);
+        }
+      }
 
       if (isolationMode === 'process') {
         this.codeQualitySubAgent = new ProcessIsolatedCodeQualitySubAgent({
@@ -189,6 +231,7 @@ export class FrontAgent {
           enableRuleFallback: codeQualityConfig?.enableRuleFallback ?? true,
           maxFilesForLLM: codeQualityConfig?.maxFilesForLLM,
           maxCharsPerFileForLLM: codeQualityConfig?.maxCharsPerFileForLLM,
+          reviewTimeoutMs: inMemoryReviewTimeoutMs,
           debug: config.debug ?? false,
         });
       }
@@ -751,6 +794,8 @@ export class FrontAgent {
             : failedSteps.map((s) => s.result?.error).join('; '),
         duration: Date.now() - startTime,
         validations,
+        // 无条件带出：降级过的计划不该和正常计划长得一样
+        plannerFallbackReason: this.lastLlmFailureError,
       };
 
       this.emitStatus('任务执行完成', '准备输出结果');

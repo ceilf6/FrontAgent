@@ -1,0 +1,28 @@
+node_modules
+
+# 由 generate.mjs 产出的噪音模块树——不进仓库，避免几百个文件的 diff。
+# 任务真正要动的手写锚点在下面逐条豁免（git 不会递归进被忽略的目录，
+# 所以每一层父目录都要先取消忽略，再忽略其内容）。
+src/features/*
+src/entities/*
+
+!src/features/checkout/
+src/features/checkout/*
+!src/features/checkout/lib/
+src/features/checkout/lib/*
+!src/features/checkout/lib/computeTotal.ts
+!src/features/checkout/lib/computeTotal.test.ts
+
+!src/features/cart/
+src/features/cart/*
+!src/features/cart/lib/
+src/features/cart/lib/*
+!src/features/cart/lib/mergeLines.ts
+!src/features/cart/lib/mergeLines.test.ts
+
+!src/features/shipping/
+src/features/shipping/*
+!src/features/shipping/lib/
+src/features/shipping/lib/*
+!src/features/shipping/lib/estimateEta.ts
+!src/features/shipping/lib/estimateEta.test.ts

@@ -4,6 +4,44 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **guard**：`hallucinationGuard.enabled: false` 现在会关闭 agent 路径上的所有 `HallucinationGuard` 检查，同时保留项目根目录包含性的安全边界。它管不到执行器自带的文件系统事实 grounding——后者在 `apply_patch` 命中已知不存在路径时照样拦截，与 guard 配置无关，因此设了这个开关的消融臂并不等于「所有拦截都关掉了」。另外，单独关闭 `fileExistence` 时 `validate()` 现在也会保留越界包含性判定，此前这条路径不产出任何结果。（#400）
+
+## [2.2.0] - 2026-07-30
+
+### 新增
+- **desktop**：全新 Electron 桌面客户端——类型化 IPC 契约与执行 reducer、Task Console 与设置面板（React + Vite）、主进程 runtime bridge 与设置存储、IPC 故障降级态、无障碍语义（ARIA live region、focus-visible、reduced-motion），并通过 electron-builder 打包多平台 zip 附到 GitHub Releases。
+- **cli/headless**：非交互 headless 模式与 JSON 输出契约——校验 `--output`、payload 暴露 artifacts 与安全拒绝记录、JSON 运行期间拦截 stdout 直写、顶层错误分类。
+- **core/session**：会话恢复——完整 step schema、顺序无关的恢复解锁、跨步骤文件上下文水合、加载时按 schema 校验会话记录。
+- **runtime/hooks**：生命周期 hooks——项目 hooks 显式 opt-in、加固 hook 管线、postToolUse 观测每个工具结果、日志回调故障与 hook 策略决策隔离。
+- **security/permissions**：声明式权限规则与会话内派生 allow 规则（转义字面通配符；always-allow 审批不再派生裸工具规则）。
+- **core/context**：上下文分区预算——最终序列化 prompt 全路径预算化（含 fallback），保证预算后置条件与单次压缩摘要。
+- **core/instructions**：AGENTS.md 项目指令加载，指令文件读取受字节上限约束。
+- **mcp-web-fetch**：新增 `@frontagent/mcp-web-fetch` 适配包并接入 agent registry 与 planner。
+- **prompts**：codegen 与 planner 注入外部知识、安全工程与代码极简纪律；code-quality 子代理新增安全评审维度。
+- **benchmarks/eval**：可复现的 SDD 消融评测——冻结 30 任务集、typecheck-clean fixture 工程、双臂编排器（支持断点续跑）、机器可校验验收，附结果报告与复现指南。
+- **docs**：README 可验证 npm 下载量计数（每日刷新）；桌面客户端文档。
+
+### 修复
+- **cli**：全局安装的 `fa`（npm/pnpm/homebrew symlink bin）不再静默退出——入口守卫比较前先解析 argv 的 symlink 真实路径。（#396）
+- **guard**：executor 校验路径（`validateFilePath` / `validateCode`）现在尊重 `hallucinationGuard.checks` 配置；禁用 `fileExistence` 时项目根目录包含性安全边界仍然生效。（#386）
+- **core/llm**：迁移至 AI SDK v5（清除 GHSA-rwvc-j5jr-mgvh），OpenAI provider 对 OpenAI 兼容 baseURL 显式固定 Chat Completions 端点。
+- **planner**：生成计划时保留 `web_fetch` 动作。
+- **agent**：依赖恢复使用项目自身的包管理器。
+- **desktop**：默认工作区设置生效、telemetry 日志仅在底部时自动滚动、移除 TaskComposer 演示内容、设置保存成功向辅助技术播报。
+- **runtime-node**：会话 id 约束在 sessions 目录内并原子写入；失败的 taskComplete hooks 携带真实 taskId；win32 进程树终止。
+- **workflow**：workflow-rules 门禁兼容 vars 形式的自托管 Repo Guard runner，干净检出下 pre-commit/pre-push 钩子恢复绿色。（#397）
+
+### 变更
+- **ci**：Repo Guard 迁移至自托管 Claude Code 引擎，`pull_request_target` + fork PR 触发者白名单；catch-all CODEOWNERS 规则要求所有 PR 经 owner 评审；OpenRouter provider 顺序透传至 Repo Guard。
+- **deps**：ts-morph 升级至 ^28；AI SDK 迁移至 v5 线。
+
+### 测试
+- CLI 入口守卫 symlink 覆盖；guard 开关独立性与禁用态包含性覆盖；executor read_file 判别性用例。
+- runtime 编排与关停顺序、两阶段计划生成、step 回调契约、executor skills、跨语言语义边界检测。
+
+
 ## [2.1.1] - 2026-06-09
 
 ### 变更

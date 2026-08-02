@@ -1,6 +1,6 @@
 {
   "name": "@frontagent/mcp-web-fetch",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "MCP Web-Fetch Adapter - Agent-friendly URL fetching (HTML→text) with SSRF guards for FrontAgent",
   "type": "module",
   "main": "./dist/index.js",

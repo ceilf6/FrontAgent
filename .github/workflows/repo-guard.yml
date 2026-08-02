@@ -1,7 +1,11 @@
 name: Repo Guard
 
+# PR 用 pull_request_target 而非 pull_request:白名单里的外部贡献者从 fork 提 PR 时,
+# pull_request 会卡在首次贡献者批准、且只发只读 token(评审无法发布)。
+# target 事件安全的前提:本 workflow 从不执行 PR 代码——运行时来自 ceilf6/repo-guard@main,
+# checkout 的 PR head(固定 sha)仅作只读评审数据,且 job 级 if 门禁来自 base 分支、PR 改不了。
 on:
-  pull_request:
+  pull_request_target:
     branches: [develop]
     types: [opened, synchronize, reopened, ready_for_review]
   issues:
@@ -16,28 +20,71 @@ permissions:
 
 jobs:
   guard:
+    # 除仓库成员外,显式加白的触发人(NanluQingshi / HaveNiceDa)也可触发评审,
+    # 含他们从 fork 提交的 PR;fork checkout 仅作为只读评审数据,不执行其代码。
     if: >
       github.actor != 'dependabot[bot]' &&
       (
         (
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository
+          github.event_name == 'pull_request_target' &&
+          (
+            github.event.pull_request.head.repo.full_name == github.repository ||
+            contains(fromJSON('["NanluQingshi","HaveNiceDa"]'), github.event.pull_request.user.login)
+          )
         ) ||
         (
           github.event_name == 'issues' &&
-          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+          (
+            contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association) ||
+            contains(fromJSON('["NanluQingshi","HaveNiceDa"]'), github.event.issue.user.login)
+          )
         ) ||
         (
           github.event_name == 'issue_comment' &&
-          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+          (
+            contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) ||
+            contains(fromJSON('["NanluQingshi","HaveNiceDa"]'), github.event.comment.user.login)
+          )
         )
       )
-    runs-on: ubuntu-latest
+    # REPO_GUARD_RUNNER 指向自托管 runner(如 repo-guard-claude)时,
+    # REPO_GUARD_ENGINE=claude-code 在 runner 本机跑 Claude Code CLI 评审。
+    runs-on: ${{ vars.REPO_GUARD_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 45
     steps:
+      # PR 评审的工作目录:checkout 即评审数据,凭据不落盘。
+      #
+      # allow-unsafe-pr-checkout: actions/checkout 默认拒绝在
+      # pull_request_target / workflow_run 下 checkout fork 代码(防 "pwn request"),
+      # 且只认这一个开关——上面 job 级 if 白名单是 workflow 层的,action 不读它,
+      # 不开这一项则本 job 对所有 fork PR 必然 fail(#437)。
+      #
+      # 本 step 的 if: 同时服务两条路径,而它们的信任边界并不相同:
+      # - pull_request_target 分支:job 级门禁判的是 PR 作者,信任边界是
+      #   「本仓库分支,或具名白名单里的 PR 作者」。本开关只影响这条路径。
+      # - issue_comment 分支:job 级门禁判的是**评论者**,不是 PR 作者,所以任一
+      #   有权评论的成员在任意 fork PR 下留言,都会 checkout 该 fork 的 head。
+      #   这条路径信任的是「成员在要求评审前已自行审阅过该 PR」这一行为,
+      #   而非 PR 作者身份;该语义是既有的,不由本开关引入(#441)。
+      #
+      # 因此开关按事件收窄,只在 pull_request_target 下置位,让它的作用范围与
+      # 上面那段信任论证严格一致——今天 checkout 的守卫本就只作用于
+      # pull_request_target,两种写法行为相同;但若守卫日后扩展到更多事件,
+      # 一个无条件置位的开关会把 issue_comment 这条边界更宽的路径也静默放行。
+      # 表达式渲染为布尔字面量 true / false。
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || format('refs/pull/{0}/head', github.event.issue.number) }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' }}
       - uses: ceilf6/repo-guard@main
         with:
           type: both
+          engine: ${{ vars.REPO_GUARD_ENGINE || 'api' }}
+          claude-model: ${{ vars.CLAUDE_CODE_MODEL }}
           provider: ${{ vars.LLM_PROVIDER }}
           model: ${{ vars.LLM_MODEL }}
           api-key: ${{ secrets.LLM_API_KEY }}
           base-url: ${{ vars.LLM_BASE_URL }}
+          provider-order: ${{ vars.LLM_PROVIDER_ORDER }}

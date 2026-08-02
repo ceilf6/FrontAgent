@@ -586,6 +586,29 @@ describe('createOnPhaseComplete', () => {
     expect(errors[0].error).toBe('Missing npm dependencies: lodash');
   });
 
+  it('uses pnpm add for missing dependencies when filesense detects pnpm', async () => {
+    const files = new Map<string, string>([['src/app.ts', "import _ from 'lodash';\n"]]);
+    const { deps, onPhaseComplete } = setupPhaseComplete({ files });
+    deps.contextManager.getContext.mockReturnValue({
+      collectedContext: {
+        filesenseNavigation: {
+          summary: {
+            packageManager: 'pnpm',
+          },
+        },
+      },
+    });
+    deps.executor.callTool.mockResolvedValue({
+      success: true,
+      content: '{"dependencies":{"react":"^18.0.0"}}',
+    });
+
+    const errors = await onPhaseComplete('实现', []);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].step.params).toEqual({ command: 'pnpm add lodash' });
+  });
+
   it('runs the TypeScript check only when tsconfig.json was collected and reports parsed errors', async () => {
     const files = new Map<string, string>([['tsconfig.json', '{}']]);
     const { deps, task, onPhaseComplete } = setupPhaseComplete({ files });

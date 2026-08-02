@@ -8,6 +8,7 @@ import {
   type AgentSessionSnapshot,
   createAgent,
   type ExecutorStepTrace,
+  type HallucinationGuardConfig,
   type LLMBackend,
 } from '@frontagent/core';
 import { createShellMCPClient } from '@frontagent/mcp-shell';
@@ -53,6 +54,8 @@ export interface RunFrontAgentTaskOptions extends RuntimeConfigInput {
   codeQualityIsolationMode?: 'process' | 'in_memory';
   streamShellOutput?: boolean;
   llmBackend?: LLMBackend;
+  /** 评测/消融用：覆盖幻觉防控配置（缺省时保持核心默认行为） */
+  hallucinationGuard?: HallucinationGuardConfig;
   signal?: AbortSignal;
   /**
    * 显式启用项目内 .frontagent/settings.json 的 hooks（默认关闭）。
@@ -167,6 +170,7 @@ export async function runFrontAgentTask(
       ...resolved.llm,
       backend: options.llmBackend,
     },
+    hallucinationGuard: options.hallucinationGuard,
     execution: resolved.execution,
     rag: resolved.rag,
     filesense: resolved.filesense,
@@ -436,6 +440,7 @@ export async function planFrontAgentTask(
       ...resolved.llm,
       backend: options.llmBackend,
     },
+    hallucinationGuard: options.hallucinationGuard,
     execution: resolved.execution,
     rag: resolved.rag,
     filesense: resolved.filesense,

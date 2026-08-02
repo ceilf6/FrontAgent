@@ -829,12 +829,14 @@ describe('Executor write validation', () => {
       });
     }
 
-    // 降级不是删除。删掉条目会让一个真的语法错误既不失败、也不出现在
-    // validation.results 里，于是 validation_failed 的载荷和消融基准都看不到它。
-    it('records a real syntax error without failing the step', async () => {
-      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-syntax-demote-'));
+    // 降级只覆盖 apply_patch。create_file 的 syntax_validity 修复前就是阻塞的，
+    // 而 checkSyntaxValidity 只对 ts/js 走那条逐行引号奇偶的启发式——json 走的是
+    // JSON.parse，判据完全可靠。按 action 一刀切降级会把后者一起关掉，一个非法的
+    // package.json 就会落盘、步骤报成功、还不进重试。这条钉住「本 PR 不移除任何
+    // 既有拦截」。
+    it('still fails a create_file whose JSON does not parse', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-json-syntax-'));
       try {
-        mkdirSync(join(projectRoot, 'src'), { recursive: true });
         const events: AgentEvent[] = [];
         const executor = new Executor(
           makeConfig({
@@ -843,8 +845,9 @@ describe('Executor write validation', () => {
             emitEvent: (event) => events.push(event),
           }),
         );
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
         const callTool = vi.fn().mockImplementation(async () => {
-          writeFileSync(join(projectRoot, 'src', 'broken.ts'), 'export const a = {\n');
+          writeFileSync(join(projectRoot, 'src', 'data.json'), '{ "name": ');
           return { success: true };
         });
         executor.registerMCPClient('files', {
@@ -854,22 +857,81 @@ describe('Executor write validation', () => {
         executor.registerToolMapping('create_file', 'files');
 
         const result = await executor.executeStep(
-          // 围栏之外的真语法错误：未闭合的对象字面量。
-          makeStep({ params: { path: 'src/broken.ts', content: 'export const a = {\n' } }),
+          // 不用 package.json：安全层把它当敏感路径，会先要审批而走不到校验
+          makeStep({ params: { path: 'src/data.json', content: '{ "name": ' } }),
           makeExecutionContext(),
+        );
+
+        expect(result.stepResult.success).toBe(false);
+        expect(result.needsRollback).toBe(true);
+        expect(
+          events.filter(
+            (event) => event.type === 'validation_failed' && event.stage === 'post_write',
+          ),
+        ).toHaveLength(1);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    // 反过来：apply_patch 上降级等于保持原状，那条路径此前内容根本到不了
+    // validateCode，所以同一个语法错误不该让 modify 步骤失败。
+    it('does not fail an apply_patch over a demoted syntax verdict', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-patch-syntax-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const target = join(projectRoot, 'src', 'a.ts');
+        const original = 'export const a = 1;\n';
+        writeFileSync(target, original);
+        // 逐行启发式会对这行里的撇号判 block —— #413 的实测样本之一
+        const patched = 'export const msg = "it\'s fine";\n';
+
+        const events: AgentEvent[] = [];
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+            emitEvent: (event) => events.push(event),
+          }),
+        );
+        const callTool = vi.fn().mockImplementation(async (tool: string) => {
+          if (tool === 'apply_patch') {
+            writeFileSync(target, patched);
+            return { success: true, snapshotId: 'snap-1' };
+          }
+          return { success: true, content: readFileSync(target, 'utf-8') };
+        });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('apply_patch', 'files');
+        executor.registerToolMapping('read_file', 'files');
+
+        const result = await executor.executeStep(
+          makeStep({
+            action: 'apply_patch',
+            tool: 'apply_patch',
+            params: {
+              path: 'src/a.ts',
+              patches: [
+                {
+                  operation: 'replace',
+                  startLine: 1,
+                  endLine: original.split('\n').length,
+                  content: patched,
+                },
+              ],
+            },
+          }),
+          makeExecutionContext({
+            collectedContext: { files: new Map([['src/a.ts', original]]) },
+          }),
         );
 
         expect(result.stepResult.success).toBe(true);
         expect(result.needsRollback).toBe(false);
-        const failed = events.filter((event) => event.type === 'validation_failed');
-        expect(failed).toHaveLength(1);
-        expect(failed[0]).toMatchObject({ stage: 'post_write', path: 'src/broken.ts' });
-        // 遥测里必须仍看得见这条判定，否则降级顺手把可观测性也关掉了。
-        expect(
-          (failed[0] as { result: { results: Array<{ type: string }> } }).result.results.some(
-            (entry) => entry.type === 'syntax_validity',
-          ),
-        ).toBe(true);
+        expect(readFileSync(target, 'utf-8')).toBe(patched);
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }

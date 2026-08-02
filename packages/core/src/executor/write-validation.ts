@@ -31,20 +31,23 @@ function detectMarkdownFence(content: string): { line: number; text: string } | 
 /**
  * 判定不可靠到不能决定步骤成败的检查项。
  *
- * `syntax_validity`（所有写动作）：见上，逐行启发式对合法代码误判 block。
+ * **只覆盖 `apply_patch`**，因为只有这个动作上「降级」等于「保持原状」：修复前
+ * 补丁内容根本到不了 `validateCode`（计划 schema 不发 patches，`content` 三个
+ * 来源全是 undefined），所以 `syntax_validity` / `import_validity` 从未约束过
+ * 补丁路径。`resolveWriteContent` 让整文件 replace 的内容第一次可校验，如果顺手
+ * 把 block 权也给这两条，一个合法的 modify 步骤就会因 `@/components/x`（判「包
+ * 未安装」）或「后续步骤才会创建的相对模块」（判「无法解析」）而失败，
+ * `needsRollback` 再把剩余计划整个跳过——正是本文件拒绝把写盘否决权交出去的
+ * 那两类误报。
  *
- * `import_validity`（仅 `apply_patch`）：它对 `@/components/x` 判「包未安装 →
- * block」，对「后续步骤才会创建的相对模块」判「无法解析 → block」——正是本文件
- * 拒绝把写盘否决权交出去的那两类误报。修复前 `apply_patch` 的内容根本到不了
- * `validateCode`（计划 schema 不发 patches，`content` 三个来源全是 undefined），
- * 所以补丁路径从未受这条判定约束；`resolveWriteContent` 让整文件 replace 的内容
- * 第一次可校验，如果顺手把 block 权也给它，一个合法的 modify 步骤就会失败，
- * `needsRollback` 再把剩余计划整个跳过。
- *
- * `create_file` 的 `import_validity` 保持原样：修复前它就是阻塞的，这里不顺手改。
+ * `create_file` **不在表内**。它的 `syntax_validity` 修复前就是阻塞的，而
+ * `checkSyntaxValidity` 只对 `typescript` / `javascript` 走那条逐行引号奇偶的
+ * 启发式；`json` 走的是 `JSON.parse`，判据完全可靠。按 action 一刀切降级会把
+ * 后者一起关掉——一个非法的 `package.json` 会落盘、步骤报成功、还不进重试，
+ * 这是在 #387 的验收方向上倒退。真要缓解 #413 的误报，应当按 language 收窄，
+ * 那属于 #413 的范围，不在这里顺手做。
  */
 const NON_DECIDING_CHECKS: Record<string, ReadonlySet<string>> = {
-  create_file: new Set(['syntax_validity']),
   apply_patch: new Set(['syntax_validity', 'import_validity']),
 };
 

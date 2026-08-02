@@ -79,9 +79,9 @@ console.log(`# FrontAgent 消融评测：SDD 规格约束对一次通过率的�
    }
 
    **按阶段分解**（只有 \`pre_write\` 是真拦截；\`post_write\` 含「前向引用 import」这类
-   刻意放行落盘的失败，也含被降级为**不决定步骤成败**的判定——\`syntax_validity\` 在所有
-   写动作上、\`import_validity\` 在 \`apply_patch\` 上都只记录不否决，所以这一列的计数
-   不等于「有多少步骤因此失败」；\`pre_execution\` 是执行前结构性拦截）：
+   刻意放行落盘的失败，也含被降级为**不决定步骤成败**的判定——\`apply_patch\` 上的
+   \`syntax_validity\` 与 \`import_validity\` 只记录不否决，所以这一列的计数不等于
+   「有多少步骤因此失败」；\`pre_execution\` 是执行前结构性拦截）：
 
    | 阶段 | SDD 关 | SDD 开 |
    |---|---|---|

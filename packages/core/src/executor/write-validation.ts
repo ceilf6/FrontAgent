@@ -19,6 +19,15 @@ export const WRITE_ACTIONS = ['apply_patch', 'create_file'];
  * 也不要用一个会误伤的判据去挡「所有语法错误」。
  *
  * 其余校验结论照旧留给写盘后判定。启发式本身的误判是既有缺陷，跟踪于 issue #413。
+ *
+ * **已知残留误报**：判据是逐行正则，不识别上下文，所以一份把 markdown 示例放进
+ * 多行模板字符串的合法 `.ts`（prompt 常量最容易长成这样）会被挡下。代价不对称：
+ * `create_file` 上这条判据是**写盘否决**并置 `needsRollback`，会跳过剩余计划；
+ * `apply_patch` 上只是回滚恢复。选择接受它是因为实测该形态在本仓 `packages/**`
+ * 的 `.ts` 里零命中，而它要挡的失效（模型把整块 markdown 当文件内容写出来，
+ * TS1127）在评测里真实发生过。要真正消除，需要 #413 换成真 parser——那时这条
+ * 正则连同 `NON_DECIDING_CHECKS` 一起删。下面 `pins the known template-literal
+ * false positive` 用例把当前行为钉住，让它可见而不是悄悄存在。
  */
 function detectMarkdownFence(content: string): { line: number; text: string } | undefined {
   const lines = content.split('\n');
@@ -197,8 +206,18 @@ export function resolveWriteActionContent(
     patchContent: () => string | undefined;
     /** 仅 create_file 使用：工具返回值里的 content，写盘后路径才有 */
     resultContent?: string | undefined;
+    /**
+     * 落盘内容。有它就一律优先——写盘**后**这一侧的职责是「校验真正落在磁盘上的
+     * 那份」，而写工具可能对内容做过归一化（尾换行、EOL、格式化）。用 params 里的
+     * 原始内容重跑一遍，得到的结论描述的不是磁盘上的东西，还白搭一次整文件 import
+     * 解析。写盘前这一侧没有磁盘可读，不传。
+     */
+    landedContent?: string | undefined;
   },
 ): string | undefined {
+  if (sources.landedContent !== undefined) {
+    return sources.landedContent;
+  }
   if (step.action !== 'create_file') {
     return sources.patchContent();
   }

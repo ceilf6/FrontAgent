@@ -43,7 +43,6 @@ export interface WriteOutcome {
   stepResult: StepResult;
   validation: ValidationResult;
   needsRollback: boolean;
-  rollbackFailed: boolean;
   /** 需要撤销时由调用方执行；读不回内容时为 undefined（无法判断该不该撤销） */
   rollback?: 'requested';
   /** 读不回落盘内容的路径，仅用于告警 */
@@ -89,7 +88,6 @@ export function resolveWriteOutcome(input: WriteOutcomeInput): WriteOutcome {
       // 写动作的工具失败照旧中止：继续跑的话，后续「引用该模块的另一个文件」
       // 会全绿收尾，整轮以「缺模块但步骤全成功」呈现。
       needsRollback: postValidation.results.length > 0 || WRITE_ACTIONS.includes(action),
-      rollbackFailed: false,
     };
   }
 
@@ -153,7 +151,6 @@ export function resolveWriteOutcome(input: WriteOutcomeInput): WriteOutcome {
     // （results 为空）从非写动作里排除掉。
     needsRollback:
       !validation.pass && (validation.results.length > 0 || WRITE_ACTIONS.includes(action)),
-    rollbackFailed: false,
     rollback,
     unreadablePath,
   };

@@ -746,6 +746,7 @@ export class Executor {
       // 来自读回磁盘：真实的 create_file / apply_patch 都不返回 `content`，
       // 局部行补丁也没有 `content` 参数。
       const content = resolveWriteActionContent(step, toolParams, {
+        landedContent: write?.landedContent,
         patchContent: () => write?.landedContent,
         resultContent: (result as { content?: string })?.content,
       });

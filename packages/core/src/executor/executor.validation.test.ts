@@ -121,38 +121,55 @@ describe('Executor write validation', () => {
       }
     });
 
-    it('validates create_file content once instead of twice', async () => {
-      const validateCode = vi.fn().mockResolvedValue({ pass: true, results: [] });
-      const executor = new Executor(
-        makeConfig({
-          hallucinationGuard: {
-            validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
-            validateCode,
-            isCheckEnabled: () => true,
-          } as unknown as ExecutorConfig['hallucinationGuard'],
-          getFileSystemFacts: () => ({
-            existingFiles: new Set<string>(),
-            existingDirectories: new Set(['src']),
-            nonExistentPaths: new Set<string>(),
-            directoryContents: new Map<string, string[]>(),
+    // 用真实临时目录并让 mock 工具真的写盘：此前这条用例的 projectRoot 是
+    // '/test'、工具也不落盘，于是 readWrittenFile 返回 undefined，命中的是复用
+    // 条件里「读不回」那一支——断言成立的前提是「文件根本不存在」，锁不住它
+    // 声称的「落盘内容与被校验内容相等时不重复校验」。
+    it('validates create_file content once when what landed is what was checked', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-once-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const content = 'export const a = 1;\n';
+        const validateCode = vi.fn().mockResolvedValue({ pass: true, results: [] });
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: {
+              validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
+              validateCode,
+              isCheckEnabled: () => true,
+            } as unknown as ExecutorConfig['hallucinationGuard'],
+            getFileSystemFacts: () => ({
+              existingFiles: new Set<string>(),
+              existingDirectories: new Set(['src']),
+              nonExistentPaths: new Set<string>(),
+              directoryContents: new Map<string, string[]>(),
+            }),
           }),
-        }),
-      );
-      const callTool = vi.fn().mockResolvedValue({ success: true });
-      executor.registerMCPClient('files', {
-        callTool,
-        listTools: vi.fn().mockResolvedValue([]),
-      });
-      executor.registerToolMapping('create_file', 'files');
+        );
+        const callTool = vi.fn().mockImplementation(async () => {
+          writeFileSync(join(projectRoot, 'src', 'a.ts'), content);
+          return { success: true };
+        });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('create_file', 'files');
 
-      const result = await executor.executeStep(
-        makeStep({ params: { path: 'src/a.ts', content: 'export const a = 1;' } }),
-        makeExecutionContext(),
-      );
+        const result = await executor.executeStep(
+          makeStep({ params: { path: 'src/a.ts', content } }),
+          makeExecutionContext(),
+        );
 
-      expect(validateCode).toHaveBeenCalledTimes(1);
-      expect(callTool).toHaveBeenCalledTimes(1);
-      expect(result.stepResult.success).toBe(true);
+        // 落盘的正是被校验过的那份，所以写盘后不再跑第二次 guard
+        expect(readFileSync(join(projectRoot, 'src', 'a.ts'), 'utf-8')).toBe(content);
+        expect(validateCode).toHaveBeenCalledTimes(1);
+        expect(callTool).toHaveBeenCalledTimes(1);
+        expect(result.stepResult.success).toBe(true);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
     });
 
     it('rolls back a written patch whose landed content carries a markdown fence', async () => {
@@ -587,6 +604,46 @@ describe('Executor write validation', () => {
         }
       });
     }
+
+    // 已知残留误报，钉住而不是假装不存在：判据是逐行正则，不识别上下文，所以
+    // 一份把 markdown 示例放进多行模板字符串的合法 .ts（prompt 常量最容易长成
+    // 这样）会被当成围栏挡下。#413 换成真 parser 后这条用例应当反转成「不再拦」。
+    it('pins the known template-literal false positive', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-tmpl-fence-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: new HallucinationGuard({ projectRoot }),
+          }),
+        );
+        const callTool = vi.fn().mockResolvedValue({ success: true });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('create_file', 'files');
+
+        const result = await executor.executeStep(
+          makeStep({
+            params: {
+              path: 'src/prompt.ts',
+              // 合法 TS：围栏在模板字符串里面
+              content: 'export const PROMPT = `\nReply with:\n```ts\nconst a = 1;\n```\n`;\n',
+            },
+          }),
+          makeExecutionContext(),
+        );
+
+        // 当前行为：被挡下且中止剩余计划。这是取舍，不是意外。
+        expect(callTool).not.toHaveBeenCalled();
+        expect(result.stepResult.error).toContain('Markdown code fence');
+        expect(result.needsRollback).toBe(true);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
 
     it('still blocks a markdown fence, which is the failure actually observed in the eval', async () => {
       const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-fence-'));

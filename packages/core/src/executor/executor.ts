@@ -224,6 +224,12 @@ export class Executor {
           // 磁盘上没有残留（rollbackFailed 保持 false），但中止语义必须与其余真实
           // 检查失败一致：否则计划继续跑，后续针对该文件的 apply_patch 会拿到
           // 「文件不存在」并被判为可跳过、记成成功——整轮以「零文件产出」呈现为成功。
+          //
+          // 范围限定：`needsRollback` 的唯一读取方是 progress-enforcement，
+          // 只对直接嵌入 `Executor.executeSteps` 的调用方生效。agent 主路径走
+          // `executeStepsWithErrorFeedback` → phase-runner，两者都不读这个字段，
+          // 那条路径上的实际效果是「步骤失败 → 进入 runPhaseRecovery 重试」，
+          // 而不是中止。重试是合理行为，但别把这里的中止保护读成全局的。
           needsRollback: true,
         });
       }
@@ -292,7 +298,18 @@ export class Executor {
               detectLanguage(String(landedPath)) ?? '',
             )
           : { pass: true, results: [] };
-      const effectivePostValidation = landedFenceVeto.pass ? postValidation : landedFenceVeto;
+      // 合并而不是替换。整体换成 landedFenceVeto 会让 postValidation 的
+      // import_validity / syntax_validity 条目、以及工具自身的错误文案一起消失，
+      // 而这个对象同时喂给 validation_failed 事件、stepResult.error 和
+      // ExecutorOutput.validation——正好与 write-validation.ts 里「降级不删除、
+      // 遥测照常可见」的原则相反。
+      const effectivePostValidation: ValidationResult = landedFenceVeto.pass
+        ? postValidation
+        : {
+            pass: false,
+            results: [...postValidation.results, ...landedFenceVeto.results],
+            blockedBy: [...(postValidation.blockedBy ?? []), ...(landedFenceVeto.blockedBy ?? [])],
+          };
 
       // 发事件与判成败刻意解耦：降级后的判定仍留在 `results` 里（`pass: false`），
       // 只是不再决定步骤成败。emitValidationFailed 自己按「有没有真实检查判失败」

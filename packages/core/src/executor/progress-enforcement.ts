@@ -39,9 +39,14 @@ export async function executeStepsWithProgressEnforcement(
     completedSteps.add(step.stepId);
     onStepComplete?.(step, output);
 
-    // 两个中止条件：校验类失败（needsRollback），或回滚尝试失败（rollbackFailed）。
+    // 中止条件：校验类失败（needsRollback），或回滚尝试失败（rollbackFailed）。
     // 后者是最不该继续的一种状态——工作区里确定留着一份已知有问题的文件，
     // 后续步骤会在它之上继续推演。
+    //
+    // 就今天的执行器而言第二项是防御性冗余：`rollbackFailed` 只可能在写盘后
+    // 围栏判据失败的分支里置真，而那时 `needsRollback` 必然已为真。保留它是因为
+    // 「回滚失败」与「校验失败」是两个独立的事实，将来某条路径先解耦其中一个，
+    // 这里不该跟着悄悄失去保护。
     if (!output.stepResult.success && (output.needsRollback || output.rollbackFailed)) {
       for (const pending of pendingSteps) {
         pending.status = 'skipped';

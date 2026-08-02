@@ -74,7 +74,7 @@ function makeExecutionContext(
   };
 }
 describe('Executor write validation', () => {
-  describe('write validation', () => {
+  describe('pre-write veto and reuse', () => {
     it('blocks invalid content before the write tool runs', async () => {
       const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-prewrite-'));
       try {
@@ -207,6 +207,7 @@ describe('Executor write validation', () => {
         expect(result.rollbackFailed).toBe(false);
         expect(readFileSync(target, 'utf-8')).toBe(original);
         expect(events.map((event) => event.type)).toContain('rollback_completed');
+        expect(events.map((event) => event.type)).toContain('validation_failed');
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }
@@ -262,7 +263,10 @@ describe('Executor write validation', () => {
     // 前置门禁只有语法失败才有否决权。import_validity 对「同一计划里后续步骤才创建的
     // 相对模块」必然判 block——若它也能否决写盘，多文件计划的第一个文件根本写不出来，
     // 而改动前这类文件是照常落盘、等后续步骤补齐后自洽的。
-    it('writes a file importing a module a later step will create', async () => {
+    // create_file 的 import_validity 仍然是阻塞的（本改动不动这条既有行为），
+    // 所以这里断言的是「写盘没有被否决」——工具确实被调用了——而不是「步骤成功」。
+    // 只断言 `Pre-write validation failed` 不出现会让人误读成后者。
+    it('does not veto a create_file over a module a later step will create', async () => {
       const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-forwardref-'));
       try {
         mkdirSync(join(projectRoot, 'src'), { recursive: true });
@@ -304,7 +308,7 @@ describe('Executor write validation', () => {
       }
     });
 
-    it('does not veto a write over a path-alias import', async () => {
+    it('does not veto a create_file over a path-alias import', async () => {
       const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-alias-'));
       try {
         mkdirSync(join(projectRoot, 'src'), { recursive: true });
@@ -336,6 +340,8 @@ describe('Executor write validation', () => {
           makeExecutionContext(),
         );
 
+        // 写盘发生了，这是本条要钉的。写盘后 create_file 的 import_validity 仍会
+        // 判失败——那是既有行为，本改动只在 apply_patch 上把它降级。
         expect(callTool).toHaveBeenCalledTimes(1);
         expect(result.stepResult.error ?? '').not.toContain('Pre-write validation failed');
       } finally {
@@ -443,42 +449,6 @@ describe('Executor write validation', () => {
       expect(validateCode.mock.calls[0]?.[0]).toContain('ACTUALLY_WRITTEN');
       expect(validateCode.mock.calls[0]?.[0]).not.toContain('NEVER_WRITTEN');
     });
-
-    it('leaves a partial-line patch to post-write validation', async () => {
-      const validateCode = vi.fn().mockResolvedValue({ pass: true, results: [] });
-      const executor = new Executor(
-        makeConfig({
-          hallucinationGuard: {
-            validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
-            validateCode,
-            isCheckEnabled: () => true,
-          } as unknown as ExecutorConfig['hallucinationGuard'],
-        }),
-      );
-      const callTool = vi.fn().mockResolvedValue({ success: true });
-      executor.registerMCPClient('files', {
-        callTool,
-        listTools: vi.fn().mockResolvedValue([]),
-      });
-      executor.registerToolMapping('apply_patch', 'files');
-
-      await executor.executeStep(
-        makeStep({
-          action: 'apply_patch',
-          tool: 'apply_patch',
-          params: {
-            path: 'src/a.ts',
-            // 只覆盖 3 行文件里的第 2 行：最终内容写盘前不可知
-            patches: [{ operation: 'replace', startLine: 2, endLine: 2, content: 'const b = 2;' }],
-          },
-        }),
-        makeExecutionContext({
-          collectedContext: { files: new Map([['src/a.ts', 'a\nb\nc\n']]) },
-        }),
-      );
-
-      expect(callTool).toHaveBeenCalledTimes(1);
-    });
   });
 
   describe('rollback observability', () => {
@@ -532,70 +502,6 @@ describe('Executor write validation', () => {
         expect(types).toContain('rollback_failed');
         expect(result.stepResult.error).toContain('still on disk');
         expect(result.rollbackFailed).toBe(true);
-      } finally {
-        rmSync(projectRoot, { recursive: true, force: true });
-      }
-    });
-  });
-  describe('post-write validation reads the file back', () => {
-    // 真实 create_file / apply_patch 都不返回 `content`，局部行补丁也没有
-    // `content` 参数。若只认这几个来源，局部补丁写盘后根本不做内容校验，
-    // #387 的「非法补丁内容不得留在磁盘」对补丁路径就不成立。
-    it('validates a partial patch by reading the written file, and rolls it back', async () => {
-      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-readback-'));
-      try {
-        mkdirSync(join(projectRoot, 'src'), { recursive: true });
-        const target = join(projectRoot, 'src/a.ts');
-        const events: AgentEvent[] = [];
-        const executor = new Executor(
-          makeConfig({
-            projectRoot,
-            hallucinationGuard: new HallucinationGuard({ projectRoot }),
-            emitEvent: (event) => events.push(event),
-            security: { permissions: { allow: ['rollback'] } },
-          }),
-        );
-
-        // 真实工具的返回形状：只有 success + snapshotId，没有 content。
-        // 写盘这一步由 mock 真的落到磁盘上，供读回校验。
-        const callTool = vi.fn().mockImplementation((tool: string) => {
-          if (tool === 'rollback') {
-            writeFileSync(target, 'export const x = 0;\nexport const a = 1;\n');
-            return Promise.resolve({ success: true, message: 'rolled back' });
-          }
-          writeFileSync(target, 'export const x = 0;\n```ts\n');
-          return Promise.resolve({ success: true, snapshotId: 'snap-1' });
-        });
-        executor.registerMCPClient('files', {
-          callTool,
-          listTools: vi.fn().mockResolvedValue([]),
-        });
-        executor.registerToolMapping('apply_patch', 'files');
-        executor.registerToolMapping('rollback', 'files');
-
-        const original = 'export const x = 0;\nexport const a = 1;\n';
-        writeFileSync(target, original);
-
-        const result = await executor.executeStep(
-          makeStep({
-            action: 'apply_patch',
-            tool: 'apply_patch',
-            params: {
-              path: 'src/a.ts',
-              // 局部行补丁：写盘前内容不可知，只能靠读回
-              patches: [{ operation: 'replace', startLine: 2, endLine: 2, content: '```ts' }],
-            },
-          }),
-          makeExecutionContext({
-            collectedContext: { files: new Map([['src/a.ts', original]]) },
-          }),
-        );
-
-        expect(result.stepResult.success).toBe(false);
-        // 读回后语法检查判失败 → 发事件 → 触发回滚
-        expect(events.map((event) => event.type)).toContain('validation_failed');
-        expect(callTool).toHaveBeenCalledWith('rollback', { snapshotId: 'snap-1' });
-        expect(readFileSync(target, 'utf-8')).toBe(original);
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }
@@ -1086,6 +992,64 @@ describe('Executor write validation', () => {
         expect(later.status).toBe('skipped');
         // 被否决的那一步没有落盘，后续步骤也没有被执行
         expect(callTool).not.toHaveBeenCalled();
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('the write landed but could not be read back', () => {
+    // 三处都表现为「无异常」：不尝试回滚、rollbackFailed 保持 false、内容校验被跳过。
+    // 这是本改动里唯一完全静默的分支，所以它拼进 stepResult.error 的那句话就是
+    // 唯一的可见信号——必须钉住，否则一次静默退化不会有任何人发现。
+    it('says so in the error and does not attempt a rollback', async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-unreadable-'));
+      try {
+        mkdirSync(join(projectRoot, 'src'), { recursive: true });
+        const executor = new Executor(
+          makeConfig({
+            projectRoot,
+            hallucinationGuard: {
+              validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
+              // 内容判定失败，但落盘内容读不回来（工具报成功却没有真的写）
+              validateCode: vi.fn().mockResolvedValue({
+                pass: false,
+                results: [
+                  {
+                    pass: false,
+                    type: 'import_validity',
+                    severity: 'block',
+                    message: 'Cannot resolve ./missing.js',
+                  },
+                ],
+                blockedBy: ['Cannot resolve ./missing.js'],
+              }),
+              isCheckEnabled: () => true,
+            } as unknown as ExecutorConfig['hallucinationGuard'],
+            security: { permissions: { allow: ['rollback'] } },
+          }),
+        );
+        // 带 snapshotId 才会走到「有快照但读不回」这条分支；没有它会先短路。
+        const callTool = vi.fn().mockResolvedValue({ success: true, snapshotId: 'snap-1' });
+        executor.registerMCPClient('files', {
+          callTool,
+          listTools: vi.fn().mockResolvedValue([]),
+        });
+        executor.registerToolMapping('create_file', 'files');
+
+        const result = await executor.executeStep(
+          makeStep({
+            params: { path: 'src/never-written.ts', content: "import './missing.js';\n" },
+          }),
+          makeExecutionContext(),
+        );
+
+        expect(result.stepResult.success).toBe(false);
+        expect(result.stepResult.error).toContain('could not read back src/never-written.ts');
+        expect(result.stepResult.error).toContain('rollback was not attempted');
+        // 「读不回」不等于「回滚失败」——后者驱动中止语义，是更强的断言。
+        expect(result.rollbackFailed).toBe(false);
+        expect(callTool).not.toHaveBeenCalledWith('rollback', expect.anything());
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }

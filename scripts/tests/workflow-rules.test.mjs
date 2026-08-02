@@ -628,13 +628,21 @@ test('biome ignores a nested worktree from the root but still checks one from in
   // `a == b` in a temp project and checking whether the rule is reported:
   // `"off"`, `{ level: "off" }`, dropping the preset at either the linter or
   // the group level — under both the current key (`preset`) and the pre-2.5 one
-  // (`recommended`, still honoured) — and, since this repo now has an
-  // `overrides` array, any override that touches the rule or its preset.
+  // (`recommended`, still honoured) — since this repo now has an `overrides`
+  // array, any override that touches the rule or its preset, and
+  // `linter.enabled: false`, which silences everything at once.
   // Checking only the spelling in use today is how this guard silently died
   // once already: the 2.4.16 → 2.5.6 migration renamed `recommended` to
   // `preset` and the assertion kept reading `undefined`.
   const biomeConfigJson = JSON.parse(readFileSync('biome.json', 'utf8'));
   const linterRules = biomeConfigJson.linter?.rules;
+  // The bluntest switch of all: turning the linter off entirely. It reports no
+  // rule at all, so the probe goes quiet without any rule- or preset-level edit.
+  assert.notEqual(
+    biomeConfigJson.linter?.enabled,
+    false,
+    'this test probes traversal via a planted noDoubleEquals diagnostic; the linter is disabled',
+  );
   const probeRule = linterRules?.suspicious?.noDoubleEquals;
   const probeMessage =
     'this test probes traversal via a planted noDoubleEquals diagnostic; pick another enabled rule if it gets disabled';
@@ -662,6 +670,11 @@ test('biome ignores a nested worktree from the root but still checks one from in
   // cheap to relocate if some override ever legitimately needs the rule off.
   for (const override of biomeConfigJson.overrides ?? []) {
     const overrideRules = override.linter?.rules;
+    assert.notEqual(
+      override.linter?.enabled,
+      false,
+      `${probeMessage} (a biome.json override disables the linter)`,
+    );
     assert.equal(
       overrideRules?.suspicious?.noDoubleEquals,
       undefined,

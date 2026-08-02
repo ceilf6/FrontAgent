@@ -20,6 +20,17 @@ function makeStep(overrides: Partial<ExecutionStep> = {}): ExecutionStep {
   };
 }
 
+function guardOf(agent: ReturnType<typeof createAgent>) {
+  return (
+    agent as unknown as {
+      hallucinationGuard: {
+        validateCode: (code: string, language: 'typescript') => Promise<{ pass: boolean }>;
+        validateFilePath: (path: string) => Promise<{ pass: boolean }>;
+      };
+    }
+  ).hallucinationGuard;
+}
+
 describe('generateOutput', () => {
   it('reports all steps completed', () => {
     const steps = [
@@ -98,6 +109,40 @@ describe('createAgent', () => {
       },
     });
     expect(agent).toBeDefined();
+  });
+
+  it('disables all hallucination guard checks when configured', async () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+      hallucinationGuard: {
+        enabled: false,
+        checks: { fileExistence: true, syntaxValidity: true },
+      },
+    });
+    const guard = guardOf(agent);
+
+    await expect(
+      guard.validateCode('export const broken = {', 'typescript'),
+    ).resolves.toMatchObject({ pass: true });
+    await expect(guard.validateFilePath('src/missing.ts')).resolves.toMatchObject({ pass: true });
+  });
+
+  it('honors individual hallucination guard checks when enabled', async () => {
+    const agent = createAgent({
+      projectRoot: '/test',
+      llm: { provider: 'openai', model: 'gpt-4', apiKey: 'test-key' },
+      hallucinationGuard: {
+        enabled: true,
+        checks: { syntaxValidity: false, importValidity: false },
+      },
+    });
+    const guard = guardOf(agent);
+
+    await expect(
+      guard.validateCode('export const broken = {', 'typescript'),
+    ).resolves.toMatchObject({ pass: true });
+    await expect(guard.validateFilePath('src/missing.ts')).resolves.toMatchObject({ pass: false });
   });
 
   it('returns undefined session snapshot when no task is running', () => {

@@ -402,6 +402,30 @@ test('CI and contract guard target develop and call named quality scripts', () =
   assert.match(contractGuard, /GITNEXUS_IMPACT_SUMMARY/u);
 });
 
+// Contract Guard 对 critical 文件同时要求「同 PR 有 scripts/tests/ 契约测试」和
+// 「PR 正文里的结构化 impact summary」;dependabot 两样都给不出,所以每一次碰
+// .github/workflows/ 的版本升级都会红。跳过判定必须挂在 PR 作者上而不是
+// github.actor——维护者对 dependabot 分支做 update-branch 后 actor 会变成维护者,
+// 用 actor 判定会让门禁重新变红。
+test('contract guard skips dependabot-authored PRs by author, not actor', () => {
+  const contractGuard = readFileSync('.github/workflows/contract-guard.yml', 'utf8');
+  const rules = readFileSync('scripts/workflows/contract-rules.mjs', 'utf8');
+
+  assert.match(
+    contractGuard,
+    /if:\s*github\.event\.pull_request\.user\.login\s*!=\s*'dependabot\[bot\]'/u,
+    'contract guard must skip dependabot PRs, keyed on the PR author',
+  );
+  assert.doesNotMatch(
+    contractGuard,
+    /if:\s*github\.actor\s*!=\s*'dependabot\[bot\]'/u,
+    'actor-keyed skip breaks as soon as a maintainer pushes to the dependabot branch',
+  );
+  // 这条豁免的前提:workflow 文件确实属于 critical 面,否则跳过就是无谓放松。
+  // 若 repo-harness 规则日后不再覆盖 .github/workflows/,本豁免应一并复审。
+  assert.match(rules, /file\.startsWith\('\.github\/workflows\/'\)/u);
+});
+
 test('desktop app has an unsigned electron-builder packaging path', () => {
   const pkg = JSON.parse(readFileSync('apps/desktop/package.json', 'utf8'));
   const config = readFileSync('apps/desktop/electron-builder.yml', 'utf8');

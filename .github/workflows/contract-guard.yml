@@ -15,6 +15,18 @@ concurrency:
 jobs:
   gitnexus-contract:
     name: Contract Guard / gitnexus-contract
+    # 这道门禁要求两样 dependabot 结构上给不出的东西:改动 critical 文件时必须
+    # 同 PR 带一个 scripts/tests/ 契约测试(见 contract-rules.mjs 的 repo-harness
+    # 规则),以及 PR 正文里的结构化 GitNexus impact summary。dependabot 的 PR
+    # 正文是它自己生成的 release notes,也不会顺手改测试,因此任何碰
+    # .github/workflows/ 的版本升级都必然红——一个永远红的 check 会训练维护者
+    # 忽略 check,而不是提高安全性。dependabot 升级的把关交给 CODEOWNERS 的
+    # 人工审阅 + CI 这道必需门禁。repo-guard.yml 出于同样的理由跳过 dependabot。
+    #
+    # 判定用 PR 作者而不是 repo-guard.yml 那样的 github.actor:维护者一旦对
+    # dependabot 分支执行 update-branch 或补一次推送,actor 就变成维护者本人,
+    # 用 actor 判定会让这道必然失败的门禁重新出现。作者字段不随推送者变化。
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

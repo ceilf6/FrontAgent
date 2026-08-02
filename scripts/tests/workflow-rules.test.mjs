@@ -559,6 +559,18 @@ test('biome ignores a nested worktree from the root but still checks one from in
   skip: process.platform === 'win32' || !existsSync(biomeBin) ? 'biome binary unavailable' : false,
 }, () => {
   const biomeAbsolute = join(process.cwd(), biomeBin);
+  // The probe below reads "did biome traverse here?" off a planted
+  // noDoubleEquals diagnostic. Turning that rule off in biome.json would make
+  // the worktree run report nothing and fail as if traversal had regressed —
+  // the misdirected error message #439 and #444 are both about. Fail on the
+  // real cause instead. The `suspicious` group already disables five rules, so
+  // this is not a hypothetical edit.
+  const linterRules = JSON.parse(readFileSync('biome.json', 'utf8')).linter?.rules;
+  assert.notEqual(
+    linterRules?.suspicious?.noDoubleEquals,
+    'off',
+    'this test probes traversal via a planted noDoubleEquals diagnostic; pick another enabled rule if it gets disabled',
+  );
   const root = mkdtempSync(join(tmpdir(), 'frontagent-worktree-lint-'));
   try {
     const worktree = join(root, '.claude', 'worktrees', 'example-branch');

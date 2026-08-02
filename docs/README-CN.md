@@ -68,6 +68,10 @@ FrontAgent 支持终端、VS Code 与独立桌面三种使用方式：
 
 你可以在 VS Code Marketplace 搜索 `FrontAgent`，或使用插件 ID `ceilf6.frontagent` 安装。
 
+#### VS Code 插件的 endpoint 信任边界
+
+`frontagent.provider`、`frontagent.model`、`frontagent.baseUrl` 决定了哪台主机会收到你的 API key 和任务上下文，因此插件把它们当作用户级配置。仓库可以通过自带的 `.vscode/settings.json` 提议这些值，但 FrontAgent 会先扣住工作区提供的 endpoint：只有你针对该工作区目录确认了这一组 provider/model/baseUrl，它才会生效；仓库改动其中任何一项都会重新询问；工作区不受信任时直接忽略。`frontagent.apiKey` 为 `machine` 作用域，只从用户设置读取。详见 [`apps/vscode/README.md`](../apps/vscode/README.md) 以及撤销审批的命令。
+
 ### 桌面客户端
 
 桌面客户端是一个 sandboxed Electron 窗口，接到真实运行时（`window.frontagent` → IPC → `runFrontAgentTask`）；设置持久化到本机用户数据目录，运行时不可用时优雅降级。

@@ -4,8 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **vscode**: A repository can no longer redirect FrontAgent LLM requests by committing `frontagent.provider` / `frontagent.model` / `frontagent.baseUrl` in `.vscode/settings.json`. Endpoint settings are now resolved per scope: workspace-supplied values are withheld until the user explicitly approves the exact effective endpoint (approval is bound to a digest of the workspace folder plus provider/model/base URL and is re-asked when any of them changes), and they are ignored outright when the workspace is not trusted. `frontagent.apiKey` is `machine`-scoped and honoured only from User Settings. `FrontAgent: Configure` and the sidebar Configure form now write to User Settings instead of Workspace settings, and both prefill from user scope, so accepting either dialog cannot promote a repository-supplied endpoint into User Settings. Repository-supplied values are flattened and truncated before being rendered in the confirmation dialog so they cannot forge its text. A dismissed endpoint prompt is remembered for the session instead of re-asking on every message. Because the RAG reranker and OpenAI embedding clients fall back to the resolved LLM base URL and key, those request paths are covered by the same gate. Thanks to @glmgbj233 for the detailed report. (#421)
+
 ### Added
 
+- **vscode**: `FrontAgent: Reset Workspace Endpoint Approval` command to revoke a previously approved workspace endpoint.
 - **mcp-web-fetch**: Exposed optional `allowed_domains` and `blocked_domains` on the `web_fetch` MCP tool schema, mapped to the engine's existing `allowHosts`/`denyHosts` host filters, and threaded them through the planner's `STEP_PARAMS_SCHEMA` so the agent can actually pass domain restrictions end-to-end (previously stripped before reaching the handler). Matching is by exact hostname (subdomains must be listed individually; empty arrays disable the filter). Enables least-privilege fetches without changing SSRF defaults.
 
 ### Changed

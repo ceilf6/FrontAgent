@@ -538,6 +538,26 @@ test('README documents the desktop client as a supported usage path', () => {
   assert.match(readmeCn, /pnpm --filter @frontagent\/desktop package/u);
 });
 
+test('README documents the VS Code endpoint trust boundary', () => {
+  const readme = readFileSync('README.md', 'utf8');
+  const readmeCn = readFileSync('docs/README-CN.md', 'utf8');
+  const extensionReadme = readFileSync('apps/vscode/README.md', 'utf8');
+
+  // Workspace-supplied endpoint settings are gated, not merged silently.
+  assert.match(readme, /#### Endpoint trust in the VS Code extension/u);
+  assert.match(readme, /withholds a workspace-supplied endpoint until you confirm/u);
+  assert.match(readme, /`frontagent\.apiKey` is `machine`-scoped/u);
+  assert.match(readmeCn, /#### VS Code 插件的 endpoint 信任边界/u);
+  assert.match(readmeCn, /`frontagent\.apiKey` 为 `machine` 作用域/u);
+
+  // The extension README carries the operational detail, including the escape hatch.
+  assert.match(extensionReadme, /## Endpoint Trust/u);
+  assert.match(extensionReadme, /FrontAgent: Reset Workspace Endpoint Approval/u);
+  // The Global write target removes per-project config from the UI; the
+  // supported alternative must stay documented so it does not read as a bug.
+  assert.match(extensionReadme, /### Using a different model per project/u);
+});
+
 test('local Claude state markdown remains ignored', () => {
   assert.doesNotThrow(() =>
     execFileSync('git', ['check-ignore', '-q', '.claude/repo-evolver.local.md']),

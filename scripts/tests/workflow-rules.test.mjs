@@ -416,9 +416,12 @@ test('contract guard skips dependabot-authored PRs by author, not actor', () => 
     /if:\s*github\.event\.pull_request\.user\.login\s*!=\s*'dependabot\[bot\]'/u,
     'contract guard must skip dependabot PRs, keyed on the PR author',
   );
+  // 不带 `if:` 前缀:repo-guard.yml 用的是 `if: >` 换行的多行形式,而那正是
+  // 「向 repo-guard.yml 拼写看齐」时最可能被复制过来的写法;要求 `if:` 紧跟
+  // github.actor 会让它静默通过这条断言。
   assert.doesNotMatch(
     contractGuard,
-    /if:\s*github\.actor\s*!=\s*'dependabot\[bot\]'/u,
+    /github\.actor\s*!=\s*'dependabot\[bot\]'/u,
     'actor-keyed skip breaks as soon as a maintainer pushes to the dependabot branch',
   );
   // 这条豁免的前提:workflow 文件确实属于 critical 面,否则跳过就是无谓放松。

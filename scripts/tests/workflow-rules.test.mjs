@@ -542,11 +542,27 @@ test('repo guard remains advisory and training-camp workflows are absent', () =>
 // Guard fails on every fork PR before the review step runs (#437).
 test('repo guard can check out fork PRs from allowlisted contributors', () => {
   const repoGuard = readFileSync('.github/workflows/repo-guard.yml', 'utf8');
+  // Anchor to the checkout step's own block: a file-wide match would let an
+  // unrelated future checkout step satisfy these on the wrong step.
+  const checkoutStep = /- uses: actions\/checkout@[\s\S]*?(?=\n\s+- uses:)/u.exec(repoGuard)?.[0];
 
-  assert.match(repoGuard, /allow-unsafe-pr-checkout:\s*true/u);
-  assert.match(repoGuard, /persist-credentials:\s*false/u);
-  // The opt-in is only defensible while triggering stays gated to known actors.
-  assert.match(repoGuard, /contains\(fromJSON\('\["NanluQingshi","HaveNiceDa"\]'\)/u);
+  assert.ok(checkoutStep, 'repo-guard has no actions/checkout step');
+  assert.match(checkoutStep, /allow-unsafe-pr-checkout:\s*true/u);
+  assert.match(checkoutStep, /persist-credentials:\s*false/u);
+
+  // The opt-in is only defensible while the pull_request_target path stays
+  // gated on the PR author. Assert that specific condition rather than "some
+  // allowlist exists somewhere": the same names also appear in the issues and
+  // issue_comment gates, so a file-wide match stays green even if this one —
+  // the only gate the opt-in actually depends on — is deleted.
+  assert.match(
+    repoGuard,
+    /contains\(fromJSON\([^)]*\),\s*github\.event\.pull_request\.user\.login\)/u,
+  );
+  assert.match(
+    repoGuard,
+    /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/u,
+  );
 });
 
 test('agent prompts describe the OSS Harness review loop', () => {

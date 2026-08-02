@@ -54,12 +54,19 @@ jobs:
     steps:
       # PR 评审的工作目录:checkout 即评审数据,凭据不落盘。
       #
-      # allow-unsafe-pr-checkout: actions/checkout 自 v4 起默认拒绝在
+      # allow-unsafe-pr-checkout: actions/checkout 默认拒绝在
       # pull_request_target / workflow_run 下 checkout fork 代码(防 "pwn request"),
       # 且只认这一个开关——上面 job 级 if 白名单是 workflow 层的,action 不读它,
       # 不开这一项则本 job 对所有 fork PR 必然 fail(#437)。
-      # 开启的前提是上面的 if 门禁已把触发者限死在仓库成员 + 具名白名单,
-      # 即信任边界是「这几个具名的人」而非任意 fork 提交者;这是一次显式的信任声明。
+      #
+      # 两条 checkout 路径的信任边界并不相同,分别记录:
+      # - pull_request_target:门禁判 PR 作者(:32),信任边界是「本仓库分支
+      #   或具名白名单里的 PR 作者」。本开关只影响这条路径。
+      # - issue_comment:门禁判的是**评论者**(:46),不是 PR 作者,所以任一有权
+      #   评论的成员在任意 fork PR 下留言都会 checkout 该 fork 的 head。这条路径
+      #   信任的是「成员在要求评审前已自行审阅过该 PR」这一行为,而非 PR 作者身份。
+      #   注:assertSafePrCheckout 仅在事件为 pull_request_target / workflow_run 时
+      #   生效,故该路径不受本开关影响,其语义在本开关引入前后完全一致。
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && github.event.issue.pull_request)
         with:

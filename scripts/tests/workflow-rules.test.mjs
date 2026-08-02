@@ -19,8 +19,13 @@ const validImpactSummary = [
 // `git ls-files --others` normally recurses into an untracked directory and
 // lists its files. It collapses to a single trailing-slash entry when the
 // directory is a nested repository — a linked worktree or an uninitialised
-// submodule. Callers readFileSync these entries, so such a path would abort
-// the suite with EISDIR instead of a useful assertion failure (#439).
+// submodule (#439).
+//
+// Apply this only where entries are actually readFileSync'd. Filtering inside
+// listPublicClaudeAssets() would hide such an entry from the callers that are
+// supposed to catch it: the public-prefix assertion and the single-entrypoint
+// deepEqual both fail informatively on a stray directory, and dropping it
+// first would turn those into silent passes.
 function dropDirectoryEntries(entries) {
   return entries.filter((file) => !file.endsWith('/'));
 }
@@ -30,8 +35,7 @@ function listPublicClaudeAssets() {
   const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard', '.claude'], {
     encoding: 'utf8',
   });
-  const entries = [...new Set(`${tracked}\n${untracked}`.split('\n').filter(Boolean))];
-  return dropDirectoryEntries(entries).sort();
+  return [...new Set(`${tracked}\n${untracked}`.split('\n').filter(Boolean))].sort();
 }
 
 test('classifyContractPaths separates critical and non-critical changes', () => {
@@ -533,7 +537,10 @@ test('Claude reusable assets are public while local state stays private', () => 
 });
 
 test('public Harness workflow assets are portable', () => {
-  const publicClaudeAssets = listPublicClaudeAssets();
+  // Only this test reads the entries, so the directory filter belongs here:
+  // a stray nested repository would otherwise abort the suite with EISDIR
+  // instead of failing the public-prefix assertion above (#439).
+  const publicClaudeAssets = dropDirectoryEntries(listPublicClaudeAssets());
   const publicAssets = ['docs/oss-harness-engineering-workflow.md', ...publicClaudeAssets];
   const secretEnvNamePattern = /\b[A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET)\b/u;
 

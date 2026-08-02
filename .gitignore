@@ -52,8 +52,11 @@ temp/
 .claude/**/settings.local.json
 # 本地 git worktree(Claude Code 的默认位置)。跟踪它会让工具把一个完整
 # 的嵌套 checkout 当成仓库内容 —— 见 biome.json 的 includes 与 #439。
-# 用 **/ 前缀与 biome.json 的 "!!**/.claude/worktrees" 覆盖范围保持一致:
-# 在子目录里启动 Claude Code 时 worktree 会落在该子目录的 .claude/ 下。
+# 这里保留 **/ 前缀:在子目录里启动 Claude Code 时 worktree 会落在该子目录的
+# .claude/ 下。biome.json 那条反而必须锚定到项目根(不带 **/)——biome 按绝对
+# 路径匹配遍历根,**/ 会让 worktree 自己也命中排除,从而在 worktree 内部把
+# `biome check .` 变成「检查 0 个文件」并非零退出(#444)。git 没有这个反向失效,
+# 因此两边的覆盖范围有意不同。
 **/.claude/worktrees/
 
 .turbo/

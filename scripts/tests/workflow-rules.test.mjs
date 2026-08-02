@@ -415,7 +415,6 @@ test('contract guard skips dependabot-authored PRs by author, not actor', () => 
     .split('\n')
     .filter((line) => !line.trimStart().startsWith('#'))
     .join('\n');
-  const rules = readFileSync('scripts/workflows/contract-rules.mjs', 'utf8');
 
   assert.match(
     contractGuard,
@@ -431,8 +430,11 @@ test('contract guard skips dependabot-authored PRs by author, not actor', () => 
     'actor-keyed skip breaks as soon as a maintainer pushes to the dependabot branch',
   );
   // 这条豁免的前提:workflow 文件确实属于 critical 面,否则跳过就是无谓放松。
-  // 若 repo-harness 规则日后不再覆盖 .github/workflows/,本豁免应一并复审。
-  assert.match(rules, /file\.startsWith\('\.github\/workflows\/'\)/u);
+  // 断言规则引擎的行为而不是它的源码文本——后者会把一次等价重写读成契约变更,
+  // 而本文件其余部分一直是直接调 classifyContractPaths 的。
+  assert.deepEqual(classifyContractPaths(['.github/workflows/contract-guard.yml']).critical, [
+    { file: '.github/workflows/contract-guard.yml', category: 'repo-harness' },
+  ]);
 });
 
 test('desktop app has an unsigned electron-builder packaging path', () => {

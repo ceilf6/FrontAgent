@@ -59,7 +59,7 @@
       "!!**/skills",
       "!!**/docs",
       "!!**/benchmarks",
-      "!!**/.claude/worktrees"
+      "!!.claude/worktrees"
     ]
   }
 }

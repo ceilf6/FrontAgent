@@ -59,20 +59,19 @@ jobs:
       # 且只认这一个开关——上面 job 级 if 白名单是 workflow 层的,action 不读它,
       # 不开这一项则本 job 对所有 fork PR 必然 fail(#437)。
       #
-      # 两条 checkout 路径的信任边界并不相同,分别记录:
-      # - pull_request_target:门禁判 PR 作者(:32),信任边界是「本仓库分支
-      #   或具名白名单里的 PR 作者」。本开关只影响这条路径。
-      # - issue_comment:门禁判的是**评论者**(:46),不是 PR 作者,所以任一有权
-      #   评论的成员在任意 fork PR 下留言都会 checkout 该 fork 的 head。这条路径
-      #   信任的是「成员在要求评审前已自行审阅过该 PR」这一行为,而非 PR 作者身份。
-      #   注:assertSafePrCheckout 仅在事件为 pull_request_target / workflow_run 时
-      #   生效,故该路径不受本开关影响,其语义在本开关引入前后完全一致。
+      # 本 step 的 if: 同时服务两条路径,而它们的信任边界并不相同:
+      # - pull_request_target 分支:job 级门禁判的是 PR 作者,信任边界是
+      #   「本仓库分支,或具名白名单里的 PR 作者」。本开关只影响这条路径。
+      # - issue_comment 分支:job 级门禁判的是**评论者**,不是 PR 作者,所以任一
+      #   有权评论的成员在任意 fork PR 下留言,都会 checkout 该 fork 的 head。
+      #   这条路径信任的是「成员在要求评审前已自行审阅过该 PR」这一行为,
+      #   而非 PR 作者身份;该语义是既有的,不由本开关引入(#441)。
       #
-      # 因此开关按事件收窄,只在 pull_request_target 下置位——让它的作用范围与
-      # 上面那段信任论证严格一致。今天两者行为相同(action 的守卫本就只认这两个
-      # 事件),但若守卫日后扩展到更多事件,一个无条件置位的开关会把 issue_comment
-      # 这条按评论者门禁的路径也静默放行,而那条恰恰是边界更宽的一条。
-      # 渲染结果是字符串 true/false,action 侧按 toUpperCase() === 'TRUE' 判定。
+      # 因此开关按事件收窄,只在 pull_request_target 下置位,让它的作用范围与
+      # 上面那段信任论证严格一致——今天 checkout 的守卫本就只作用于
+      # pull_request_target,两种写法行为相同;但若守卫日后扩展到更多事件,
+      # 一个无条件置位的开关会把 issue_comment 这条边界更宽的路径也静默放行。
+      # 表达式渲染为布尔字面量 true / false。
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && github.event.issue.pull_request)
         with:

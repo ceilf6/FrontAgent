@@ -181,6 +181,42 @@ describe('Filesense Engine', () => {
       .catch(() => false);
     expect(indexExists).toBe(false);
   });
+
+  it('navigate rejects writeMode workspace instead of silently ignoring it', async () => {
+    await fs.writeFile(path.join(TEST_DIR, 'package.json'), '{}');
+
+    // 类型层已排除 'workspace'；这里刻意绕过类型，模拟未经类型检查的 MCP args——
+    // 运行期守卫存在的意义正是覆盖这条入口。
+    await expect(
+      navigate(TEST_DIR, { paths: ['.'], writeMode: 'workspace' as never }),
+    ).rejects.toThrow(/read-only/u);
+
+    const indexExists = await fs
+      .access(path.join(TEST_DIR, 'FILES.json'))
+      .then(() => true)
+      .catch(() => false);
+    expect(indexExists).toBe(false);
+  });
+
+  it('navigate treats writeMode none and cache as read-only', async () => {
+    await fs.writeFile(path.join(TEST_DIR, 'package.json'), '{"scripts":{"dev":"vite"}}');
+    await fs.mkdir(path.join(TEST_DIR, 'src'));
+    await fs.writeFile(path.join(TEST_DIR, 'src', 'main.tsx'), 'export const main = 1;');
+
+    // 断言「任何位置都没写」，而不只是 FILES.json 不存在——'cache' 声称是非写别名，
+    // 若将来真引入缓存目录，只查单个文件名的断言发现不了语义漂移。
+    const snapshot = async () =>
+      (await fs.readdir(TEST_DIR, { recursive: true, withFileTypes: true }))
+        .map((entry) => path.join(entry.parentPath ?? TEST_DIR, entry.name))
+        .sort();
+
+    const before = await snapshot();
+    for (const writeMode of ['none', 'cache'] as const) {
+      const result = await navigate(TEST_DIR, { paths: ['.'], depth: 1, writeMode });
+      expect(result.summary.packageManager).toBe('node');
+      expect(await snapshot()).toEqual(before);
+    }
+  });
 });
 
 describe('loadConfig', () => {

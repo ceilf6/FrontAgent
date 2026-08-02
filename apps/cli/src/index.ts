@@ -6,6 +6,7 @@
  * `--version`, `-v`, `version`, `info`, and `init` never pay the startup cost.
  */
 
+import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
 import { getCliVersion } from './version.js';
@@ -643,7 +644,15 @@ export async function createProductionCliProgram(options: CreateCliProgramOption
 }
 
 export function isDirectCliEntry(moduleUrl: string, argvPath = process.argv[1]) {
-  return argvPath ? moduleUrl === pathToFileURL(argvPath).href : false;
+  if (!argvPath) return false;
+  if (moduleUrl === pathToFileURL(argvPath).href) return true;
+  // npm/pnpm global bin shims are symlinks, while Node resolves the entry
+  // module to its realpath — compare against the resolved argv path too.
+  try {
+    return moduleUrl === pathToFileURL(realpathSync(argvPath)).href;
+  } catch {
+    return false;
+  }
 }
 
 if (isDirectCliEntry(import.meta.url)) {

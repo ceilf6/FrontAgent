@@ -1,7 +1,11 @@
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { Command } from 'commander';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CliCommandHandlers } from './index.js';
-import { createCliProgram, createProductionCliProgram } from './index.js';
+import { createCliProgram, createProductionCliProgram, isDirectCliEntry } from './index.js';
 
 const commandModuleMocks = vi.hoisted(() => ({
   registerRagCommand: vi.fn((program: Command) => {
@@ -187,5 +191,37 @@ describe('CLI command router', () => {
     expect(commandModuleMocks.registerRagCommand).toHaveBeenCalledTimes(2);
     expect(commandModuleMocks.registerSkillCommand).toHaveBeenCalledTimes(2);
     expectNoHandlerCalls(handlers);
+  });
+});
+
+describe('isDirectCliEntry', () => {
+  it('matches when argv path equals the module path', () => {
+    const file = '/some/dir/cli.mjs';
+    expect(isDirectCliEntry(pathToFileURL(file).href, file)).toBe(true);
+  });
+
+  it('matches when argv path is a symlink to the module (global bin shim)', () => {
+    const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'fa-cli-entry-')));
+    try {
+      const real = path.join(dir, 'index.mjs');
+      const link = path.join(dir, 'fa');
+      writeFileSync(real, '');
+      symlinkSync(real, link);
+      expect(isDirectCliEntry(pathToFileURL(real).href, link)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns false for an unrelated module path', () => {
+    expect(isDirectCliEntry(pathToFileURL('/a/b.mjs').href, '/c/d.mjs')).toBe(false);
+  });
+
+  it('returns false when argv path is missing', () => {
+    expect(isDirectCliEntry(pathToFileURL('/a/b.mjs').href, undefined)).toBe(false);
+  });
+
+  it('returns false when argv path does not exist and differs from the module', () => {
+    expect(isDirectCliEntry(pathToFileURL('/a/b.mjs').href, '/nonexistent/zz.mjs')).toBe(false);
   });
 });

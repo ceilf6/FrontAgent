@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PlanGenerationDeps } from './plan-generation.js';
 import { generatePlan, generatePlanInTwoPhases, normalizePlan } from './plan-generation.js';
 import { EXTERNAL_KNOWLEDGE_PROTOCOL } from './prompts.js';
+import { GeneratedPlanSchema } from './schemas.js';
 
 const noopDeps: PlanGenerationDeps = {
   debugLog: () => {},
@@ -649,5 +650,71 @@ describe('external-knowledge protocol injection into planner system prompts', ()
     expect(singlePhaseSystem).toContain(EXTERNAL_KNOWLEDGE_PROTOCOL);
     expect(singlePhaseSystem).toContain('版本特定');
     expect(singlePhaseSystem).toContain('无需 web_fetch');
+  });
+});
+
+describe('STEP_PARAMS_SCHEMA preserves web_fetch domain filters', () => {
+  // Guards against the closed zod object silently stripping allowed_domains /
+  // blocked_domains before they reach the executor (the agent must be able to
+  // pass domain restrictions the engine already enforces).
+  it('keeps allowed_domains and blocked_domains through GeneratedPlanSchema.parse', () => {
+    const plan = {
+      summary: 'fetch docs',
+      steps: [
+        {
+          description: 'fetch with domain restrictions',
+          action: 'web_fetch',
+          tool: 'web_fetch',
+          phase: '阶段1-分析',
+          params: {
+            ...emptyParams,
+            url: 'https://example.com/',
+            allowed_domains: ['example.com'],
+            blocked_domains: ['evil.com'],
+          },
+          reasoning: 'least-privilege fetch',
+          needsCodeGeneration: false,
+        },
+      ],
+      risks: [],
+      alternatives: [],
+    };
+
+    const parsed = GeneratedPlanSchema.parse(plan);
+    const params = parsed.steps[0].params as Record<string, unknown>;
+    expect(params.allowed_domains).toEqual(['example.com']);
+    expect(params.blocked_domains).toEqual(['evil.com']);
+  });
+
+  // Models sometimes emit `null` for optional fields; .optional() rejects null
+  // and would force an object-repair retry. .nullish() accepts it, and the
+  // engine's normalizeHostList then treats null/undefined identically.
+  it('accepts null for the domain filters (no validation retry) and omits cleanly', () => {
+    const plan = {
+      summary: 'fetch docs',
+      steps: [
+        {
+          description: 'fetch',
+          action: 'web_fetch',
+          tool: 'web_fetch',
+          phase: '阶段1-分析',
+          params: {
+            ...emptyParams,
+            url: 'https://example.com/',
+            allowed_domains: null,
+            blocked_domains: null,
+          },
+          reasoning: 'r',
+          needsCodeGeneration: false,
+        },
+      ],
+      risks: [],
+      alternatives: [],
+    };
+
+    const parsed = GeneratedPlanSchema.parse(plan);
+    const params = parsed.steps[0].params as Record<string, unknown>;
+    expect(params.allowed_domains).toBeNull();
+    expect(params.blocked_domains).toBeNull();
   });
 });

@@ -137,6 +137,7 @@ describe('createAgent', () => {
       agent as unknown as {
         hallucinationGuard: {
           validateCode: (code: string, language: 'typescript') => Promise<{ pass: boolean }>;
+          validateFilePath: (path: string) => Promise<{ pass: boolean }>;
         };
       }
     ).hallucinationGuard;
@@ -144,6 +145,7 @@ describe('createAgent', () => {
     await expect(
       guard.validateCode('export const broken = {', 'typescript'),
     ).resolves.toMatchObject({ pass: true });
+    await expect(guard.validateFilePath('src/missing.ts')).resolves.toMatchObject({ pass: false });
   });
 
   it('returns undefined session snapshot when no task is running', () => {

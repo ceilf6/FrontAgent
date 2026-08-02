@@ -45,7 +45,7 @@ export interface GuardConfig {
   projectRoot: string;
   /** SDD 配置 */
   sddConfig?: SDDConfig;
-  /** 是否启用全部检查 */
+  /** 是否启用所有幻觉检查；路径包含性校验始终生效 */
   enabled?: boolean;
   /** 启用的检查 */
   enabledChecks?: {
@@ -227,6 +227,7 @@ export class HallucinationGuard {
    * 启用/禁用检查
    */
   setCheckEnabled(check: keyof NonNullable<GuardConfig['enabledChecks']>, enabled: boolean): void {
+    if (this.config.enabled === false) return;
     this.enabledChecks[check] = enabled;
   }
 }

@@ -16,17 +16,22 @@ const validImpactSummary = [
   '- Verification: node --test scripts/tests/workflow-rules.test.mjs passed.',
 ].join('\n');
 
+// `git ls-files --others` normally recurses into an untracked directory and
+// lists its files. It collapses to a single trailing-slash entry when the
+// directory is a nested repository — a linked worktree or an uninitialised
+// submodule. Callers readFileSync these entries, so such a path would abort
+// the suite with EISDIR instead of a useful assertion failure (#439).
+function dropDirectoryEntries(entries) {
+  return entries.filter((file) => !file.endsWith('/'));
+}
+
 function listPublicClaudeAssets() {
   const tracked = execFileSync('git', ['ls-files', '.claude'], { encoding: 'utf8' });
   const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard', '.claude'], {
     encoding: 'utf8',
   });
   const entries = [...new Set(`${tracked}\n${untracked}`.split('\n').filter(Boolean))];
-  // `git ls-files --others` reports an untracked directory as a single entry
-  // with a trailing slash rather than recursing into it. Callers readFileSync
-  // these paths, so a stray directory would abort the suite with EISDIR
-  // instead of a useful assertion failure (#439).
-  return entries.filter((file) => !file.endsWith('/')).sort();
+  return dropDirectoryEntries(entries).sort();
 }
 
 test('classifyContractPaths separates critical and non-critical changes', () => {
@@ -505,9 +510,13 @@ test('a git worktree under .claude/worktrees does not break the local gates', ()
   const biomeConfig = JSON.parse(readFileSync('biome.json', 'utf8'));
   assert.ok(biomeConfig.files.includes.includes('!!**/.claude/worktrees'));
 
-  // Callers readFileSync these entries, and `git ls-files --others` reports an
-  // untracked directory as one trailing-slash entry, which would throw EISDIR.
-  assert.ok(listPublicClaudeAssets().every((file) => !file.endsWith('/')));
+  // Assert the filter against synthetic input. Calling listPublicClaudeAssets()
+  // here would be tautological: the helper applies this filter itself, and with
+  // the ignore rule in place git no longer emits a directory entry to catch.
+  assert.deepEqual(
+    dropDirectoryEntries(['.claude/skills/a/SKILL.md', '.claude/worktrees/some-branch/']),
+    ['.claude/skills/a/SKILL.md'],
+  );
 });
 
 test('Claude reusable assets are public while local state stays private', () => {

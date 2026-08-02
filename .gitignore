@@ -50,6 +50,11 @@ temp/
 .claude/**/*.local.md
 .claude/settings.local.json
 .claude/**/settings.local.json
+# 本地 git worktree(Claude Code 的默认位置)。跟踪它会让工具把一个完整
+# 的嵌套 checkout 当成仓库内容 —— 见 biome.json 的 includes 与 #439。
+# 用 **/ 前缀与 biome.json 的 "!!**/.claude/worktrees" 覆盖范围保持一致:
+# 在子目录里启动 Claude Code 时 worktree 会落在该子目录的 .claude/ 下。
+**/.claude/worktrees/
 
 .turbo/
 
@@ -83,3 +88,9 @@ models/frontagent-planner/output*/
 .codegraphcontext/
 
 CLAUDE-FABLE-5.md
+# PR #412 的深夹具生成树；只在该分支上被跟踪，其余分支一律忽略，
+# 避免它在共享 worktree 里被 `git add` 反复扫进无关 PR（本轮已发生四次）。
+benchmarks/eval/fixture-deep/
+
+# 评测输出目录（--out 的产物），不进仓库；报告落 benchmarks/results/
+benchmarks/eval/out-deep/

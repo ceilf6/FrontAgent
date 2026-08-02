@@ -38,6 +38,18 @@ export const webFetchSchema = {
         maximum: 5000000,
         description: '响应体最大字节数，超出后截断，默认 2000000，硬上限 5000000',
       },
+      allowed_domains: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          '可选域名白名单，仅 web_fetch 适用，可省略。采用精确主机名匹配（不含 scheme/端口）：提供后仅允许抓取主机名恰好出现在列表中的 URL，子域需逐条列出（如 example.com 不会自动放行 www.example.com）。空数组视为不启用白名单（而非全部拒绝）。用于最小权限场景，限制 Agent 只能访问受信任的文档站点。',
+      },
+      blocked_domains: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          '可选域名黑名单，仅 web_fetch 适用，可省略。采用精确主机名匹配（不含 scheme/端口）：提供后拒绝抓取主机名恰好出现在列表中的 URL，子域需逐条列出（如 example.com 不会自动拦截 www.example.com）。优先级高于 allowed_domains；空数组视为不启用黑名单。',
+      },
     },
     required: ['url'],
   },
@@ -60,6 +72,8 @@ export async function handleWebFetchTool(
           format: args.format as 'text' | 'html' | undefined,
           timeoutMs: args.timeoutMs as number | undefined,
           maxBytes: args.maxBytes as number | undefined,
+          allowHosts: args.allowed_domains as string[] | undefined,
+          denyHosts: args.blocked_domains as string[] | undefined,
         });
         return { success: true, data };
       }

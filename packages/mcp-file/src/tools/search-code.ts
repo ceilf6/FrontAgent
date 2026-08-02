@@ -62,34 +62,44 @@ export interface SearchCodeResult {
  * 于是它换着花样重试，四次撞同一堵墙，把重试预算烧光。
  * 而这条路径正是导航失手后的兜底（issue #433）。
  *
- * 降级顺序也重要：`pattern` 非法时优先改用 `query`。把 glob 当字面量去搜
- * 文件内容必然是空结果——不崩了，但空结果会被读成「仓库里没有」，
- * 比崩溃更难发现。只有在没有 `query` 可退时才退到字面量。
+ * 降级顺序比 try/catch 本身更要紧：
+ *
+ * **有 `query` 可退** → 用 `query` 搜，带一条 warning 说明换了什么。
+ *
+ * **没有 `query`** → **返回可操作的失败**，不做字面量兜底。把 glob 当字面量去搜
+ * 文件内容必然零命中，而「成功 + 0 命中」会被 `phase-runner` 判为 completed，
+ * 模型既读不到 warning（in-process client 直接返回对象，core 只取 `files`/`matches`），
+ * 也不会进恢复流程——空结果于是被读成「仓库里没有」。那比崩溃更难发现，
+ * 正是本次修复要避免的形态。失败则会带着 hint 进入恢复路径，模型有机会改用
+ * `filePattern` 重试。
  */
+type RegexBuildResult =
+  | { ok: true; regex: RegExp; warning?: string }
+  | { ok: false; error: string };
+
 function buildSearchRegex(
   pattern: string | undefined,
   query: string | undefined,
-): { regex: RegExp; warning?: string } {
-  if (!pattern) return { regex: new RegExp(escapeRegex(query!), 'gi') };
+): RegexBuildResult {
+  if (!pattern) return { ok: true, regex: new RegExp(escapeRegex(query!), 'gi') };
   try {
-    return { regex: new RegExp(pattern, 'gi') };
+    return { ok: true, regex: new RegExp(pattern, 'gi') };
   } catch (error) {
     const why = error instanceof Error ? error.message : String(error);
-    const looksGlob = /\*\*|\*\./.test(pattern);
-    const hint = looksGlob
-      ? `pattern 看起来是 glob（${pattern}）——限定文件范围请用 filePattern，pattern 只接受正则。`
+    // glob 判定不吞掉真实的正则错误：两个分支都带上 why，否则一个含 `*.`
+    // 的普通语法错误会被误标成 glob，真正的解析原因反而看不见。
+    const hint = /\*\*|\*\./.test(pattern)
+      ? `pattern 看起来是 glob（${pattern}）——限定目录或文件类型请改用 filePattern，pattern 只接受正则（${why}）。`
       : `pattern 不是合法正则（${why}）。`;
 
     if (query) {
       return {
+        ok: true,
         regex: new RegExp(escapeRegex(query), 'gi'),
         warning: `${hint} 已改用 query 搜索。`,
       };
     }
-    return {
-      regex: new RegExp(escapeRegex(pattern), 'gi'),
-      warning: `${hint} 已退化为字面量搜索，结果可能为空。`,
-    };
+    return { ok: false, error: hint };
   }
 }
 
@@ -148,7 +158,11 @@ export async function searchCode(
     }
 
     const matches: SearchMatch[] = [];
-    const { regex: searchRegex, warning: regexWarning } = buildSearchRegex(pattern, query);
+    const built = buildSearchRegex(pattern, query);
+    if (!built.ok) {
+      return { success: false, error: built.error };
+    }
+    const { regex: searchRegex, warning: regexWarning } = built;
 
     for (const file of safeFiles) {
       if (matches.length >= effectiveMaxResults) {

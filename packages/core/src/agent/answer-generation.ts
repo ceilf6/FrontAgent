@@ -42,8 +42,11 @@ async function generateQueryAnswer(
   const ragWarnings = executionContext.collectedContext.ragWarnings ?? [];
   const files = Array.from(executionContext.collectedContext.files.entries());
 
-  const searchEvidence = steps
-    .filter((step) => step.action === 'search_code' && step.result?.success)
+  const successfulSearches = steps.filter(
+    (step) => step.action === 'search_code' && step.result?.success,
+  );
+
+  const searchEvidence = successfulSearches
     .flatMap((step) => {
       const output = step.result?.output as
         | {
@@ -55,6 +58,15 @@ async function generateQueryAnswer(
         .map((match) => `${match.file}:${match.line} ${match.content}`);
     })
     .slice(0, 10);
+
+  // 搜索的降级说明必须跟着结果一起进证据。
+  //
+  // 搜索「成功但按别的方式搜的」时，零命中不等于「仓库里没有」。
+  // 不把这条说清楚，模型会把一次降级后的空结果当成否定性证据——
+  // 这正是 #433 里比崩溃更难发现的那种失败。
+  const searchWarnings = successfulSearches
+    .flatMap((step) => (step.result?.output as { warnings?: string[] } | undefined)?.warnings ?? [])
+    .slice(0, 5);
 
   const evidenceParts: string[] = [
     `## 智能体身份\n内置可信上下文，非 RAG 知识库条目，也非当前工作区文件。\n${FRONTAGENT_IDENTITY_CONTEXT}`,
@@ -74,6 +86,15 @@ async function generateQueryAnswer(
     evidenceParts.push('\n## 代码搜索命中');
     for (const item of searchEvidence) {
       evidenceParts.push(`- ${item}`);
+    }
+  }
+
+  if (searchWarnings.length > 0) {
+    evidenceParts.push(
+      '\n## 代码搜索降级说明\n下列搜索没有按请求的方式执行，其零命中**不能**作为「不存在」的证据：',
+    );
+    for (const warning of searchWarnings) {
+      evidenceParts.push(`- ${warning}`);
     }
   }
 

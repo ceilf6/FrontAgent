@@ -1,6 +1,7 @@
 import type { ApprovalRequest } from '@frontagent/runtime-node';
 import * as vscode from 'vscode';
 import {
+  confirmWorkspaceEndpoint,
   getWorkspaceFolder,
   normalizeFiles,
   resolveConfigurationStatus,
@@ -12,6 +13,7 @@ import {
   applyPrefill,
   beginChatRun,
   type ChatMode,
+  type ConfigStatus,
   createInitialViewState,
   failChatRun,
   reduceAgentEvent,
@@ -68,6 +70,17 @@ type WebviewMessage =
  */
 const STREAM_STATE_POST_INTERVAL_MS = 50;
 
+/**
+ * Explains why an endpoint this workspace supplies did not fill in the missing
+ * fields, so "Missing baseUrl" next to a populated `.vscode/settings.json` does
+ * not read as a bug. Reuses the shared notice so the failure message and the
+ * sidebar banner can never describe the same state differently.
+ */
+function unusedWorkspaceEndpointHint(status: ConfigStatus): string {
+  const notice = status.endpointTrust.notice;
+  return notice ? ` ${notice}` : '';
+}
+
 export class FrontAgentViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private state: ViewState = createInitialViewState();
@@ -78,6 +91,17 @@ export class FrontAgentViewProvider implements vscode.WebviewViewProvider {
   private runtimeModulePromise?: Promise<RuntimeModule>;
   private statePostTimer?: ReturnType<typeof setTimeout>;
   private lastStatePostAt = 0;
+  /**
+   * Workspace folders whose endpoint the user dismissed in this session.
+   * Re-prompting on every message is approval fatigue, which pushes users
+   * toward clicking "approve" on the one dialog that matters. Keyed by folder
+   * rather than by endpoint digest, so a repository cannot re-raise the modal
+   * by editing one character. Deliberately not persisted: a decline should not
+   * silently outlive the window that produced it.
+   */
+  private readonly declinedWorkspaces = new Set<string>();
+  /** Guards the window between accepting a send and assigning `activeRun`. */
+  private startPending = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -111,11 +135,27 @@ export class FrontAgentViewProvider implements vscode.WebviewViewProvider {
     await vscode.window.showTextDocument(doc, { preview: false });
   }
 
+  /** Lets the reset command undo a decline as well as a stored approval. */
+  clearDeclinedEndpoints(): void {
+    this.declinedWorkspaces.clear();
+  }
+
   async refreshConfigurationStatus(): Promise<void> {
     const folder = vscode.workspace.workspaceFolders?.[0];
-    const configStatus = await resolveConfigurationStatus(this.context, folder);
-    this.state = setConfigStatus(this.state, configStatus);
+    this.state = setConfigStatus(this.state, await this.resolveStatusWithDeclines(folder));
     this.postState();
+  }
+
+  /**
+   * A session decline is provider state, not configuration, but the UI has to
+   * see it: without it the banner keeps telling the user to approve a prompt
+   * that will never appear again.
+   */
+  private async resolveStatusWithDeclines(
+    folder: vscode.WorkspaceFolder | undefined,
+  ): Promise<ConfigStatus> {
+    const declined = folder ? this.declinedWorkspaces.has(folder.uri.fsPath) : false;
+    return resolveConfigurationStatus(this.context, folder, declined);
   }
 
   private async loadRuntimeModule(): Promise<RuntimeModule> {
@@ -182,11 +222,23 @@ export class FrontAgentViewProvider implements vscode.WebviewViewProvider {
   // PLACEHOLDER_START_RUN
 
   private async startRun(message: Extract<WebviewMessage, { type: 'send' }>): Promise<void> {
-    if (this.activeRun) {
+    // `activeRun` is only assigned once the runtime is about to be invoked, and
+    // the endpoint confirmation awaits a modal well before that. Without a
+    // separate pending flag, two `send` messages in that window would each
+    // raise a prompt and each start a run, orphaning the first AbortController.
+    if (this.activeRun || this.startPending) {
       vscode.window.showWarningMessage('FrontAgent is already running in this workspace.');
       return;
     }
+    this.startPending = true;
+    try {
+      await this.startRunInner(message);
+    } finally {
+      this.startPending = false;
+    }
+  }
 
+  private async startRunInner(message: Extract<WebviewMessage, { type: 'send' }>): Promise<void> {
     const folder = getWorkspaceFolder();
     if (!folder) {
       this.state = appendChatMessage(
@@ -205,7 +257,29 @@ export class FrontAgentViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    const configStatus = await resolveConfigurationStatus(this.context, folder);
+    // The endpoint decides which host receives the API key and the task
+    // context, so a repository-supplied override is confirmed here — before any
+    // client is constructed — rather than by the per-tool approval callback,
+    // which only runs after the first provider request has already gone out.
+    let configStatus = await this.resolveStatusWithDeclines(folder);
+    if (configStatus.endpointTrust.requiresApproval) {
+      if (configStatus.endpointTrust.declinedThisSession) {
+        this.log('Workspace endpoint override already declined this session; using user settings.');
+      } else {
+        const approved = await confirmWorkspaceEndpoint(
+          this.context,
+          folder,
+          configStatus.endpointTrust,
+        );
+        if (!approved) this.declinedWorkspaces.add(folder.uri.fsPath);
+        this.log(
+          `Workspace endpoint override ${approved ? 'approved' : 'declined'} for ${folder.uri.fsPath}.`,
+        );
+        configStatus = await this.resolveStatusWithDeclines(folder);
+      }
+    } else if (configStatus.endpointTrust.blockedByWorkspaceTrust) {
+      this.log('Workspace endpoint override ignored because the workspace is not trusted.');
+    }
     this.state = setConfigStatus(this.state, configStatus);
     const files = normalizeFiles(message.files);
     const url = message.url?.trim() || undefined;
@@ -220,7 +294,7 @@ export class FrontAgentViewProvider implements vscode.WebviewViewProvider {
     if (!configStatus.configured) {
       this.state = failChatRun(
         this.state,
-        `FrontAgent is not configured yet. Missing: ${configStatus.missing.join(', ')}.`,
+        `FrontAgent is not configured yet. Missing: ${configStatus.missing.join(', ')}.${unusedWorkspaceEndpointHint(configStatus)}`,
       );
       this.postState();
       return;
@@ -362,21 +436,38 @@ export class FrontAgentViewProvider implements vscode.WebviewViewProvider {
   private async saveInlineConfiguration(
     message: Extract<WebviewMessage, { type: 'saveConfig' }>,
   ): Promise<void> {
+    // User Settings, not Workspace: an endpoint the user typed must land in a
+    // scope the opened repository cannot overwrite.
     const config = vscode.workspace.getConfiguration('frontagent');
-    await config.update('provider', message.provider.trim(), vscode.ConfigurationTarget.Workspace);
-    await config.update('model', message.model.trim(), vscode.ConfigurationTarget.Workspace);
-    await config.update('baseUrl', message.baseUrl.trim(), vscode.ConfigurationTarget.Workspace);
+    const own = this.state.configStatus.userScoped;
+    // The form prefills only from user scope, so an env-configured user sees
+    // empty inputs with the effective value as a placeholder. Someone opening
+    // it just to set an API key would otherwise write three empty strings into
+    // their global settings. Skip a field when there is nothing to write and
+    // nothing to clear.
+    const fields = [
+      { key: 'provider', value: message.provider.trim(), existing: own.provider },
+      { key: 'model', value: message.model.trim(), existing: own.model },
+      { key: 'baseUrl', value: message.baseUrl.trim(), existing: own.baseUrl },
+    ] as const;
+    for (const field of fields) {
+      if (!field.value && !field.existing) continue;
+      await config.update(field.key, field.value, vscode.ConfigurationTarget.Global);
+    }
 
     const apiKey = message.apiKey?.trim();
     if (apiKey) {
-      const provider = message.provider.trim() || 'default';
+      // Fall back to the effective provider so a key entered on a form whose
+      // provider box is blank still lands in the provider-specific slot rather
+      // than the legacy one.
+      const provider = message.provider.trim() || this.state.configStatus.provider || '';
       await this.context.secrets.store(
-        provider === 'default' ? SECRET_API_KEY : `${SECRET_API_KEY}.${provider}`,
+        provider ? `${SECRET_API_KEY}.${provider.toLowerCase()}` : SECRET_API_KEY,
         apiKey,
       );
     }
 
-    vscode.window.showInformationMessage('FrontAgent configuration updated.');
+    vscode.window.showInformationMessage('FrontAgent configuration updated in User Settings.');
     await this.refreshConfigurationStatus();
   }
 

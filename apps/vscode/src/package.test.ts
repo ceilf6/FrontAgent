@@ -26,6 +26,28 @@ describe('VS Code extension manifest', () => {
     expect(manifest.contributes.configuration.properties).toHaveProperty('frontagent.apiKey');
   });
 
+  it('keeps credential settings out of repository control', () => {
+    const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
+      capabilities?: { untrustedWorkspaces?: { supported?: string } };
+      contributes: {
+        configuration: {
+          properties: Record<string, { scope?: string }>;
+        };
+      };
+    };
+
+    // A workspace must never supply the credential itself.
+    expect(manifest.contributes.configuration.properties['frontagent.apiKey']?.scope).toBe(
+      'machine',
+    );
+
+    // FrontAgent runs shell commands, writes files, and drives a browser. It
+    // must stay disabled in Restricted Mode, which is what VS Code does for an
+    // extension that declares no untrustedWorkspaces support. Declaring
+    // "limited" here would make it run where it previously could not.
+    expect(manifest.capabilities?.untrustedWorkspaces).toBeUndefined();
+  });
+
   it('contributes all commands used by the sidebar and editor context menus', () => {
     const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
       contributes: {
@@ -43,6 +65,7 @@ describe('VS Code extension manifest', () => {
       'frontagent.validateSdd',
       'frontagent.openRunLog',
       'frontagent.showLogs',
+      'frontagent.resetEndpointApproval',
     ]) {
       expect(commands.has(command)).toBe(true);
     }

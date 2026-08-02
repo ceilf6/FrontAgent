@@ -168,8 +168,8 @@ describe('createRuntimeBridge', () => {
     await tick();
 
     const failed = sent.find((s) => s.payload.event?.type === 'task_failed');
-    // 断言而不是 `?.`:后者在 find 没命中时会静默短路成 undefined，
-    // 下一行的属性读取才抛 TypeError，报错指向的位置与真正的原因无关。
+    // 显式断言 `failed` 存在，让「find 没命中」在这一行就失败并说清原因，
+    // 而不是靠下一条断言拿 undefined 去 toMatchObject 的副作用间接暴露。
     expect(failed).toBeDefined();
     expect(failed?.payload.event).toMatchObject({ type: 'task_failed' });
     expect((failed?.payload.event as { error: string } | undefined)?.error).toContain('boom');

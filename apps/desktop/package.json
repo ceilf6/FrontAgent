@@ -1,6 +1,6 @@
 {
   "name": "@frontagent/desktop",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "FrontAgent desktop app (Electron) — standalone GUI entry point reusing the Node runtime spine",
   "private": true,
   "author": "FrontAgent",

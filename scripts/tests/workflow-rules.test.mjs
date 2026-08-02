@@ -16,6 +16,21 @@ const validImpactSummary = [
   '- Verification: node --test scripts/tests/workflow-rules.test.mjs passed.',
 ].join('\n');
 
+// `git ls-files --others` normally recurses into an untracked directory and
+// lists its files. It collapses to a single trailing-slash entry when the
+// directory is a nested repository — a linked worktree or an uninitialised
+// submodule (#439).
+//
+// Apply this only where entries are actually readFileSync'd. Filtering inside
+// listPublicClaudeAssets() would hide such an entry from the callers that are
+// supposed to catch it: the public-prefix assertion rejects any trailing-slash
+// entry, so it reports a stray nested repository anywhere under .claude/ —
+// including under an otherwise-allowed prefix — and dropping it first would
+// turn that into a silent pass.
+function dropDirectoryEntries(entries) {
+  return entries.filter((file) => !file.endsWith('/'));
+}
+
 function listPublicClaudeAssets() {
   const tracked = execFileSync('git', ['ls-files', '.claude'], { encoding: 'utf8' });
   const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard', '.claude'], {
@@ -486,6 +501,29 @@ test('local Claude state markdown remains ignored', () => {
   );
 });
 
+// A git worktree under .claude/worktrees/ — Claude Code's default location —
+// is a full nested checkout. Two independent gates broke on it, so both levers
+// are pinned here: git must ignore the path, and Biome must not descend into
+// it (Biome sets no vcs.useIgnoreFile, so .gitignore alone does not stop the
+// nested-config error, which aborts the whole run before any file is checked).
+// See #439.
+test('a git worktree under .claude/worktrees does not break the local gates', () => {
+  assert.doesNotThrow(() =>
+    execFileSync('git', ['check-ignore', '-q', '.claude/worktrees/example-branch']),
+  );
+
+  const biomeConfig = JSON.parse(readFileSync('biome.json', 'utf8'));
+  assert.ok(biomeConfig.files.includes.includes('!!**/.claude/worktrees'));
+
+  // Assert the filter against synthetic input: with the ignore rule in place
+  // git no longer emits a directory entry, so listPublicClaudeAssets() cannot
+  // produce one to catch here.
+  assert.deepEqual(
+    dropDirectoryEntries(['.claude/skills/a/SKILL.md', '.claude/worktrees/some-branch/']),
+    ['.claude/skills/a/SKILL.md'],
+  );
+});
+
 test('Claude reusable assets are public while local state stays private', () => {
   const publicClaudeAssets = listPublicClaudeAssets();
 
@@ -494,13 +532,22 @@ test('Claude reusable assets are public while local state stays private', () => 
   assert.ok(publicClaudeAssets.includes('.claude/skills/gitnexus/gitnexus-cli/SKILL.md'));
   assert.ok(
     publicClaudeAssets.every(
-      (file) => file.startsWith('.claude/workflows/') || file.startsWith('.claude/skills/'),
+      (file) =>
+        // Reject directory entries explicitly. Without this a nested repository
+        // under an allowed prefix — `.claude/skills/some-skill/` — satisfies
+        // startsWith and slips past, which is exactly the case the trailing
+        // filter in the portability test would then silently skip (#439).
+        !file.endsWith('/') &&
+        (file.startsWith('.claude/workflows/') || file.startsWith('.claude/skills/')),
     ),
   );
 });
 
 test('public Harness workflow assets are portable', () => {
-  const publicClaudeAssets = listPublicClaudeAssets();
+  // Only this test reads the entries, so the directory filter belongs here:
+  // a stray nested repository would otherwise abort the suite with EISDIR
+  // instead of failing the public-prefix assertion above (#439).
+  const publicClaudeAssets = dropDirectoryEntries(listPublicClaudeAssets());
   const publicAssets = ['docs/oss-harness-engineering-workflow.md', ...publicClaudeAssets];
   const secretEnvNamePattern = /\b[A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET)\b/u;
 
@@ -526,12 +573,56 @@ test('Claude Harness workflow has a single portable entrypoint', () => {
 test('repo guard remains advisory and training-camp workflows are absent', () => {
   const repoGuard = readFileSync('.github/workflows/repo-guard.yml', 'utf8');
 
-  assert.match(repoGuard, /runs-on:\s+ubuntu-latest/u);
+  assert.match(
+    repoGuard,
+    /runs-on:\s+(?:ubuntu-latest|\$\{\{\s*vars\.REPO_GUARD_RUNNER\s*\|\|\s*'ubuntu-latest'\s*\}\})/u,
+  );
   assert.doesNotMatch(repoGuard, /repo-guard-intranet/u);
   assert.doesNotMatch(repoGuard, /auto-merge|确认合并|认领|score:/u);
   assert.throws(() => readFileSync('.github/workflows/pr-auto-merge.yml', 'utf8'));
   assert.throws(() => readFileSync('.github/workflows/issue-claim.yml', 'utf8'));
   assert.throws(() => readFileSync('docs/progress.json', 'utf8'));
+});
+
+// actions/checkout refuses fork checkout under pull_request_target unless this
+// input is set, and it does not read the job-level allowlist. Without it Repo
+// Guard fails on every fork PR before the review step runs (#437).
+test('repo guard can check out fork PRs from allowlisted contributors', () => {
+  const repoGuard = readFileSync('.github/workflows/repo-guard.yml', 'utf8');
+  // Anchor to the checkout step's own block: a file-wide match would let an
+  // unrelated future checkout step satisfy these on the wrong step. Terminate
+  // on the next step's indentation rather than on a following `- uses:`, so
+  // rewriting the sibling step to `- name:` form does not make this fail with
+  // a misleading "no checkout step" message.
+  const checkoutStep = /- uses: actions\/checkout@[\s\S]*?(?=\n {6}- |$)/u.exec(repoGuard)?.[0];
+
+  assert.ok(checkoutStep, 'repo-guard has no actions/checkout step');
+  // Scoped to pull_request_target, not blanket-true: the trust argument for the
+  // opt-in only covers that path, and the issue_comment branch of the same step
+  // gates on the commenter instead of the PR author.
+  assert.match(
+    checkoutStep,
+    /allow-unsafe-pr-checkout:\s*\$\{\{\s*github\.event_name == 'pull_request_target'\s*\}\}/u,
+  );
+  assert.match(checkoutStep, /persist-credentials:\s*false/u);
+  // The safety argument depends on the fork path resolving to a fixed head SHA.
+  // Match the ternary branch, not the bare string: a branch ref or
+  // refs/pull/{n}/merge there would open a TOCTOU gap between the commit the
+  // gate admitted and the content actually checked out.
+  assert.match(
+    checkoutStep,
+    /github\.event_name == 'pull_request_target' && github\.event\.pull_request\.head\.sha/u,
+  );
+
+  // The opt-in is only defensible while the pull_request_target path stays
+  // gated on the PR author. Match the whole condition group in one pass: the
+  // allowlist names also appear in the issues and issue_comment gates, and
+  // asserting the operands separately stays green if the
+  // `pull_request_target &&` wrapper is dropped or the group is widened.
+  assert.match(
+    repoGuard,
+    /github\.event_name == 'pull_request_target' &&\s*\(\s*github\.event\.pull_request\.head\.repo\.full_name == github\.repository \|\|\s*contains\(fromJSON\([^)]*\), github\.event\.pull_request\.user\.login\)\s*\)/u,
+  );
 });
 
 test('agent prompts describe the OSS Harness review loop', () => {
@@ -561,6 +652,60 @@ test('README documents the reproducible ablation benchmark and its negative find
   // Findings are stated honestly rather than advertised as a win.
   assert.match(readme, /negative and actionable/u);
   assert.match(readme, /zero interceptions/u);
+
+  // The zero-interception count was later shown to be an observability artifact.
+  // Stating it unqualified at the top level reproduces the very misreading the
+  // follow-up report corrects, so the qualifier must travel with the claim.
+  assert.match(readme, /2026-07-31-validation-telemetry\.md/u);
+  assert.match(readme, /no emit site/u);
+});
+
+test('README documents filesense writeMode as currently having no effect', () => {
+  // navigate is a read-only tool and filesense_sync does not accept the parameter,
+  // so no value of this variable changes behaviour today. Documenting it without
+  // that qualifier is what made the setting look usable while silently costing
+  // the whole navigation phase. The assertion must be anchored to the variable
+  // itself — a bare `/navigate/` match would pass on the pre-change README.
+  const cases = [
+    ['README.md', /FRONTAGENT_FILESENSE_WRITE_MODE[\s\S]{0,400}?no-op/u],
+    ['docs/README-CN.md', /FRONTAGENT_FILESENSE_WRITE_MODE[\s\S]{0,400}?no-op/u],
+  ];
+  for (const [path, pattern] of cases) {
+    assert.match(readFileSync(path, 'utf8'), pattern);
+  }
+});
+
+test('filesense navigate schema does not offer writeMode values the engine rejects', () => {
+  // The enum is a public contract for external MCP clients and for the model's
+  // tool-argument generation. Re-adding `workspace` would hand them a value that
+  // is guaranteed to fail, and nothing else in the suite would notice.
+  const tools = readFileSync('packages/mcp-filesense/src/tools.ts', 'utf8');
+  const navigateSchema = tools.slice(tools.indexOf('export const filesenseNavigateSchema'));
+  const writeModeBlock = navigateSchema.slice(
+    navigateSchema.indexOf('writeMode:'),
+    navigateSchema.indexOf('writeMode:') + 400,
+  );
+  // Anchor on the enum line itself: the surrounding comment legitimately names
+  // the removed value, so a block-wide `doesNotMatch` would fail on the comment.
+  const enumLine = writeModeBlock.match(/enum:.*$/mu)?.[0] ?? '';
+  assert.match(enumLine, /\['cache',\s*'none'\]/u);
+  assert.doesNotMatch(enumLine, /workspace/u);
+});
+
+test('README documents the filesense ablation arm and its deep-fixture prerequisite', () => {
+  const readme = readFileSync('README.md', 'utf8');
+
+  // The arm is useless without the deep fixture (on the flat one filesense scans
+  // essentially the whole repo and never truncates), and the fixture does not
+  // exist until the generator has been run. Documenting the arm without both
+  // facts hands a reader a command that silently measures nothing.
+  assert.match(readme, /--arm no-filesense/u);
+  assert.match(readme, /--fixture deep/u);
+  assert.match(readme, /fixture-deep\/generate\.mjs/u);
+  assert.match(readme, /report-filesense\.mjs/u);
+  // The runner now hard-fails without fixture node_modules, so a reader following
+  // the block verbatim stops at the second command unless install is documented.
+  assert.match(readme, /pnpm --dir benchmarks\/eval\/fixture-deep install/u);
 });
 
 test('README exposes the verifiable npm downloads counter with its marker block', () => {

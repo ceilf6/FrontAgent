@@ -42,8 +42,11 @@ async function generateQueryAnswer(
   const ragWarnings = executionContext.collectedContext.ragWarnings ?? [];
   const files = Array.from(executionContext.collectedContext.files.entries());
 
-  const searchEvidence = steps
-    .filter((step) => step.action === 'search_code' && step.result?.success)
+  const successfulSearches = steps.filter(
+    (step) => step.action === 'search_code' && step.result?.success,
+  );
+
+  const searchEvidence = successfulSearches
     .flatMap((step) => {
       const output = step.result?.output as
         | {
@@ -55,6 +58,15 @@ async function generateQueryAnswer(
         .map((match) => `${match.file}:${match.line} ${match.content}`);
     })
     .slice(0, 10);
+
+  // 搜索的降级说明必须跟着结果一起进证据。
+  //
+  // 搜索「成功但按别的方式搜的」时，零命中不等于「仓库里没有」。
+  // 不把这条说清楚，模型会把一次降级后的空结果当成否定性证据——
+  // 这正是 #433 里比崩溃更难发现的那种失败。
+  const searchWarnings = successfulSearches
+    .flatMap((step) => (step.result?.output as { warnings?: string[] } | undefined)?.warnings ?? [])
+    .slice(0, 5);
 
   const evidenceParts: string[] = [
     `## 智能体身份\n内置可信上下文，非 RAG 知识库条目，也非当前工作区文件。\n${FRONTAGENT_IDENTITY_CONTEXT}`,
@@ -75,6 +87,30 @@ async function generateQueryAnswer(
     for (const item of searchEvidence) {
       evidenceParts.push(`- ${item}`);
     }
+  }
+
+  if (searchWarnings.length > 0) {
+    evidenceParts.push(
+      '\n## 代码搜索降级说明\n下列搜索没有按请求的方式执行，其零命中**不能**作为「不存在」的证据：',
+    );
+    for (const warning of searchWarnings) {
+      evidenceParts.push(`- ${warning}`);
+    }
+  }
+
+  // 目录导航的定位结果也是证据——只是**结构证据**，不是内容证据。
+  // 不放进来的话，navigate 扫出的候选路径对回答完全不可见：任务问「路由表在哪个
+  // 文件」，导航明明返回了带评分的候选，回答却只能说「没有工作区证据」。
+  // 排在已读文件之后：候选路径的证据强度弱于真正读到的文件内容。
+  const filesenseContext = executionContext.collectedContext.filesenseContext;
+  if (filesenseContext) {
+    evidenceParts.push(
+      '\n## 目录导航结果（结构证据）\n' +
+        '以下是按意图扫描当前工作区得到的结构信息与候选路径。' +
+        '它证明这些路径**存在**及其用途推断，但**不含文件内容**——' +
+        '引用时应说明是定位结果，不要当作读过该文件。\n' +
+        truncateForPrompt(filesenseContext, 4000),
+    );
   }
 
   if (files.length > 0) {

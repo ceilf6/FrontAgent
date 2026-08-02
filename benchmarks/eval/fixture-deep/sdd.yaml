@@ -1,0 +1,94 @@
+# FrontAgent SDD 配置文件（评测夹具冻结版）
+# 规格驱动开发 - Agent 行为约束
+
+version: "1.0"
+
+project:
+  name: "eval-fixture-deep"
+  type: "react-spa"
+  description: "filesense 消融评测的冻结深夹具工程（feature-sliced：242 源文件 / 188 目录 / 430 条目，扫描器口径）"
+
+# 技术栈约束
+tech_stack:
+  framework: "react"
+  version: "^18.0.0"
+  language: "typescript"
+  styling: "css"
+  state_management: "none"
+  forbidden_packages:
+    - "jquery"
+    - "moment"
+
+# 目录结构约束（feature-sliced：app → features → entities → shared 单向依赖）
+# 这里编码的正是 deep-create-* 三条任务在考的「遵循既有分层约定」，
+# 照抄平坦夹具的 src/components|hooks|utils 会让 SDD 对真实目录树毫无约束。
+directory_structure:
+  src/app:
+    pattern: "camelCase"
+  src/features:
+    pattern: "camelCase"
+  src/features/*/ui:
+    pattern: "PascalCase"
+    max_lines: 300
+  src/features/*/hooks:
+    pattern: "use*.ts"
+  src/features/*/lib:
+    pattern: "camelCase"
+    must_be_pure: true
+  src/entities:
+    pattern: "camelCase"
+  src/shared/ui:
+    pattern: "PascalCase"
+    max_lines: 300
+  src/shared/lib:
+    pattern: "camelCase"
+    must_be_pure: true
+
+# 模块边界约束：依赖只能向下（app → features → entities → shared），
+# feature 之间不得横向引用——这是「同名文件散布在 24 个 feature 下」时
+# 唯一能判断该用哪一份的结构性依据。
+module_boundaries:
+  - from: "src/features/*"
+    can_import:
+      - "src/entities/*"
+      - "src/shared/*"
+    cannot_import:
+      - "src/app/*"
+      - "src/features/*"
+  - from: "src/entities/*"
+    can_import:
+      - "src/shared/*"
+    cannot_import:
+      - "src/features/*"
+      - "src/app/*"
+  - from: "src/shared/*"
+    can_import: []
+    cannot_import:
+      - "src/app/*"
+      - "src/features/*"
+      - "src/entities/*"
+
+# 命名规范
+naming_conventions:
+  components: "PascalCase"
+  hooks: "camelCase with 'use' prefix"
+  utils: "camelCase"
+  constants: "SCREAMING_SNAKE_CASE"
+
+# 代码质量约束
+code_quality:
+  max_function_lines: 50
+  max_file_lines: 300
+  max_parameters: 4
+  forbidden_patterns:
+    - "any"
+    - "// @ts-ignore"
+    - "console.log"
+
+# 修改安全边界
+modification_rules:
+  protected_files:
+    - "package.json"
+    - "tsconfig.json"
+  protected_directories:
+    - "node_modules"

@@ -1,5 +1,7 @@
 import type { AgentTask, ExecutionStep } from '@frontagent/shared';
+import { logger } from '@frontagent/shared';
 import { decideFilesense } from '../filesense/trigger-policy.js';
+import type { FilesenseWriteMode } from '../types.js';
 import type {
   PhaseInjectionSkill,
   PlannerContextSnapshot,
@@ -127,6 +129,26 @@ export function createDefaultPlannerSkillRegistry(
     },
   ];
 
+  // `workspace` 是 README 文档化的环境变量取值，但 navigate 是只读工具、engine 会硬拒绝。
+  // 若原样透传，工具报错会被 executor 的 shouldSkipToolError 静默吞掉——配置了 workspace
+  // 的用户会从「能导航但不写盘」退化成「整个导航阶段无声消失」。故在此降级为只读，
+  // engine 侧的拒绝保留为最后防线。每个 registry（即每个 Planner）只警告一次，避免逐步骤刷屏。
+  let warnedWorkspaceDowngrade = false;
+  const resolveNavigateWriteMode = (
+    configured: FilesenseWriteMode | undefined,
+  ): Exclude<FilesenseWriteMode, 'workspace'> => {
+    if (configured === 'workspace') {
+      if (!warnedWorkspaceDowngrade) {
+        warnedWorkspaceDowngrade = true;
+        logger.warn(
+          "[FrontAgent] filesense writeMode 'workspace' does not apply to navigate (a read-only tool); downgrading to 'none' for navigation steps. Use filesense_sync to write FILES.json.",
+        );
+      }
+      return 'none';
+    }
+    return configured ?? 'cache';
+  };
+
   const phaseSkills: PhaseInjectionSkill[] = [
     {
       name: 'phase.filesense-navigate',
@@ -148,7 +170,7 @@ export function createDefaultPlannerSkillRegistry(
             maxBytes: filesense?.maxBytes ?? decision.maxBytes,
             timeoutMs: filesense?.timeoutMs ?? decision.timeoutMs,
             output: filesense?.output ?? 'summary',
-            writeMode: filesense?.writeMode ?? 'cache',
+            writeMode: resolveNavigateWriteMode(filesense?.writeMode),
           },
           phase: 'preparation',
         });

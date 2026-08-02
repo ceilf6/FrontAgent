@@ -67,12 +67,18 @@ jobs:
       #   信任的是「成员在要求评审前已自行审阅过该 PR」这一行为,而非 PR 作者身份。
       #   注:assertSafePrCheckout 仅在事件为 pull_request_target / workflow_run 时
       #   生效,故该路径不受本开关影响,其语义在本开关引入前后完全一致。
+      #
+      # 因此开关按事件收窄,只在 pull_request_target 下置位——让它的作用范围与
+      # 上面那段信任论证严格一致。今天两者行为相同(action 的守卫本就只认这两个
+      # 事件),但若守卫日后扩展到更多事件,一个无条件置位的开关会把 issue_comment
+      # 这条按评论者门禁的路径也静默放行,而那条恰恰是边界更宽的一条。
+      # 渲染结果是字符串 true/false,action 侧按 toUpperCase() === 'TRUE' 判定。
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && github.event.issue.pull_request)
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || format('refs/pull/{0}/head', github.event.issue.number) }}
           persist-credentials: false
-          allow-unsafe-pr-checkout: true
+          allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' }}
       - uses: ceilf6/repo-guard@main
         with:
           type: both

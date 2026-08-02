@@ -547,8 +547,18 @@ test('repo guard can check out fork PRs from allowlisted contributors', () => {
   const checkoutStep = /- uses: actions\/checkout@[\s\S]*?(?=\n\s+- uses:)/u.exec(repoGuard)?.[0];
 
   assert.ok(checkoutStep, 'repo-guard has no actions/checkout step');
-  assert.match(checkoutStep, /allow-unsafe-pr-checkout:\s*true/u);
+  // Scoped to pull_request_target, not blanket-true: the trust argument for the
+  // opt-in only covers that path, and the issue_comment branch of the same step
+  // gates on the commenter instead of the PR author.
+  assert.match(
+    checkoutStep,
+    /allow-unsafe-pr-checkout:\s*\$\{\{\s*github\.event_name == 'pull_request_target'\s*\}\}/u,
+  );
   assert.match(checkoutStep, /persist-credentials:\s*false/u);
+  // The safety argument depends on checking out a fixed head SHA. A branch ref
+  // or refs/pull/{n}/merge would open a TOCTOU gap between the commit the gate
+  // admitted and the content actually checked out.
+  assert.match(checkoutStep, /github\.event\.pull_request\.head\.sha/u);
 
   // The opt-in is only defensible while the pull_request_target path stays
   // gated on the PR author. Assert that specific condition rather than "some

@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { assertGitWorkspaceRootMatchesCwd, getChangedFiles } from '../workflows/contract-check.mjs';
 import {
@@ -391,6 +402,41 @@ test('CI and contract guard target develop and call named quality scripts', () =
   assert.match(contractGuard, /GITNEXUS_IMPACT_SUMMARY/u);
 });
 
+// Contract Guard 对 critical 文件同时要求「同 PR 有 scripts/tests/ 契约测试」和
+// 「PR 正文里的结构化 impact summary」;dependabot 两样都给不出,所以每一次碰
+// .github/workflows/ 的版本升级都会红。跳过判定必须挂在 PR 作者上而不是
+// github.actor——维护者对 dependabot 分支做 update-branch 后 actor 会变成维护者,
+// 用 actor 判定会让门禁重新变红。
+test('contract guard skips dependabot-authored PRs by author, not actor', () => {
+  // 只看有效行:负向断言必须不带 `if:` 前缀(见下),而那样的宽模式会连注释一起
+  // 匹配——把被拒绝的 actor 写法作为反例写进注释,本身是完全正确的做法,不该让
+  // 门禁变红。
+  const contractGuard = readFileSync('.github/workflows/contract-guard.yml', 'utf8')
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n');
+
+  assert.match(
+    contractGuard,
+    /if:\s*github\.event\.pull_request\.user\.login\s*!=\s*'dependabot\[bot\]'/u,
+    'contract guard must skip dependabot PRs, keyed on the PR author',
+  );
+  // 不带 `if:` 前缀:repo-guard.yml 用的是 `if: >` 换行的多行形式,而那正是
+  // 「向 repo-guard.yml 拼写看齐」时最可能被复制过来的写法;要求 `if:` 紧跟
+  // github.actor 会让它静默通过这条断言。
+  assert.doesNotMatch(
+    contractGuard,
+    /github\.actor\s*!=\s*'dependabot\[bot\]'/u,
+    'actor-keyed skip breaks as soon as a maintainer pushes to the dependabot branch',
+  );
+  // 这条豁免的前提:workflow 文件确实属于 critical 面,否则跳过就是无谓放松。
+  // 断言规则引擎的行为而不是它的源码文本——后者会把一次等价重写读成契约变更,
+  // 而本文件其余部分一直是直接调 classifyContractPaths 的。
+  assert.deepEqual(classifyContractPaths(['.github/workflows/contract-guard.yml']).critical, [
+    { file: '.github/workflows/contract-guard.yml', category: 'repo-harness' },
+  ]);
+});
+
 test('desktop app has an unsigned electron-builder packaging path', () => {
   const pkg = JSON.parse(readFileSync('apps/desktop/package.json', 'utf8'));
   const config = readFileSync('apps/desktop/electron-builder.yml', 'utf8');
@@ -506,14 +552,26 @@ test('local Claude state markdown remains ignored', () => {
 // are pinned here: git must ignore the path, and Biome must not descend into
 // it (Biome sets no vcs.useIgnoreFile, so .gitignore alone does not stop the
 // nested-config error, which aborts the whole run before any file is checked).
-// See #439.
+// See #439, and #444 for why Biome's exclusion is anchored while git's is not.
 test('a git worktree under .claude/worktrees does not break the local gates', () => {
   assert.doesNotThrow(() =>
     execFileSync('git', ['check-ignore', '-q', '.claude/worktrees/example-branch']),
   );
 
   const biomeConfig = JSON.parse(readFileSync('biome.json', 'utf8'));
-  assert.ok(biomeConfig.files.includes.includes('!!**/.claude/worktrees'));
+  assert.ok(
+    biomeConfig.files.includes.includes('!!.claude/worktrees'),
+    'biome must exclude .claude/worktrees, or a nested checkout aborts the whole run',
+  );
+  // Anchored, not `**/`-prefixed. Biome matches the traversal root by absolute
+  // path, so a `**/.claude/worktrees` pattern also matches the worktree itself
+  // when biome runs from inside one — `biome check .` then ignores everything
+  // and exits non-zero, killing every local gate in the worktree (#444). The
+  // behavioural test below pins both directions.
+  assert.ok(
+    !biomeConfig.files.includes.some((pattern) => /^!!\*\*\/\.claude\/worktrees/u.test(pattern)),
+    'a `**/`-prefixed worktrees exclusion matches the traversal root and disables lint inside a worktree (#444)',
+  );
 
   // Assert the filter against synthetic input: with the ignore rule in place
   // git no longer emits a directory entry, so listPublicClaudeAssets() cannot
@@ -522,6 +580,84 @@ test('a git worktree under .claude/worktrees does not break the local gates', ()
     dropDirectoryEntries(['.claude/skills/a/SKILL.md', '.claude/worktrees/some-branch/']),
     ['.claude/skills/a/SKILL.md'],
   );
+});
+
+// The config assertion above pins the pattern's *shape*; this pins what the
+// shape is for, by running the real binary against a synthetic project root.
+// Both directions matter and they pull against each other: excluding the
+// worktree hard enough to survive its nested biome.json (#439) is what made a
+// `**/` pattern also swallow the worktree when it *is* the traversal root
+// (#444). Skipped when the binary is absent (no `pnpm install`) or on Windows,
+// where the shim name differs — CI runs this on Linux.
+const biomeBin = join('node_modules', '.bin', 'biome');
+test('biome ignores a nested worktree from the root but still checks one from inside', {
+  skip: process.platform === 'win32' || !existsSync(biomeBin) ? 'biome binary unavailable' : false,
+}, () => {
+  const biomeAbsolute = join(process.cwd(), biomeBin);
+  // The probe below reads "did biome traverse here?" off a planted
+  // noDoubleEquals diagnostic. Turning that rule off in biome.json would make
+  // the worktree run report nothing and fail as if traversal had regressed —
+  // the misdirected error message #439 and #444 are both about. Fail on the
+  // real cause instead. The `suspicious` group already disables five rules, so
+  // this is not a hypothetical edit.
+  // Biome accepts three ways to switch the probe off — `"off"`, `{ level:
+  // "off" }`, and dropping the recommended preset at either level — so check
+  // all of them rather than the one spelling in use today.
+  const linterRules = JSON.parse(readFileSync('biome.json', 'utf8')).linter?.rules;
+  const probeRule = linterRules?.suspicious?.noDoubleEquals;
+  const probeMessage =
+    'this test probes traversal via a planted noDoubleEquals diagnostic; pick another enabled rule if it gets disabled';
+  assert.notEqual(
+    typeof probeRule === 'string' ? probeRule : probeRule?.level,
+    'off',
+    probeMessage,
+  );
+  assert.notEqual(linterRules?.recommended, false, probeMessage);
+  assert.notEqual(linterRules?.suspicious?.recommended, false, probeMessage);
+  const root = mkdtempSync(join(tmpdir(), 'frontagent-worktree-lint-'));
+  try {
+    const worktree = join(root, '.claude', 'worktrees', 'example-branch');
+    mkdirSync(worktree, { recursive: true });
+    // Both project roots get the real config — the behaviour under test is a
+    // property of biome.json, so a hand-written stub would not be evidence.
+    copyFileSync('biome.json', join(root, 'biome.json'));
+    copyFileSync('biome.json', join(worktree, 'biome.json'));
+    // The root file is clean; the worktree file carries one recommended-rule
+    // error. Which run reports it is the traversal evidence — a file count
+    // would also be satisfied by biome checking the config files alone.
+    writeFileSync(join(root, 'sample.ts'), "export const sample = 'root';\n");
+    writeFileSync(
+      join(worktree, 'sample.ts'),
+      'export function sample(a: unknown, b: unknown) {\n  return a == b;\n}\n',
+    );
+
+    const fromRoot = spawnSync(biomeAbsolute, ['check', '.'], { cwd: root, encoding: 'utf8' });
+    const rootOutput = `${fromRoot.stdout}${fromRoot.stderr}`;
+    // The nested biome.json is itself a root config: without the exclusion
+    // biome aborts with a nested-root-configuration error before checking
+    // anything, which is the #439 failure this must keep out.
+    assert.equal(fromRoot.status, 0, `biome failed at the root checkout:\n${rootOutput}`);
+    assert.doesNotMatch(
+      rootOutput,
+      /noDoubleEquals/u,
+      `the root run must not descend into the worktree (#439):\n${rootOutput}`,
+    );
+
+    const fromWorktree = spawnSync(biomeAbsolute, ['check', '.'], {
+      cwd: worktree,
+      encoding: 'utf8',
+    });
+    const worktreeOutput = `${fromWorktree.stdout}${fromWorktree.stderr}`;
+    // With a `**/` pattern this run reports "Checked 0 files" and exits 1 —
+    // the gate looks like it ran and failed, without inspecting anything.
+    assert.match(
+      worktreeOutput,
+      /noDoubleEquals/u,
+      `worktree contents must still be checked (#444):\n${worktreeOutput}`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('Claude reusable assets are public while local state stays private', () => {

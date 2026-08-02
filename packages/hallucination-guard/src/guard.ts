@@ -236,7 +236,11 @@ export class HallucinationGuard {
   }
 
   /**
-   * 启用/禁用单项检查
+   * 启用/禁用单项检查。
+   *
+   * 全局 `enabled: false` 优先：此时把某一项设为 true 不会让它重新生效，
+   * 该字段是 readonly 且没有全局重启入口。调用方拿不到任何失败反馈，
+   * 所以优先级写在这里。
    */
   setCheckEnabled(check: keyof NonNullable<GuardConfig['enabledChecks']>, enabled: boolean): void {
     this.enabledChecks[check] = enabled;

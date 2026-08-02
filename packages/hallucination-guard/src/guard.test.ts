@@ -247,6 +247,25 @@ describe('HallucinationGuard', () => {
     await expect(guard.validateFilePath('../outside.ts')).resolves.toMatchObject({ pass: false });
   });
 
+  // `validate()` 的包含性回退不只在全局 enabled:false 时生效——单独关掉
+  // fileExistence 也会走到它。修复前那种配置下 validate() 对 targetPath 完全
+  // 不产出结果，现在越界路径会判 block。这是顺带的收紧（方向与 validateFilePath
+  // 在 #386 定下的边界一致），但它是导出 API 的行为变化，钉在这里。
+  it('keeps project-root containment when only fileExistence is disabled', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabledChecks: { fileExistence: false },
+    });
+
+    await expect(
+      guard.validate({ action: 'read_file', targetPath: '../outside.ts' }),
+    ).resolves.toMatchObject({ pass: false });
+    // 目录内的不存在文件仍然放行——收紧的只是越界，不是「又把存在性检查打开了」
+    await expect(
+      guard.validate({ action: 'read_file', targetPath: 'ghost.ts' }),
+    ).resolves.toMatchObject({ pass: true, results: [] });
+  });
+
   it('honors disabled file existence checks on the fast path', async () => {
     const guard = new HallucinationGuard({
       projectRoot: TEST_ROOT,

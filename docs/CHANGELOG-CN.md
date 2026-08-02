@@ -6,7 +6,7 @@
 
 ### 修复
 
-- **guard**：`hallucinationGuard.enabled: false` 现在会关闭 agent 路径上的所有幻觉检查，同时保留项目根目录包含性的安全边界。（#400）
+- **guard**：`hallucinationGuard.enabled: false` 现在会关闭 agent 路径上的所有 `HallucinationGuard` 检查，同时保留项目根目录包含性的安全边界。它管不到执行器自带的文件系统事实 grounding——后者在 `apply_patch` 命中已知不存在路径时照样拦截，与 guard 配置无关，因此设了这个开关的消融臂并不等于「所有拦截都关掉了」。另外，单独关闭 `fileExistence` 时 `validate()` 现在也会保留越界包含性判定，此前这条路径不产出任何结果。（#400）
 
 ## [2.2.0] - 2026-07-30
 

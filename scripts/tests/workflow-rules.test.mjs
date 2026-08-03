@@ -294,7 +294,11 @@ test('extractImpactSummary reads only the PR template impact section', () => {
 test('package exposes required OSS Harness scripts', () => {
   const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 
-  assert.equal(pkg.devDependencies.gitnexus, '1.6.6');
+  // 精确钉版本,不用 caret:契约门禁靠 `gitnexus analyze` 产出索引,这条依赖
+  // 一度需要打补丁才能用(见 057aa6a)。升级必须是一次经审阅的改动,而不是
+  // 某次 lockfile 刷新的副产物——`patchedDependencies` 必须保持为空,否则
+  // 说明又退回到打补丁的状态。
+  assert.equal(pkg.devDependencies.gitnexus, '1.6.9');
   assert.equal(pkg.pnpm.patchedDependencies, undefined);
   assert.equal(pkg.scripts.prepare, 'pnpm hooks:install');
   assert.equal(pkg.scripts['hooks:install'], 'node scripts/workflows/install-hooks.mjs');
@@ -620,20 +624,71 @@ test('biome ignores a nested worktree from the root but still checks one from in
   // the misdirected error message #439 and #444 are both about. Fail on the
   // real cause instead. The `suspicious` group already disables five rules, so
   // this is not a hypothetical edit.
-  // Biome accepts three ways to switch the probe off — `"off"`, `{ level:
-  // "off" }`, and dropping the recommended preset at either level — so check
-  // all of them rather than the one spelling in use today.
-  const linterRules = JSON.parse(readFileSync('biome.json', 'utf8')).linter?.rules;
+  // Every way biome 2.5.6 can switch the probe off, each verified by planting
+  // `a == b` in a temp project and checking whether the rule is reported:
+  // `"off"`, `{ level: "off" }`, dropping the preset at either the linter or
+  // the group level — under both the current key (`preset`) and the pre-2.5 one
+  // (`recommended`, still honoured) — since this repo now has an `overrides`
+  // array, any override that touches the rule or its preset, and
+  // `linter.enabled: false`, which silences everything at once.
+  // Checking only the spelling in use today is how this guard silently died
+  // once already: the 2.4.16 → 2.5.6 migration renamed `recommended` to
+  // `preset` and the assertion kept reading `undefined`.
+  const biomeConfigJson = JSON.parse(readFileSync('biome.json', 'utf8'));
+  const linterRules = biomeConfigJson.linter?.rules;
+  // The bluntest switch of all: turning the linter off entirely. It reports no
+  // rule at all, so the probe goes quiet without any rule- or preset-level edit.
+  assert.notEqual(
+    biomeConfigJson.linter?.enabled,
+    false,
+    'this test probes traversal via a planted noDoubleEquals diagnostic; the linter is disabled',
+  );
   const probeRule = linterRules?.suspicious?.noDoubleEquals;
   const probeMessage =
     'this test probes traversal via a planted noDoubleEquals diagnostic; pick another enabled rule if it gets disabled';
+  // 用「已知启用值的白名单」而不是「不等于关闭值」：后者是这条 guard 上次静默
+  // 失效的同一形状——键被改名、读到 undefined、断言恒真。不认识的拼写直接判失败，
+  // 由改配置的人来更新这里，而不是让 guard 悄悄放行。
+  // biome 的 PresetConfig 枚举是 recommended | all | none（取自
+  // node_modules/@biomejs/biome/configuration_schema.json）；缺省即 recommended。
+  const ENABLED_PRESETS = new Set([undefined, 'recommended', 'all']);
+  /** A preset slot is live only under a spelling we know keeps rules on. */
+  const presetEnabled = (rules) =>
+    ENABLED_PRESETS.has(rules?.preset) &&
+    (rules?.recommended === undefined || rules?.recommended === true);
   assert.notEqual(
     typeof probeRule === 'string' ? probeRule : probeRule?.level,
     'off',
     probeMessage,
   );
-  assert.notEqual(linterRules?.recommended, false, probeMessage);
-  assert.notEqual(linterRules?.suspicious?.recommended, false, probeMessage);
+  assert.ok(presetEnabled(linterRules), probeMessage);
+  assert.ok(presetEnabled(linterRules?.suspicious), probeMessage);
+  // An override wins over the top-level config for the files it matches, so one
+  // that silences this rule would be invisible to the assertions above. Nothing
+  // may touch it at all — narrowing to "only overrides matching the fixture"
+  // would mean reimplementing biome's glob semantics here, and the probe is
+  // cheap to relocate if some override ever legitimately needs the rule off.
+  for (const override of biomeConfigJson.overrides ?? []) {
+    const overrideRules = override.linter?.rules;
+    assert.notEqual(
+      override.linter?.enabled,
+      false,
+      `${probeMessage} (a biome.json override disables the linter)`,
+    );
+    assert.equal(
+      overrideRules?.suspicious?.noDoubleEquals,
+      undefined,
+      `${probeMessage} (a biome.json override targets it)`,
+    );
+    assert.ok(
+      presetEnabled(overrideRules),
+      `${probeMessage} (a biome.json override drops the preset)`,
+    );
+    assert.ok(
+      presetEnabled(overrideRules?.suspicious),
+      `${probeMessage} (a biome.json override drops the suspicious preset)`,
+    );
+  }
   const root = mkdtempSync(join(tmpdir(), 'frontagent-worktree-lint-'));
   try {
     const worktree = join(root, '.claude', 'worktrees', 'example-branch');

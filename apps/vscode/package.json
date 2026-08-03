@@ -220,11 +220,11 @@
   },
   "devDependencies": {
     "@frontagent/runtime-node": "workspace:*",
-    "@types/node": "^25.9.1",
+    "@types/node": "^25.9.5",
     "@types/vscode": "^1.120.0",
     "@vscode/test-electron": "^2.5.2",
-    "esbuild": "^0.28.0",
+    "esbuild": "^0.28.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.10"
   }
 }

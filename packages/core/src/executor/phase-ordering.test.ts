@@ -15,6 +15,17 @@ function makeStep(overrides: Partial<ExecutionStep> = {}): ExecutionStep {
 }
 
 describe('getPhasePriority', () => {
+  // 导航步骤用的就是这个 phase，它必须排在分析之前——产出要给后续读写的路径接地
+  // 用，排在它们之后等于没接（issue #446）。断言的是「小于分析」而不是某个字面量，
+  // 免得调优优先级数值时被迫改这条。
+  it('runs preparation before every other phase', () => {
+    expect(getPhasePriority('preparation')).toBe(5);
+    expect(getPhasePriority('准备目录导航上下文')).toBe(5);
+    for (const later of ['分析需求', '创建组件', '安装依赖', '验证结果', '未分组', '别的什么']) {
+      expect(getPhasePriority('preparation')).toBeLessThan(getPhasePriority(later));
+    }
+  });
+
   it('assigns lowest priority to analysis phases', () => {
     expect(getPhasePriority('分析需求')).toBe(10);
     expect(getPhasePriority('analyze requirements')).toBe(10);
@@ -109,6 +120,25 @@ describe('buildOrderedPhaseGroups', () => {
     expect(groups).toHaveLength(2);
     const analysisGroup = groups.find((g) => g.phase === '分析');
     expect(analysisGroup?.steps).toHaveLength(2);
+  });
+
+  // getPhasePriority 单测只钉数值；这条钉的是真实后果——planner 把导航步骤前插进
+  // 数组，但执行按 phase 分组排序，所以「数组第一」不等于「先执行」。此前
+  // preparation 落到兜底的 80，导航实际在倒数第二个跑（issue #446）。
+  it('executes the navigation step before the steps it is meant to inform', () => {
+    const steps = [
+      makeStep({ stepId: 'navigate', phase: 'preparation', action: 'filesense_navigate' }),
+      makeStep({ stepId: 'read', phase: '分析' }),
+      makeStep({ stepId: 'write', phase: '创建' }),
+      makeStep({ stepId: 'verify', phase: '验证' }),
+    ];
+
+    const order = buildOrderedPhaseGroups(steps).flatMap((group) =>
+      group.steps.map((step) => step.stepId),
+    );
+
+    expect(order[0]).toBe('navigate');
+    expect(order).toEqual(['navigate', 'read', 'write', 'verify']);
   });
 
   it('orders groups by priority', () => {

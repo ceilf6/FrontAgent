@@ -4,6 +4,13 @@ import type { PhaseExecutionGroup } from './types.js';
 export function getPhasePriority(phase: string): number {
   const normalized = phase.toLowerCase();
 
+  // 必须排在分析(10)之前。filesense 的导航步骤用的就是这个 phase，它的产出
+  // （真实目录清单）要给后续每一次读取和写入的路径接地用——排在它们之后就等于
+  // 没接。此前这里没有分支，`preparation` 落到兜底的 80，于是导航实际在倒数第二
+  // 个才跑：分析(10)、创建(20)、安装(30)、验证(40)、启动(50)、浏览器(60)、
+  // 仓库(70) 全跑完之后。planner 把它前插进数组（planner-skills.ts）看上去在最
+  // 前面，但执行不按数组顺序，而是按 phase 分组再按本函数排序（issue #446）。
+  if (normalized.includes('准备') || normalized.includes('prepar')) return 5;
   if (normalized.includes('分析') || normalized.includes('analy')) return 10;
   if (
     normalized.includes('创建') ||

@@ -1,10 +1,10 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.6/schema.json",
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "complexity": {
         "noForEach": "off",
         "noStaticOnlyClass": "off"
@@ -40,6 +40,12 @@
       "semicolons": "always"
     }
   },
+  "overrides": [
+    {
+      "includes": ["scripts/workflows/**"],
+      "linter": { "rules": { "suspicious": { "noUndeclaredEnvVars": "off" } } }
+    }
+  ],
   "files": {
     "ignoreUnknown": true,
     "includes": [

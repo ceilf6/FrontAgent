@@ -67,7 +67,7 @@ describe('checkImportValidity', () => {
     mkdirSync(join(root, 'src'));
 
     const result = await checkImportValidity({
-      importPath: '../'.repeat(20) + 'etc/hosts',
+      importPath: `${'../'.repeat(20)}etc/hosts`,
       sourceFilePath: 'src/app.ts',
       projectRoot: root,
     });

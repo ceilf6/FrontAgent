@@ -30,6 +30,7 @@ function makeConfig(overrides: Partial<ExecutorConfig> = {}): ExecutorConfig {
     hallucinationGuard: {
       validateFilePath: vi.fn(),
       validateCode: vi.fn(),
+      isCheckEnabled: () => true,
     } as unknown as ExecutorConfig['hallucinationGuard'],
     llmService: {
       name: 'test',
@@ -345,6 +346,7 @@ describe('Executor', () => {
               message: 'File src/missing.ts does not exist',
             }),
             validateCode: vi.fn(),
+            isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
         }),
       );
@@ -381,6 +383,7 @@ describe('Executor', () => {
               severity: 'info',
             }),
             validateCode: vi.fn(),
+            isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
         }),
       );
@@ -550,6 +553,7 @@ describe('Executor', () => {
               ],
               blockedBy: ['Syntax errors found in src/a.ts'],
             }),
+            isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
           emitEvent: (event) => events.push(event),
           getFileSystemFacts: () => ({
@@ -588,6 +592,7 @@ describe('Executor', () => {
           hallucinationGuard: {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
             validateCode: vi.fn().mockResolvedValue({ pass: true, results: [] }),
+            isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
           emitEvent: (event) => events.push(event),
           getFileSystemFacts: () => ({

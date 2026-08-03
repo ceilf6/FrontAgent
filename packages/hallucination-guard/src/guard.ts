@@ -82,10 +82,6 @@ export class HallucinationGuard {
     };
   }
 
-  private isCheckEnabled(check: keyof NonNullable<GuardConfig['enabledChecks']>): boolean {
-    return this.enabled && this.enabledChecks[check];
-  }
-
   private validatePathContainment(path: string): HallucinationCheckResult | undefined {
     const resolvedRoot = resolve(this.config.projectRoot);
     if (isInsidePath(resolve(resolvedRoot, path), resolvedRoot)) return undefined;
@@ -96,6 +92,20 @@ export class HallucinationGuard {
       message: `Security violation: Path "${path}" is outside project root`,
       details: { path, projectRoot: this.config.projectRoot },
     };
+  }
+
+  /**
+   * 某项检查是否启用。
+   *
+   * 公开出来是必要的：执行器有自己的写盘前门禁，若它不查这份配置，
+   * `enabledChecks` 就又变成「关不掉」——正是 #386 让消融基准的 guard 臂失效的机制。
+   * 任何在 guard 之外复刻检查语义的调用方，都必须先问过这里。
+   *
+   * 全局 `enabled` 是与项：#400 让 `enabled: false` 能真正关停 agent 路径上的检查，
+   * 少了这一项，单项开关全开时那个总开关就又失效了。
+   */
+  isCheckEnabled(check: keyof NonNullable<GuardConfig['enabledChecks']>): boolean {
+    return this.enabled && this.enabledChecks[check];
   }
 
   /**

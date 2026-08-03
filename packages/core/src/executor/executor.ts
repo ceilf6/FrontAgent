@@ -1,6 +1,6 @@
 import { existsSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { AgentTask, ExecutionStep, StepResult, ValidationResult } from '@frontagent/shared';
+import type { AgentTask, ExecutionStep, ValidationResult } from '@frontagent/shared';
 import { logger } from '@frontagent/shared';
 import { groundStepPath } from '../filesense/path-grounding.js';
 import {
@@ -21,6 +21,19 @@ import type {
   MCPClient,
   PhaseExecutionGroup,
 } from './types.js';
+import {
+  describeWriteFailure,
+  readWrittenFile,
+  resolvePreWriteVeto,
+  resolveWriteOutcome,
+  rollbackFailedWrite,
+} from './write-outcome.js';
+import {
+  demoteNonDecidingVerdicts,
+  resolveWriteActionContent,
+  resolveWriteContent,
+  WRITE_ACTIONS,
+} from './write-validation.js';
 
 export class Executor {
   private config: ExecutorConfig;
@@ -187,6 +200,33 @@ export class Executor {
         }),
       );
 
+      // 写入路径只解析这一次，写盘前后共用；技能可能改写 params.path，
+      // 两侧各解析一次就会指向不同文件。
+      const writePath = (toolParams.path ?? step.params.path) as string | undefined;
+      const writeContent = resolveWriteContent(step, toolParams, writePath, context);
+      const vetoEnabled = this.config.hallucinationGuard.isCheckEnabled('syntaxValidity');
+      // 否决判据先跑：它是纯字符串扫描，而 validateCode 会做文件系统解析
+      // （import 检查）。围栏一旦命中就直接 return，没必要为一份不会落盘的内容
+      // 白跑一次完整 guard。
+      const veto = resolvePreWriteVeto(writeContent, vetoEnabled, Date.now() - startTime);
+      if (veto) {
+        this.emitValidationFailed('pre_write', veto.validation, step, writeContent?.path);
+        if (this.config.debug) {
+          console.log(`[Executor] Blocked write before disk: ${veto.output.stepResult.error}`);
+        }
+        return trace.finish(veto.output);
+      }
+
+      const rawContentValidation = await trace.withStage('validate_content', () =>
+        writeContent
+          ? this.config.hallucinationGuard.validateCode(
+              writeContent.content,
+              writeContent.language,
+              writeContent.path,
+            )
+          : Promise.resolve<ValidationResult>({ pass: true, results: [] }),
+      );
+
       const toolResult = await trace.withStage('call_tool', () =>
         this.callTool(step.tool, toolParams),
       );
@@ -204,26 +244,71 @@ export class Executor {
         }
       }
 
+      // 一次步骤只读回一次落盘内容，路径也只解析一次：写盘前用的是
+      // `toolParams.path ?? step.params.path`（技能可能改写路径），写盘后若改用
+      // `step.params.path`，两侧就会指向不同文件——今天的技能都不改写 path，
+      // 所以那是个隐性假设而非现存缺陷，但它正是 emitValidationFailed 的
+      // resolvedPath 参数存在的理由，不该在同一个函数里自相矛盾。
+      const landedPath = writePath;
+      const landedContent = WRITE_ACTIONS.includes(step.action)
+        ? readWrittenFile(this.config.projectRoot, landedPath)
+        : undefined;
+
       const postValidation = await trace.withStage('validate_after', () =>
-        this.validateAfterExecution(step, toolResult, toolParams),
+        this.validateAfterExecution(step, toolResult, toolParams, {
+          path: landedPath,
+          landedContent,
+          preWriteContentValidation: writeContent
+            ? { validation: rawContentValidation, content: writeContent.content }
+            : undefined,
+        }),
       );
 
-      if (!postValidation.pass) {
-        this.emitValidationFailed('post_write', postValidation, step);
-      }
+      const outcome = resolveWriteOutcome({
+        action: step.action,
+        landedPath,
+        landedContent,
+        // 补丁前的原文，供围栏判据判断「这次写入是否引入了围栏」
+        priorContent: landedPath ? context.collectedContext.files.get(landedPath) : undefined,
+        landedLanguage: detectLanguage(String(landedPath)) ?? '',
+        toolResult,
+        postValidation,
+        vetoEnabled,
+        durationMs: Date.now() - startTime,
+      });
 
-      const stepResult: StepResult = {
-        success: postValidation.pass,
-        output: toolResult,
-        error: postValidation.pass ? undefined : postValidation.blockedBy?.join('; '),
-        duration: Date.now() - startTime,
-        snapshotId: (toolResult as { snapshotId?: string })?.snapshotId,
-      };
+      // 发事件与判成败刻意解耦：降级后的判定仍留在 `results` 里（`pass: false`），
+      // 只是不再决定步骤成败。emitValidationFailed 自己按「有没有真实检查判失败」
+      // 过滤，所以把它挂在 `!pass` 分支里，等于让降级顺手把遥测也一起关掉——
+      // #388 要的恰恰是一个能计数的拦截量。消费方必须读 `result.pass` 才能把
+      // 「拦下了」与「只是记了一笔」分开。
+      this.emitValidationFailed('post_write', outcome.validation, step, landedPath);
+
+      if (outcome.unreadablePath) {
+        this.debugWarn(
+          `[Executor] Could not read back ${outcome.unreadablePath} after the write; rollback was not attempted.`,
+        );
+      }
+      const rollbackOutcome = outcome.rollback
+        ? await rollbackFailedWrite(toolResult, {
+            rollback: (snapshotId) => this.rollback(snapshotId),
+            emitEvent: this.config.emitEvent,
+            warn: (message) => this.debugWarn(message),
+          })
+        : { rollbackFailed: false as boolean, error: undefined as string | undefined };
 
       return trace.finish({
-        stepResult,
-        validation: postValidation,
-        needsRollback: !postValidation.pass && step.validation.some((v) => v.required),
+        stepResult: {
+          ...outcome.stepResult,
+          error: describeWriteFailure(
+            outcome.stepResult.error,
+            rollbackOutcome,
+            outcome.unreadablePath,
+          ),
+        },
+        validation: outcome.validation,
+        needsRollback: outcome.needsRollback,
+        rollbackFailed: rollbackOutcome.rollbackFailed,
       });
     } catch (error) {
       trace.markCatchIfEmpty(error);
@@ -597,16 +682,18 @@ export class Executor {
    * 就不能当拦截数用，而 #388 要的正是一个能计数的拦截量。
    */
   private emitValidationFailed(
-    stage: 'pre_execution' | 'post_write',
+    stage: 'pre_execution' | 'pre_write' | 'post_write',
     validation: ValidationResult,
     step: ExecutionStep,
+    /** 已解析的写入路径；技能可能改写过 step.params.path */
+    resolvedPath?: string,
   ): void {
     if (validation.results.some((result) => !result.pass)) {
       this.config.emitEvent?.({
         type: 'validation_failed',
         stage,
         result: validation,
-        path: step.params.path as string | undefined,
+        path: resolvedPath ?? (step.params.path as string | undefined),
         stepId: step.stepId,
       });
     }
@@ -616,6 +703,16 @@ export class Executor {
     step: ExecutionStep,
     result: unknown,
     toolParams?: Record<string, unknown>,
+    /**
+     * 写盘前已在同一份内容上算出的完整校验结果（含 import 检查）。
+     * 有它就直接沿用：内容一模一样，再跑一遍只是重复开销。
+     */
+    write?: {
+      /** 解析后的写入路径与落盘内容，由 executeStep 各读一次后传入 */
+      path: string | undefined;
+      landedContent: string | undefined;
+      preWriteContentValidation?: { validation: ValidationResult; content: string };
+    },
   ): Promise<ValidationResult> {
     if (typeof result === 'object' && result !== null) {
       const resultObj = result as { success?: boolean; error?: string };
@@ -628,22 +725,48 @@ export class Executor {
       }
     }
 
-    if (['apply_patch', 'create_file'].includes(step.action)) {
-      const content =
-        (result as { content?: string })?.content ??
-        (toolParams?.content as string | undefined) ??
-        (step.params.content as string | undefined);
-      const path = step.params.path as string;
+    if (write?.preWriteContentValidation) {
+      // 只有「实际落盘的就是被校验过的那份」才能复用。整文件判定依赖
+      // collectedContext.files 的行数快照，而 apply_patch 成功后该 Map 不刷新——
+      // 同一计划内二次改同一文件时，工具可能只替换了前 N 行并保留尾部，
+      // 落盘内容 ≠ 被校验的 patch.content。不一致就按读回内容重新判。
+      if (
+        write.landedContent === undefined ||
+        write.landedContent === write.preWriteContentValidation.content
+      ) {
+        // 同样按 action 降级：这份结果是写盘**前**算的，但它现在被当作
+        // 写盘**后**的结论用——判据的可信度不因复用而改变。
+        return demoteNonDecidingVerdicts(write.preWriteContentValidation.validation, step.action);
+      }
+    }
+
+    if (WRITE_ACTIONS.includes(step.action)) {
+      const path = write?.path;
+      // 与写盘前共用同一条分派规则（见 resolveWriteActionContent）。这里补丁内容
+      // 来自读回磁盘：真实的 create_file / apply_patch 都不返回 `content`，
+      // 局部行补丁也没有 `content` 参数。
+      const content = resolveWriteActionContent(step, toolParams, {
+        landedContent: write?.landedContent,
+        patchContent: () => write?.landedContent,
+        resultContent: (result as { content?: string })?.content,
+      });
 
       if (content && path) {
         const language = detectLanguage(path);
         if (language) {
+          // 对 `apply_patch` 这次调用是**纯遥测**：validateCode 只产出
+          // syntax_validity 与 import_validity，而 NON_DECIDING_CHECKS 把两者都
+          // 降级了，所以它决定不了这个动作的成败。保留是因为遥测本身是目标
+          // （#388 要一个能计数的量），代价是每个 modify 步骤多一次整文件的
+          // import 解析。不在这里按 ablation 短路：guard 内部本就跳过被禁用的
+          // 检查，而写盘前那次 validateCode 也是无条件调用的——只在一侧短路会让
+          // 读者以为两条路径的 ablation 行为不同。
           const codeValidation = await this.config.hallucinationGuard.validateCode(
             content,
             language,
             path,
           );
-          return codeValidation;
+          return demoteNonDecidingVerdicts(codeValidation, step.action);
         }
       }
     }
@@ -834,10 +957,22 @@ export class Executor {
     return allResults;
   }
 
+  /**
+   * 撤销一次快照。返回形状在此归一化：工具成功时给 `message`，
+   * 而安全层拒绝时给的是 `{ success:false, error }`（`tool-call-handler.ts`）——
+   * 声明成必有 `message` 会让每个调用方各自 cast 一次去捞 `error`。
+   */
   async rollback(snapshotId: string): Promise<{ success: boolean; message: string }> {
     try {
-      const result = await this.callTool('rollback', { snapshotId });
-      return result as { success: boolean; message: string };
+      const result = (await this.callTool('rollback', { snapshotId })) as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+      };
+      return {
+        success: Boolean(result?.success),
+        message: result?.message ?? result?.error ?? 'rollback returned no message',
+      };
     } catch (error) {
       return {
         success: false,

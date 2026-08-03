@@ -752,8 +752,17 @@ export interface ExecutorOutput {
   stepResult: StepResult;
   /** 验证结果 */
   validation: ValidationResult;
-  /** 是否需要回滚 */
+  /** 是否需要回滚：有真实检查判定失败（纯工具错误不计入） */
   needsRollback: boolean;
+  /**
+   * 尝试过回滚且没成功。
+   *
+   * 刻意**不叫**「写入仍在磁盘」：没有快照时压根不会尝试回滚，文件照样留着，
+   * 那种情况下这个字段是 false。要判断「坏文件是否还在」，得看这个字段
+   * 与 needsRollback 的并集，而不是单看它。
+   * 与 needsRollback 分开表达：后者是「要不要中止后续步骤」的调度信号。
+   */
+  rollbackFailed?: boolean;
   /** 后续步骤调整建议 */
   adjustments?: string[];
 }
@@ -840,19 +849,22 @@ export type AgentEvent =
   | { type: 'security_decision'; decision: SecurityDecision }
   | { type: 'stream_token'; token: string; stepId: string }
   /**
-   * 校验拦截。`stage` 是必要的判别字段——发射点的含义完全不同：
-   * `pre_execution` 是执行前的结构性拦截，`post_write` 是内容已落盘后才判失败。
-   * 不带 stage 就没法把它们分开计数，「拦截率」这个指标也就无从谈起（issue #388）。
+   * 校验拦截。`stage` 是必要的判别字段——三个发射点的含义完全不同：
+   * `pre_write` 是「坏内容没能落盘」的真拦截，`post_write` 是「已落盘再判失败」，
+   * `pre_execution` 是执行前的结构性拦截。不带 stage 就没法把它们分开计数，
+   * 「拦截率」这个指标也就无从谈起（issue #388）。
    */
   | {
       type: 'validation_failed';
-      stage: 'pre_execution' | 'post_write';
+      stage: 'pre_execution' | 'pre_write' | 'post_write';
       result: ValidationResult;
       path?: string;
       stepId?: string;
     }
   | { type: 'rollback_started'; snapshotId: string }
   | { type: 'rollback_completed'; snapshotId: string }
+  /** 回滚未成功——写入仍留在磁盘上。没有这个终态，rollback_started 会成为悬空事件 */
+  | { type: 'rollback_failed'; snapshotId: string; error: string }
   | { type: 'task_completed'; result: AgentExecutionResult }
   | { type: 'task_failed'; error: string; taskId?: string };
 

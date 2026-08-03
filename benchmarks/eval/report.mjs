@@ -71,26 +71,26 @@ console.log(`# FrontAgent 消融评测：SDD 规格约束对一次通过率的�
 2. **校验发生在写盘之后，且默认不回滚**
    \`validateAfterExecution\` 在工具执行完成后才校验；失败仅将 step 标记为 \`success: false\`，回滚条件是 \`step.validation.some(v => v.required)\`——而 LLM 生成的计划中 \`validation\` 常为空数组，于是**不触发回滚，已写入的坏文件留在磁盘上**。
 
-3. **\`validation_failed\` 事件${
-     sumEvent(arms.full, 'validation_failed') + sumEvent(arms.ablation, 'validation_failed') > 0
-       ? '为复合口径计数'
-       : '从未触发'
-   }**
+3. **\`validation_failed\` 拦截计数**
    两臂合计 ${sumEvent(arms.full, 'validation_failed') + sumEvent(arms.ablation, 'validation_failed')} 次。${
      sumEvent(arms.full, 'validation_failed') + sumEvent(arms.ablation, 'validation_failed') > 0
        ? '注意这是复合值，不是拦截数——见下方分阶段分解，以及 `benchmarks/results/2026-07-31-validation-telemetry.md`。'
        : '该事件当时在全仓没有任何发射点，所以它不可能是 0 以外的值：这个 0 证明的是「事件没接线」，不是「校验没拦住」。限定见 `benchmarks/results/2026-07-31-validation-telemetry.md`。'
    }
 
-   **按阶段分解**（事件接线后才有意义）：
+   **按阶段分解**（只有 \`pre_write\` 是真拦截；\`post_write\` 含「前向引用 import」这类
+   刻意放行落盘的失败，也含被降级为**不决定步骤成败**的判定——\`apply_patch\` 上的
+   \`syntax_validity\` 与 \`import_validity\` 只记录不否决，所以这一列的计数不等于
+   「有多少步骤因此失败」；\`pre_execution\` 是执行前结构性拦截）：
 
    | 阶段 | SDD 关 | SDD 开 |
    |---|---|---|
-   | \`pre_execution\`（执行前结构性拦截） | ${sumEvent(arms.ablation, 'validation_failed:pre_execution')} | ${sumEvent(arms.full, 'validation_failed:pre_execution')} |
-   | \`post_write\`（已落盘后判失败） | ${sumEvent(arms.ablation, 'validation_failed:post_write')} | ${sumEvent(arms.full, 'validation_failed:post_write')} |
+   | \`pre_write\`（真拦截） | ${sumEvent(arms.ablation, 'validation_failed:pre_write')} | ${sumEvent(arms.full, 'validation_failed:pre_write')} |
+   | \`post_write\` | ${sumEvent(arms.ablation, 'validation_failed:post_write')} | ${sumEvent(arms.full, 'validation_failed:post_write')} |
+   | \`pre_execution\` | ${sumEvent(arms.ablation, 'validation_failed:pre_execution')} | ${sumEvent(arms.full, 'validation_failed:pre_execution')} |
 
-   > 全为 0 时先分清「未接线」与「零拦截」：若 JSONL 里连 \`validation_failed\` 这个裸键
-   > 都不存在，说明该轮数据产自事件接线之前，此时 0 不构成任何证据。
+   > 上表全为 0 时要先分清「未接线」与「零拦截」：若 JSONL 里连 \`validation_failed\` 这个
+   > 裸键都不存在，说明该轮数据产自事件接线之前，此时 0 不构成任何证据。
 
 **实证**：失败样本中出现 \`TS1127: Invalid character\`——markdown 代码围栏被原样写进 \`.tsx\` 文件并落盘，两臂皆有。这正是 \`checkSyntaxValidity\` 的目标场景，guard 在运行却未阻止其落盘，与缺陷 2 的机制一致。
 

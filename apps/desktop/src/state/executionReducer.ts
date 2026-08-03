@@ -284,12 +284,37 @@ export function consoleReducer(state: ConsoleState, event: AgentEvent): ConsoleS
       };
 
     case 'validation_failed': {
-      // 阶段决定这条日志的含义：pre_execution 是执行前结构性拦截，
-      // post_write 是内容已落盘后才判失败（文件还在）。混成一句会误导读日志的人。
-      const stageLabel = event.stage === 'post_write' ? '写盘后校验失败' : '执行前校验失败';
+      // 这个事件现在有两种含义，必须看 `result.pass` 才能分开：
+      // 执行器把「发事件」与「判成败」解耦了，被降级的判定（写动作上的
+      // syntax_validity、apply_patch 上的 import_validity）仍以 pass:false 留在
+      // results 里并照常发事件，但 `blockedBy` 是空的、步骤是成功的。只按 stage
+      // 归类会把它标成「校验失败」并给出一句没有理由的 warn——而按 #413 的实测
+      // （撇号、多行模板字符串、JSX 缩写全判 block）这会出现在大量成功写入上。
+      const recordedOnly = event.result.pass;
+      // 阶段决定了这条日志的含义：pre_write 是「坏内容没能落盘」（好事），
+      // post_write 是「已落盘再判失败」（文件可能还在）。混成一句会误导读日志的人。
+      // 「未否决」与 stage 组合而不是短路它：今天只有 post_write 会带 pass:true，
+      // 但写死「写盘后」会让另外两个阶段将来一旦也发记录型事件就被贴错标签。
+      const stagePrefix =
+        event.stage === 'pre_write' ? '写盘前' : event.stage === 'post_write' ? '写盘后' : '执行前';
+      const stageLabel = recordedOnly
+        ? `${stagePrefix}校验记录（未否决）`
+        : event.stage === 'pre_write'
+          ? '写盘前拦截'
+          : `${stagePrefix}校验失败`;
       const target = event.path ? `[${event.path}] ` : '';
-      const reason = event.result.blockedBy?.length ? `: ${event.result.blockedBy.join(', ')}` : '';
-      return appendLog(state, 'warn', `${stageLabel} ${target}${reason}`.trim());
+      // 降级项的理由不在 blockedBy 里（那是「否决了什么」），退回到 results 上的
+      // 检查名，否则这条日志会只剩一个前缀。
+      const recordedReasons = event.result.results
+        .filter((entry) => !entry.pass)
+        .map((entry) => entry.message ?? entry.type);
+      const reasons = event.result.blockedBy?.length ? event.result.blockedBy : recordedReasons;
+      const reason = reasons.length ? `: ${reasons.join(', ')}` : '';
+      return appendLog(
+        state,
+        recordedOnly ? 'info' : 'warn',
+        `${stageLabel} ${target}${reason}`.trim(),
+      );
     }
 
     case 'rollback_started':
@@ -297,6 +322,15 @@ export function consoleReducer(state: ConsoleState, event: AgentEvent): ConsoleS
 
     case 'rollback_completed':
       return appendLog(state, 'info', `回滚完成: ${event.snapshotId}`);
+
+    case 'rollback_failed':
+      // 没有这条，`rollback_started` 会成为永远等不到收尾的日志，
+      // 用户也无从知道坏文件仍在工作区里。
+      return appendLog(
+        state,
+        'error',
+        `回滚失败: ${event.snapshotId}（写入仍在磁盘上）: ${event.error}`,
+      );
 
     case 'task_completed':
       // A `task_completed` event only means the run reached its end — the run

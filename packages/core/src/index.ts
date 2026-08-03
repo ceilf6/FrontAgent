@@ -30,7 +30,10 @@ export {
   type GeneratedCode,
   type GeneratedPatch,
   type GeneratedPlan,
+  isLLMRequestFailure,
   LLMService,
+  stripLLMRequestTag,
+  tagLLMRequestFailure,
 } from './llm/index.js';
 export type {
   MemoryConfig,

@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -439,6 +440,40 @@ test('contract guard skips dependabot-authored PRs by author, not actor', () => 
   assert.deepEqual(classifyContractPaths(['.github/workflows/contract-guard.yml']).critical, [
     { file: '.github/workflows/contract-guard.yml', category: 'repo-harness' },
   ]);
+});
+
+// #437 的机制:`actions/checkout@v4` 这条**移动的 tag** 悄悄改了行为(开始拒绝
+// pull_request_target 下的 fork checkout),Repo Guard 在我们这边零改动的情况下对
+// 每个 fork PR 全红。#438 补的回归测试断言的是 workflow **文本**,而 GitHub Actions
+// 对未知的 `with:` 键只告警不失败——tag 再动一次、把 `allow-unsafe-pr-checkout`
+// 改名或删掉,fork PR 会在 checkout 处坏掉而 test:workflows 照旧全绿,正是藏住
+// #437 的那套机制。所以这里要求的是 SHA,不是「某个 tag 名」。
+test('third-party actions are pinned to a commit SHA', () => {
+  const workflows = readdirSync('.github/workflows').filter((file) => file.endsWith('.yml'));
+  assert.ok(workflows.length > 0, 'no workflows found');
+
+  // 第一方 action 例外:仓库自己控制它,钉 SHA 意味着 repo-guard 每次改动都要回来
+  // 提一个 bump PR。它确实也是移动 ref,且跑在带 secrets 的自托管 runner 上——
+  // 要不要一并钉住是维护者的策略决定,不在本条断言的范围内(#440)。
+  const FIRST_PARTY_UNPINNED = new Set(['ceilf6/repo-guard@main']);
+  const pinned = /^[0-9a-f]{40}$/u;
+
+  const offenders = [];
+  for (const file of workflows) {
+    const text = readFileSync(join('.github/workflows', file), 'utf8');
+    for (const line of text.split('\n')) {
+      const match = /^\s*(?:-\s*)?uses:\s*(\S+)/u.exec(line);
+      if (!match) continue;
+      const [owner, ref] = [match[1], match[1].split('@')[1] ?? ''];
+      if (FIRST_PARTY_UNPINNED.has(owner)) continue;
+      if (!pinned.test(ref)) offenders.push(`${file}: ${owner}`);
+      // 光有 SHA 读不出这是哪个版本,升级时无从判断跨了多少。要求尾注版本号。
+      else if (!/#\s*v?\d+(\.\d+)*/u.test(line))
+        offenders.push(`${file}: ${owner} (no version comment)`);
+    }
+  }
+
+  assert.deepEqual(offenders, [], `pin these to a commit SHA with a trailing # version comment`);
 });
 
 test('desktop app has an unsigned electron-builder packaging path', () => {

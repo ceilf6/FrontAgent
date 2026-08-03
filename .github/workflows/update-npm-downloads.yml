@@ -12,6 +12,9 @@ jobs:
   update:
     runs-on: ubuntu-latest
     steps:
+      # 刻意留在 v4:同 repo-guard.yml 的理由(v5.0.0 起改用 node24),而且本
+      # workflow 的 `git push` 依赖 checkout 持久化的默认凭据。两处应当一起动。
+      # 升级前先确认自托管 runner 满足 node24。见 #440。
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
       - name: Fetch cumulative downloads and patch README
         run: |

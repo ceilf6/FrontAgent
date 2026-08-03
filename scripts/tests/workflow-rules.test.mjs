@@ -472,7 +472,9 @@ test('third-party actions are pinned to a commit SHA', () => {
       if (FIRST_PARTY_UNPINNED.has(owner)) continue;
       if (!pinned.test(ref)) offenders.push(`${file}: ${owner}`);
       // 光有 SHA 读不出这是哪个版本,升级时无从判断跨了多少。要求尾注版本号。
-      else if (!/#\s*v?\d+(\.\d+)*/u.test(line))
+      // 锚定到 SHA 之后的注释:不锚定的话,行内任何位置出现的数字(比如一句
+      // 「# 见 #440」)都会被当成版本号,这条断言就形同虚设。
+      else if (!new RegExp(`@${ref}\\s*#\\s*v?\\d+(\\.\\d+)*(\\s|$)`, 'u').test(line))
         offenders.push(`${file}: ${owner} (no version comment)`);
     }
   }

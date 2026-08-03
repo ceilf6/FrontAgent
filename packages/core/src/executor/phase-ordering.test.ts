@@ -19,10 +19,20 @@ describe('getPhasePriority', () => {
   // 用，排在它们之后等于没接（issue #446）。断言的是「小于分析」而不是某个字面量，
   // 免得调优优先级数值时被迫改这条。
   it('runs preparation before every other phase', () => {
+    // planner-skills.ts 写死的就是这个字面量；断言它而不是某种措辞
     expect(getPhasePriority('preparation')).toBe(5);
-    expect(getPhasePriority('准备目录导航上下文')).toBe(5);
+    expect(getPhasePriority('  PREPARATION  ')).toBe(5);
     for (const later of ['分析需求', '创建组件', '安装依赖', '验证结果', '未分组', '别的什么']) {
       expect(getPhasePriority('preparation')).toBeLessThan(getPhasePriority(later));
+    }
+  });
+
+  // 其余分支用 includes 是为了容忍 LLM 的自由措辞；preparation 是我们自己写死的
+  // 字面量，所以走全等。否则模型顺手写的「准备提交 / prepare release」会被提到
+  // 全局第一位，而那类阶段通常该最后跑。
+  it('does not hoist unrelated phases that merely mention preparing', () => {
+    for (const unrelated of ['准备提交', 'prepare release', 'prepare deployment']) {
+      expect(getPhasePriority(unrelated)).not.toBe(5);
     }
   });
 

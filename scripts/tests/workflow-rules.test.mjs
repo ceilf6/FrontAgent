@@ -450,6 +450,10 @@ test('contract guard skips dependabot-authored PRs by author, not actor', () => 
 // #437 的那套机制。所以这里要求的是 SHA,不是「某个 tag 名」。
 test('third-party actions are pinned to a commit SHA', () => {
   // .yaml 也是合法的 workflow 后缀；只收 .yml 会让一个新增的 x.yaml 静默豁免整条规则。
+  //
+  // 边界:只扫 .github/workflows/。复合 action（.github/actions/**/action.yml）里的
+  // `uses:` 同样能引入移动 tag,同样会被这条规则静默豁免。今天这个目录不存在,
+  // 所以是零影响；真要新增复合 action 时,把它一并纳入扫描源，别重新推导一遍。
   const workflows = readdirSync('.github/workflows').filter((file) => /\.ya?ml$/u.test(file));
   assert.ok(workflows.length > 0, 'no workflows found');
 

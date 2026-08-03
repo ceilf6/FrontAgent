@@ -9,7 +9,9 @@ import {
   createAgent,
   type ExecutorStepTrace,
   type HallucinationGuardConfig,
+  isLLMRequestFailure,
   type LLMBackend,
+  stripLLMRequestTag,
 } from '@frontagent/core';
 import { createShellMCPClient } from '@frontagent/mcp-shell';
 import type { ApprovalRequest, SecurityApprovalResponse, TaskType } from '@frontagent/shared';
@@ -87,21 +89,35 @@ export function formatRunError(
 ): string | undefined {
   if (!error || input.debug) return error;
 
-  if (/not found|404/i.test(error)) {
+  // 按**来源**分类，不按子串。此前这里用 `/not found|404/` 猜，于是
+  // `Cannot apply patch: file not found in context: src/hooks/useDebounce.ts`
+  // 被改写成一次 404 供应商配置错误，还附上从配置里读来的 provider / model /
+  // baseURL——一次没发生过的 LLM 失败，被伪造得证据充分（#408）。标记由
+  // llm-service 在真实请求失败处打上，是唯一能穿过 `error.message` 拍平的通道。
+  if (!isLLMRequestFailure(error)) {
+    return error.split('\n')[0];
+  }
+
+  const original = stripLLMRequestTag(error).split('\n')[0];
+  const endpoint = `provider=${input.provider}, model=${input.model}, baseURL=${input.baseURL ?? '(default)'}`;
+
+  // 原文一律保留。它是唯一准确的那部分信息，此前被整条替换掉——而 debug 模式
+  // 早就把它原样打出来了，说明它一直存在，只是在默认路径上被丢了。
+  if (/not found|404/i.test(original)) {
     return [
-      'LLM 请求失败：404 Not Found。',
-      `请检查 provider/model/base-url：provider=${input.provider}, model=${input.model}, baseURL=${input.baseURL ?? '(default)'}`,
+      `LLM 请求失败：404 Not Found（${original}）`,
+      `请检查 provider/model/base-url：${endpoint}`,
       input.provider === 'anthropic'
         ? 'Anthropic provider 会请求 baseURL + /messages；请确认供应商支持 Anthropic Messages API。'
         : '如 baseURL 包含 /chat/completions，CLI 会自动裁剪；仍失败时请确认供应商的 OpenAI-compatible 地址。',
     ].join('\n');
   }
 
-  if (/api key|apikey|unauthorized|401/i.test(error)) {
-    return `LLM 鉴权失败。请检查 ${input.provider.toUpperCase()}_API_KEY 或 --api-key。`;
+  if (/api key|apikey|unauthorized|401/i.test(original)) {
+    return `LLM 鉴权失败（${original}）。请检查 ${input.provider.toUpperCase()}_API_KEY 或 --api-key。`;
   }
 
-  return error.split('\n')[0];
+  return `LLM 请求失败：${original}`;
 }
 
 export async function runFrontAgentTask(

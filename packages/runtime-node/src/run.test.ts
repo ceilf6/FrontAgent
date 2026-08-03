@@ -68,7 +68,12 @@ const createAgent = vi.fn((config: AgentConfig) => {
   };
 });
 
-vi.mock('@frontagent/core', () => ({
+// createAgent is the seam this file needs faked; the LLM-failure tag helpers are
+// pure string functions with no collaborators, so they come through from the real
+// module — mocking them would make `formatRunError`'s provenance check untestable
+// here for no benefit.
+vi.mock('@frontagent/core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@frontagent/core')>()),
   createAgent: (config: AgentConfig) => createAgent(config),
 }));
 

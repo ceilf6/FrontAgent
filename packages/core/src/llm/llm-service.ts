@@ -16,6 +16,7 @@ import {
   generateCodeForFile as generateCodeForFileImpl,
   generateModifiedCode as generateModifiedCodeImpl,
 } from './code-generation.js';
+import { tagLLMRequestFailure } from './llm-request-error.js';
 import { tryFixGeneratedObject } from './object-repair.js';
 import {
   generatePlan as generatePlanImpl,
@@ -192,14 +193,18 @@ export class LLMService {
     if (!this.model) {
       throw new Error('No LLM model is configured');
     }
-    const result = await generateText({
-      model: this.model,
-      messages: this.convertMessages(options.messages),
-      system: options.system,
-      ...this.buildCallSettings(options),
-    });
+    try {
+      const result = await generateText({
+        model: this.model,
+        messages: this.convertMessages(options.messages),
+        system: options.system,
+        ...this.buildCallSettings(options),
+      });
 
-    return result.text;
+      return result.text;
+    } catch (error) {
+      throw tagLLMRequestFailure(error);
+    }
   }
 
   async *streamText(options: {
@@ -221,15 +226,19 @@ export class LLMService {
     if (!this.model) {
       throw new Error('No LLM model is configured');
     }
-    const result = streamText({
-      model: this.model,
-      messages: this.convertMessages(options.messages),
-      system: options.system,
-      ...this.buildCallSettings(options),
-    });
+    try {
+      const result = streamText({
+        model: this.model,
+        messages: this.convertMessages(options.messages),
+        system: options.system,
+        ...this.buildCallSettings(options),
+      });
 
-    for await (const chunk of result.textStream) {
-      yield chunk;
+      for await (const chunk of result.textStream) {
+        yield chunk;
+      }
+    } catch (error) {
+      throw tagLLMRequestFailure(error);
     }
   }
 
@@ -320,7 +329,7 @@ export class LLMService {
         LLMService.errorStats.unfixedErrors++;
         this.debugError('[LLMService] ❌ All fix attempts and retries failed');
         this.debugLog('[LLMService] Error Stats:', LLMService.getErrorStats());
-        throw error;
+        throw tagLLMRequestFailure(error);
       }
     }
 

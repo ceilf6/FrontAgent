@@ -449,7 +449,8 @@ test('contract guard skips dependabot-authored PRs by author, not actor', () => 
 // 改名或删掉,fork PR 会在 checkout 处坏掉而 test:workflows 照旧全绿,正是藏住
 // #437 的那套机制。所以这里要求的是 SHA,不是「某个 tag 名」。
 test('third-party actions are pinned to a commit SHA', () => {
-  const workflows = readdirSync('.github/workflows').filter((file) => file.endsWith('.yml'));
+  // .yaml 也是合法的 workflow 后缀；只收 .yml 会让一个新增的 x.yaml 静默豁免整条规则。
+  const workflows = readdirSync('.github/workflows').filter((file) => /\.ya?ml$/u.test(file));
   assert.ok(workflows.length > 0, 'no workflows found');
 
   // 第一方 action 例外:仓库自己控制它,钉 SHA 意味着 repo-guard 每次改动都要回来
@@ -465,6 +466,9 @@ test('third-party actions are pinned to a commit SHA', () => {
       const match = /^\s*(?:-\s*)?uses:\s*(\S+)/u.exec(line);
       if (!match) continue;
       const [owner, ref] = [match[1], match[1].split('@')[1] ?? ''];
+      // 本地 action / reusable workflow（`uses: ./.github/actions/foo`）没有 @ref，
+      // 结构上就钉不了 SHA；它们是本仓库的代码，不存在第三方漂移。
+      if (owner.startsWith('./')) continue;
       if (FIRST_PARTY_UNPINNED.has(owner)) continue;
       if (!pinned.test(ref)) offenders.push(`${file}: ${owner}`);
       // 光有 SHA 读不出这是哪个版本,升级时无从判断跨了多少。要求尾注版本号。

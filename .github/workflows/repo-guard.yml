@@ -72,7 +72,7 @@ jobs:
       # pull_request_target,两种写法行为相同;但若守卫日后扩展到更多事件,
       # 一个无条件置位的开关会把 issue_comment 这条边界更宽的路径也静默放行。
       # 表达式渲染为布尔字面量 true / false。
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         if: github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && github.event.issue.pull_request)
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || format('refs/pull/{0}/head', github.event.issue.number) }}

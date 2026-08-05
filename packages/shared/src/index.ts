@@ -2,6 +2,8 @@
  * @frontagent/shared - Shared types and utilities
  */
 
+// File patch projection
+export { type ApplyFilePatchesResult, applyFilePatches } from './file-patches.js';
 // Logger
 export { getLogLevel, type LogLevel, logger, setLogLevel } from './logger.js';
 // Security - Permission rules

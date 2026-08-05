@@ -76,7 +76,7 @@ jobs:
       # 自托管 runner(vars.REPO_GUARD_RUNNER),它是否满足 node24 从本仓库看不到。
       # 猜错的失败形态与 #437 逐字相同——checkout 处红、评审 step skipped、我们这边
       # 零改动。dependabot 提 v6/v7 升级时:先确认 runner 版本,再合。见 #440。
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         if: github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && github.event.issue.pull_request)
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || format('refs/pull/{0}/head', github.event.issue.number) }}

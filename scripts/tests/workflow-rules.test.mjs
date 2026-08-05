@@ -861,6 +861,10 @@ test('repo guard can check out fork PRs from allowlisted contributors', () => {
     /allow-unsafe-pr-checkout:\s*\$\{\{\s*github\.event_name == 'pull_request_target'\s*\}\}/u,
   );
   assert.match(checkoutStep, /persist-credentials:\s*false/u);
+  assert.match(
+    checkoutStep,
+    /if:\s*github\.event_name == 'pull_request_target' \|\| \(github\.event_name == 'issue_comment' && github\.event\.issue\.pull_request\)/u,
+  );
   // The safety argument depends on the fork path resolving to a fixed head SHA.
   // Match the ternary branch, not the bare string: a branch ref or
   // refs/pull/{n}/merge there would open a TOCTOU gap between the commit the
@@ -878,6 +882,10 @@ test('repo guard can check out fork PRs from allowlisted contributors', () => {
   assert.match(
     repoGuard,
     /github\.event_name == 'pull_request_target' &&\s*\(\s*github\.event\.pull_request\.head\.repo\.full_name == github\.repository \|\|\s*contains\(fromJSON\([^)]*\), github\.event\.pull_request\.user\.login\)\s*\)/u,
+  );
+  assert.match(
+    repoGuard,
+    /github\.event_name == 'issue_comment' &&\s*\(\s*contains\(fromJSON\([^)]*\), github\.event\.comment\.author_association\) \|\|\s*contains\(fromJSON\([^)]*\), github\.event\.comment\.user\.login\)\s*\)/u,
   );
 });
 

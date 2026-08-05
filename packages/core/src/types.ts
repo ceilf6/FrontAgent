@@ -822,12 +822,13 @@ export type AgentEvent =
   | { type: 'stream_token'; token: string; stepId: string }
   /**
    * 校验拦截。`stage` 是必要的判别字段——发射点的含义完全不同：
-   * `pre_execution` 是执行前的结构性拦截，`post_write` 是内容已落盘后才判失败。
-   * 不带 stage 就没法把它们分开计数，「拦截率」这个指标也就无从谈起（issue #388）。
+   * `pre_execution` is a structural rejection before parameters are prepared,
+   * `pre_write` rejects exact generated content before it reaches disk, and
+   * `post_write` means a check failed after content had already been written.
    */
   | {
       type: 'validation_failed';
-      stage: 'pre_execution' | 'post_write';
+      stage: 'pre_execution' | 'pre_write' | 'post_write';
       result: ValidationResult;
       path?: string;
       stepId?: string;

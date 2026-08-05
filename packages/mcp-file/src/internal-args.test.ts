@@ -6,10 +6,12 @@ describe('stripInternalArgs', () => {
     const result = stripInternalArgs({
       path: 'package.json',
       __frontagentSecurityApproved: true,
+      __frontagentExpectedOriginalHash: 'sha256',
     });
 
     expect(result).toEqual({ path: 'package.json' });
     expect('__frontagentSecurityApproved' in result).toBe(false);
+    expect('__frontagentExpectedOriginalHash' in result).toBe(false);
   });
 
   it('removes any __frontagent-prefixed key', () => {

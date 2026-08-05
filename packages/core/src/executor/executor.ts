@@ -1,7 +1,14 @@
+import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { AgentTask, ExecutionStep, StepResult, ValidationResult } from '@frontagent/shared';
-import { logger } from '@frontagent/shared';
+import type {
+  AgentTask,
+  ExecutionStep,
+  FilePatch,
+  StepResult,
+  ValidationResult,
+} from '@frontagent/shared';
+import { applyFilePatches, logger } from '@frontagent/shared';
 import {
   createDefaultExecutorSkillRegistry,
   type ExecutorActionSkill,
@@ -174,6 +181,26 @@ export class Executor {
         }),
       );
 
+      const preflight = await this.validateWriteBeforeExecution(step, toolParams, context);
+      if (preflight) {
+        if (!preflight.validation.pass) {
+          this.emitValidationFailed('pre_write', preflight.validation, step);
+          const errorMsg = preflight.validation.blockedBy?.join('; ') || 'Invalid write content';
+          return trace.finish({
+            stepResult: {
+              success: false,
+              error: `Pre-write validation failed: ${errorMsg}`,
+              duration: Date.now() - startTime,
+            },
+            validation: preflight.validation,
+            // No mutation happened, but existing runners use this flag to stop
+            // dependent work after a write failure.
+            needsRollback: true,
+          });
+        }
+        toolParams = preflight.toolParams;
+      }
+
       const toolResult = await trace.withStage('call_tool', () =>
         this.callTool(step.tool, toolParams),
       );
@@ -192,8 +219,12 @@ export class Executor {
       }
 
       const postValidation = await trace.withStage('validate_after', () =>
-        this.validateAfterExecution(step, toolResult, toolParams),
+        this.validateAfterExecution(step, toolResult, toolParams, preflight?.content),
       );
+
+      if (preflight?.content && this.isSuccessfulToolResult(toolResult)) {
+        context.collectedContext.files.set(preflight.path, preflight.content);
+      }
 
       if (!postValidation.pass) {
         this.emitValidationFailed('post_write', postValidation, step);
@@ -526,6 +557,103 @@ export class Executor {
     };
   }
 
+  private async validateWriteBeforeExecution(
+    step: ExecutionStep,
+    toolParams: Record<string, unknown>,
+    context: { task: AgentTask; collectedContext: ExecutorCollectedContext },
+  ): Promise<
+    | {
+        path: string;
+        content: string;
+        validation: ValidationResult;
+        toolParams: Record<string, unknown>;
+      }
+    | undefined
+  > {
+    if (step.action !== 'create_file' && step.action !== 'apply_patch') return undefined;
+
+    const path = typeof toolParams.path === 'string' ? toolParams.path : undefined;
+    if (!path) return undefined;
+    const language = detectLanguage(path);
+    if (!language || language === 'yaml') return undefined;
+
+    if (step.action === 'create_file') {
+      if (typeof toolParams.content !== 'string') return undefined;
+      return {
+        path,
+        content: toolParams.content,
+        validation: await this.config.hallucinationGuard.validateSyntax(
+          toolParams.content,
+          language,
+          path,
+        ),
+        toolParams,
+      };
+    }
+
+    const originalContent = context.collectedContext.files.get(path);
+    const patches = Array.isArray(toolParams.patches) ? (toolParams.patches as FilePatch[]) : [];
+    if (originalContent === undefined) {
+      return {
+        path,
+        content: '',
+        validation: this.buildWriteValidationFailure(
+          `Cannot preflight patch: original content for ${path} is unavailable`,
+        ),
+        toolParams,
+      };
+    }
+
+    const projected = applyFilePatches(originalContent, patches);
+    if (!projected.ok) {
+      return {
+        path,
+        content: '',
+        validation: this.buildWriteValidationFailure(projected.error),
+        toolParams,
+      };
+    }
+
+    return {
+      path,
+      content: projected.content,
+      validation: await this.config.hallucinationGuard.validateSyntax(
+        projected.content,
+        language,
+        path,
+      ),
+      toolParams: {
+        ...toolParams,
+        __frontagentExpectedOriginalHash: createHash('sha256')
+          .update(originalContent, 'utf8')
+          .digest('hex'),
+      },
+    };
+  }
+
+  private buildWriteValidationFailure(message: string): ValidationResult {
+    return {
+      pass: false,
+      results: [
+        {
+          pass: false,
+          type: 'syntax_validity',
+          severity: 'block',
+          message,
+        },
+      ],
+      blockedBy: [message],
+    };
+  }
+
+  private isSuccessfulToolResult(result: unknown): boolean {
+    return !(
+      typeof result === 'object' &&
+      result !== null &&
+      (result as { success?: boolean }).success === false
+    );
+  }
+
   /**
    * 只有「至少一项真实检查判定失败」才算校验拦截。
    * `validateAfterExecution` 在工具自身报错时返回 results 为空的失败结果——
@@ -533,7 +661,7 @@ export class Executor {
    * 就不能当拦截数用，而 #388 要的正是一个能计数的拦截量。
    */
   private emitValidationFailed(
-    stage: 'pre_execution' | 'post_write',
+    stage: 'pre_execution' | 'pre_write' | 'post_write',
     validation: ValidationResult,
     step: ExecutionStep,
   ): void {
@@ -552,6 +680,7 @@ export class Executor {
     step: ExecutionStep,
     result: unknown,
     toolParams?: Record<string, unknown>,
+    preflightContent?: string,
   ): Promise<ValidationResult> {
     if (typeof result === 'object' && result !== null) {
       const resultObj = result as { success?: boolean; error?: string };
@@ -565,21 +694,17 @@ export class Executor {
     }
 
     if (['apply_patch', 'create_file'].includes(step.action)) {
+      const path = (toolParams?.path as string | undefined) ?? (step.params.path as string);
       const content =
+        preflightContent ??
         (result as { content?: string })?.content ??
         (toolParams?.content as string | undefined) ??
         (step.params.content as string | undefined);
-      const path = step.params.path as string;
 
       if (content && path) {
         const language = detectLanguage(path);
-        if (language) {
-          const codeValidation = await this.config.hallucinationGuard.validateCode(
-            content,
-            language,
-            path,
-          );
-          return codeValidation;
+        if (language === 'typescript' || language === 'javascript') {
+          return this.config.hallucinationGuard.validateImports(content, path);
         }
       }
     }

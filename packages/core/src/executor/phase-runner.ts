@@ -217,7 +217,21 @@ export class PhaseRunner {
             phaseErrors.push({ step, error: output.stepResult.error || 'Unknown error' });
           }
           onStepComplete?.(step, output);
+          if (!output.stepResult.success && output.needsRollback) {
+            for (const pendingStep of pending) pendingStep.status = 'skipped';
+          }
         }
+      }
+
+      if (
+        results.some(
+          (result) =>
+            result.status === 'fulfilled' &&
+            !result.value.output.stepResult.success &&
+            result.value.output.needsRollback,
+        )
+      ) {
+        break;
       }
     }
   }
@@ -276,6 +290,13 @@ export class PhaseRunner {
 
       if (onStepComplete) {
         onStepComplete(step, output);
+      }
+
+      if (!output.stepResult.success && output.needsRollback) {
+        for (const remaining of phaseSteps.slice(phaseSteps.indexOf(step) + 1)) {
+          if (remaining.status === 'pending') remaining.status = 'skipped';
+        }
+        break;
       }
     }
   }

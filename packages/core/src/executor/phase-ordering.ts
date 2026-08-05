@@ -146,6 +146,8 @@ export function detectLanguage(path: string): 'typescript' | 'javascript' | 'jso
   switch (ext) {
     case 'ts':
     case 'tsx':
+    case 'mts':
+    case 'cts':
       return 'typescript';
     case 'js':
     case 'jsx':

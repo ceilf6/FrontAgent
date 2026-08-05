@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -313,6 +314,64 @@ describe('applyPatch line-range validation', () => {
 
     expect(result.success).toBe(true);
     expect(readFixture(root)).toBe('line1\ninserted\nline4\nline5');
+  });
+
+  it('accepts the expected original hash and rejects a stale patch base before snapshot creation', () => {
+    const root = makeRoot();
+    makeFixture(root);
+    const matchingManager = new SnapshotManager(root);
+    const matchingHash = createHash('sha256').update(FIXTURE, 'utf8').digest('hex');
+
+    const accepted = applyPatch(
+      {
+        path: 'src/sample.ts',
+        patches: [{ operation: 'replace', startLine: 2, content: 'patched' }],
+        __frontagentExpectedOriginalHash: matchingHash,
+      },
+      root,
+      matchingManager,
+    );
+    expect(accepted.success).toBe(true);
+
+    writeFileSync(join(root, 'src/sample.ts'), FIXTURE, 'utf-8');
+    const staleManager = new SnapshotManager(root);
+    const rejected = applyPatch(
+      {
+        path: 'src/sample.ts',
+        patches: [{ operation: 'replace', startLine: 2, content: 'corrupted' }],
+        __frontagentExpectedOriginalHash: 'stale-hash',
+      },
+      root,
+      staleManager,
+    );
+
+    expect(rejected.success).toBe(false);
+    expect(rejected.error).toMatch(/changed since executor preflight/i);
+    expect(rejected.snapshotId).toBe('');
+    expect(staleManager.getFileSnapshots(join(root, 'src/sample.ts'))).toHaveLength(0);
+    expect(readFixture(root)).toBe(FIXTURE);
+  });
+
+  it('reports parser-backed syntax validation for the projected result', () => {
+    const root = makeRoot();
+    makeFixture(root);
+
+    const result = applyPatch(
+      {
+        path: 'src/sample.ts',
+        patches: [{ operation: 'replace', startLine: 1, endLine: 5, content: 'const x = ;' }],
+        dryRun: true,
+      },
+      root,
+      new SnapshotManager(root),
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.validation.syntaxValid).toBe(false);
+    expect(result.validation.lintErrors[0]).toEqual(
+      expect.objectContaining({ rule: expect.stringMatching(/^syntax\//), severity: 'error' }),
+    );
+    expect(readFixture(root)).toBe(FIXTURE);
   });
 
   it('rejects the whole patch set before creating a snapshot when any patch is invalid', () => {

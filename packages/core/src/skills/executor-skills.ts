@@ -289,6 +289,9 @@ function createApplyPatchSkill(runtime: ExecutorSkillRuntime): ExecutorActionSki
       };
     },
     shouldSkipToolError: ({ errorMsg }) => {
+      if (errorMsg.includes('changed since executor preflight')) {
+        return false;
+      }
       if (
         errorMsg.includes('file not found in context') ||
         errorMsg.includes('Cannot apply patch')

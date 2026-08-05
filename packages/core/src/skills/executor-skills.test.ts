@@ -224,6 +224,15 @@ describe('shouldSkipToolError policies', () => {
     expect(skipFor('filesense_query', 'index server crashed')).toBe(true);
   });
 
+  it('apply_patch treats stale preflight bases as fatal', () => {
+    expect(
+      skipFor(
+        'apply_patch',
+        'Cannot apply patch: file changed since executor preflight; refusing stale base',
+      ),
+    ).toBe(false);
+  });
+
   it('read_file skips missing-file errors only', () => {
     expect(skipFor('read_file', 'File not found: src/a.ts')).toBe(true);
     expect(skipFor('read_file', 'path does not exist')).toBe(true);

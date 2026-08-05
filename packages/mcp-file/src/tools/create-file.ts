@@ -78,8 +78,13 @@ export function createFile(
       mkdirSync(dir, { recursive: true });
     }
 
-    // 写入文件
-    writeFileSync(safePath.fullPath, content, 'utf-8');
+    // Use exclusive creation for non-overwrite writes so a file created after
+    // the initial existence check cannot be overwritten by a race.
+    if (overwrite) {
+      writeFileSync(safePath.fullPath, content, 'utf-8');
+    } else {
+      writeFileSync(safePath.fullPath, content, { encoding: 'utf-8', flag: 'wx' });
+    }
     snapshotManager.updateSnapshotContent(snapshotId, content);
 
     return {

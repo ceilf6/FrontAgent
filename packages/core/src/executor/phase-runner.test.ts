@@ -196,6 +196,26 @@ describe('PhaseRunner', () => {
       expect(step.status).toBe('failed');
     });
 
+    it('stops sequential execution after a write failure that requires recovery', async () => {
+      const failed = makeStep({ stepId: 's1' });
+      const pending = makeStep({ stepId: 's2' });
+      const failure = { ...makeOutput(false), needsRollback: true };
+      const deps = makeDeps({ executeStep: vi.fn().mockResolvedValue(failure) });
+      const runner = new PhaseRunner(deps);
+
+      await runner.executeSinglePhaseWithRecovery(
+        makePhaseGroup([failed, pending]),
+        makeContext(),
+        new Set(),
+        [],
+        {},
+      );
+
+      expect(deps.executeStep).toHaveBeenCalledTimes(1);
+      expect(failed.status).toBe('failed');
+      expect(pending.status).toBe('skipped');
+    });
+
     it('calls onPhaseStart and onPhaseComplete callbacks', async () => {
       const step = makeStep({ stepId: 's1' });
       const deps = makeDeps();
@@ -282,6 +302,29 @@ describe('PhaseRunner', () => {
       expect(step2.status).toBe('completed');
     });
 
+    it('does not schedule a later dependency wave after a recovery-required failure', async () => {
+      const failed = makeStep({ stepId: 's1', dependencies: [] });
+      const dependent = makeStep({ stepId: 's2', dependencies: ['s1'] });
+      const failure = { ...makeOutput(false), needsRollback: true };
+      const deps = makeDeps({
+        parallelExecution: true,
+        executeStep: vi.fn().mockResolvedValue(failure),
+      });
+      const runner = new PhaseRunner(deps);
+
+      await runner.executeSinglePhaseWithRecovery(
+        makePhaseGroup([failed, dependent]),
+        makeContext(),
+        new Set(),
+        [],
+        {},
+      );
+
+      expect(deps.executeStep).toHaveBeenCalledTimes(1);
+      expect(failed.status).toBe('failed');
+      expect(dependent.status).toBe('skipped');
+    });
+
     it('respects dependencies in parallel mode', async () => {
       const step1 = makeStep({ stepId: 's1', dependencies: [] });
       const step2 = makeStep({ stepId: 's2', dependencies: ['s1'] });
@@ -289,7 +332,7 @@ describe('PhaseRunner', () => {
       const deps = makeDeps({
         parallelExecution: true,
         executeStep: vi.fn().mockImplementation(async (step: ExecutionStep) => {
-          await new Promise((r) => setTimeout(r, 5));
+          await new Promise((resolve) => setTimeout(resolve, 5));
           completedOrder.push(step.stepId);
           return makeOutput();
         }),

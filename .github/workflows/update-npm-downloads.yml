@@ -16,7 +16,7 @@ jobs:
       # 一起动。本 job 跑在托管 runner,不存在那边的 node24 阻塞;`git push` 依赖的
       # `persist-credentials` 默认值在 v4.4.0 与 v6.1.0 上也已核对为一致(都是 true)。
       # 也就是说这一处本身可以升,只是没有理由单独升。
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Fetch cumulative downloads and patch README
         run: |
           END=$(date -u -d yesterday +%F)

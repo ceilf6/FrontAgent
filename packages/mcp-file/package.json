@@ -23,6 +23,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@frontagent/hallucination-guard": "workspace:*",
     "@frontagent/mcp-filesense": "workspace:*",
     "@frontagent/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",

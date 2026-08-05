@@ -177,6 +177,49 @@ export class HallucinationGuard {
   }
 
   /**
+   * Validate syntax only, preserving the enabledChecks contract.
+   */
+  async validateSyntax(
+    code: string,
+    language: 'typescript' | 'javascript' | 'json' | 'yaml',
+    filePath?: string,
+  ): Promise<ValidationResult> {
+    if (!this.enabledChecks.syntaxValidity) {
+      return { pass: true, results: [], blockedBy: undefined };
+    }
+
+    const syntaxCheck = await checkSyntaxValidity({ code, language, filePath });
+    return {
+      pass: syntaxCheck.pass || syntaxCheck.severity !== 'block',
+      results: [syntaxCheck],
+      blockedBy:
+        !syntaxCheck.pass && syntaxCheck.severity === 'block'
+          ? [syntaxCheck.message ?? syntaxCheck.type]
+          : undefined,
+    };
+  }
+
+  /**
+   * Validate imports only. Import availability depends on workspace state, so
+   * callers can keep it separate from deterministic syntax preflight.
+   */
+  async validateImports(code: string, filePath?: string): Promise<ValidationResult> {
+    if (!this.enabledChecks.importValidity || !filePath) {
+      return { pass: true, results: [], blockedBy: undefined };
+    }
+
+    const importChecks = await checkAllImports(code, filePath, this.config.projectRoot);
+    const blockedBy = importChecks
+      .filter((result) => !result.pass && result.severity === 'block')
+      .map((result) => result.message ?? result.type);
+    return {
+      pass: blockedBy.length === 0,
+      results: importChecks,
+      blockedBy: blockedBy.length > 0 ? blockedBy : undefined,
+    };
+  }
+
+  /**
    * 快速验证代码
    */
   async validateCode(
@@ -187,19 +230,13 @@ export class HallucinationGuard {
     const results: HallucinationCheckResult[] = [];
 
     // 语法检查
-    if (this.enabledChecks.syntaxValidity) {
-      const syntaxCheck = await checkSyntaxValidity({ code, language, filePath });
-      results.push(syntaxCheck);
-    }
+    const syntaxValidation = await this.validateSyntax(code, language, filePath);
+    results.push(...syntaxValidation.results);
 
     // 导入检查（仅 TS/JS）
-    if (
-      this.enabledChecks.importValidity &&
-      (language === 'typescript' || language === 'javascript') &&
-      filePath
-    ) {
-      const importChecks = await checkAllImports(code, filePath, this.config.projectRoot);
-      results.push(...importChecks);
+    if (language === 'typescript' || language === 'javascript') {
+      const importValidation = await this.validateImports(code, filePath);
+      results.push(...importValidation.results);
     }
 
     const blockedBy = results

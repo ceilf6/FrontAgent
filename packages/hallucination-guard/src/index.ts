@@ -21,7 +21,9 @@ export {
 
 export {
   checkSyntaxValidity,
+  type SyntaxErrorDetail,
   type SyntaxValidityCheckInput,
+  validateSourceSyntax,
 } from './checks/syntax-validity.js';
 export {
   type AgentOutput,

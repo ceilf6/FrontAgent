@@ -9,6 +9,105 @@ describe('checkSyntaxValidity', () => {
       expect(result.pass).toBe(true);
     });
 
+    it('accepts valid strings, multiline templates, regexes, and TSX', async () => {
+      const cases = [
+        {
+          code: `export const msg = "it's fine";`,
+          language: 'typescript' as const,
+          filePath: 'src/message.ts',
+        },
+        {
+          code: 'export const message = `first line\nsecond line`;',
+          language: 'typescript' as const,
+          filePath: 'src/template.ts',
+        },
+        {
+          code: 'export const pattern = /[{}()[\\]]/;',
+          language: 'javascript' as const,
+          filePath: 'src/pattern.js',
+        },
+        {
+          code: `export const Card = () => <p>Don't panic</p>;`,
+          language: 'typescript' as const,
+          filePath: 'src/Card.tsx',
+        },
+      ];
+
+      for (const input of cases) {
+        await expect(checkSyntaxValidity(input)).resolves.toEqual(
+          expect.objectContaining({ pass: true }),
+        );
+      }
+    });
+
+    it('uses the real extension to distinguish TSX and JSX', async () => {
+      const tsx = await checkSyntaxValidity({
+        code: 'export const Card = () => <div />;',
+        language: 'typescript',
+        filePath: 'src/Card.tsx',
+      });
+      const ts = await checkSyntaxValidity({
+        code: 'export const Card = () => <div />;',
+        language: 'typescript',
+        filePath: 'src/Card.ts',
+      });
+      const jsx = await checkSyntaxValidity({
+        code: 'export const Card = () => <div />;',
+        language: 'javascript',
+        filePath: 'src/Card.jsx',
+      });
+      const jsWithTypes = await checkSyntaxValidity({
+        code: 'const value: number = 1;',
+        language: 'javascript',
+        filePath: 'src/value.js',
+      });
+
+      expect(tsx.pass).toBe(true);
+      expect(ts.pass).toBe(false);
+      expect(jsx.pass).toBe(true);
+      expect(jsWithTypes.pass).toBe(false);
+    });
+
+    it('reports parser diagnostics with location and code', async () => {
+      const result = await checkSyntaxValidity({
+        code: 'const ok = 1;\nconst broken: number = ;',
+        language: 'typescript',
+        filePath: 'src/broken.ts',
+      });
+
+      expect(result.pass).toBe(false);
+      expect(result.details).toEqual(
+        expect.objectContaining({
+          errors: expect.arrayContaining([
+            expect.objectContaining({ line: 2, column: expect.any(Number), code: 1109 }),
+          ]),
+        }),
+      );
+    });
+
+    it('rejects an outer markdown code fence but allows fences inside a template', async () => {
+      const fenced = await checkSyntaxValidity({
+        code: '```ts\nexport const value = 1;\n```',
+        language: 'typescript',
+        filePath: 'src/value.ts',
+      });
+      const template = await checkSyntaxValidity({
+        code: 'export const markdown = `\n\\`\\`\\`md\ntext\n\\`\\`\\`\n`;',
+        language: 'typescript',
+        filePath: 'src/markdown.ts',
+      });
+
+      expect(fenced.pass).toBe(false);
+      expect(fenced.details).toEqual(
+        expect.objectContaining({
+          errors: [
+            expect.objectContaining({ message: expect.stringMatching(/markdown code fences/i) }),
+          ],
+        }),
+      );
+      expect(template.pass).toBe(true);
+    });
+
     it('detects unclosed brackets', async () => {
       const code = `function hello() {\n  return "world";\n`;
       const result = await checkSyntaxValidity({ code, language: 'typescript' });

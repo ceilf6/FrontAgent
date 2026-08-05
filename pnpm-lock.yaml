@@ -245,16 +245,19 @@ importers:
       '@frontagent/shared':
         specifier: workspace:*
         version: link:../shared
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
     devDependencies:
       '@types/node':
         specifier: ^25.9.1
         version: 25.9.1
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
 
   packages/mcp-file:
     dependencies:
+      '@frontagent/hallucination-guard':
+        specifier: workspace:*
+        version: link:../hallucination-guard
       '@frontagent/mcp-filesense':
         specifier: workspace:*
         version: link:../mcp-filesense

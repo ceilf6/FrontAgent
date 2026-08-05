@@ -218,6 +218,33 @@ describe('HallucinationGuard', () => {
     expect(result.pass).toBe(false);
   });
 
+  it('validates TSX syntax through the file-path-aware parser facade', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabledChecks: { importValidity: false },
+    });
+
+    const result = await guard.validateSyntax(
+      `export const Card = () => <p>Don't panic</p>;`,
+      'typescript',
+      'src/Card.tsx',
+    );
+
+    expect(result.pass).toBe(true);
+    expect(result.results).toHaveLength(1);
+  });
+
+  it('honors disabled syntax checks on the syntax-only facade', async () => {
+    const guard = new HallucinationGuard({
+      projectRoot: TEST_ROOT,
+      enabledChecks: { syntaxValidity: false },
+    });
+
+    await expect(
+      guard.validateSyntax('export const broken = {', 'typescript', 'src/broken.ts'),
+    ).resolves.toEqual({ pass: true, results: [], blockedBy: undefined });
+  });
+
   it('honors disabled file existence checks on the fast path', async () => {
     const guard = new HallucinationGuard({
       projectRoot: TEST_ROOT,

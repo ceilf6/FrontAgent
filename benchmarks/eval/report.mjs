@@ -87,6 +87,7 @@ console.log(`# FrontAgent 消融评测：SDD 规格约束对一次通过率的�
    | 阶段 | SDD 关 | SDD 开 |
    |---|---|---|
    | \`pre_execution\`（执行前结构性拦截） | ${sumEvent(arms.ablation, 'validation_failed:pre_execution')} | ${sumEvent(arms.full, 'validation_failed:pre_execution')} |
+   | \`pre_write\`（写盘前内容拦截） | ${sumEvent(arms.ablation, 'validation_failed:pre_write')} | ${sumEvent(arms.full, 'validation_failed:pre_write')} |
    | \`post_write\`（已落盘后判失败） | ${sumEvent(arms.ablation, 'validation_failed:post_write')} | ${sumEvent(arms.full, 'validation_failed:post_write')} |
 
    > 全为 0 时先分清「未接线」与「零拦截」：若 JSONL 里连 \`validation_failed\` 这个裸键

@@ -13,6 +13,7 @@ export interface PhaseRunnerDeps {
   throwIfAborted(signal?: AbortSignal): void;
   getMaxRecoveryAttempts(): number;
   createRecoveryFingerprint(errors: Array<{ step: ExecutionStep; error: string }>): string;
+  getWriteTarget(step: ExecutionStep): string | undefined;
   parallelExecution: boolean;
 }
 
@@ -193,10 +194,11 @@ export class PhaseRunner {
         continue;
       }
 
-      for (const s of ready) pending.splice(pending.indexOf(s), 1);
+      const runnable = this.selectConflictFreeSteps(ready);
+      for (const step of runnable) pending.splice(pending.indexOf(step), 1);
 
       const results = await Promise.allSettled(
-        ready.map(async (step) => {
+        runnable.map(async (step) => {
           step.status = 'running';
           onStepStart?.(step);
           const output = await this.deps.executeStep(step, context);
@@ -217,23 +219,20 @@ export class PhaseRunner {
             phaseErrors.push({ step, error: output.stepResult.error || 'Unknown error' });
           }
           onStepComplete?.(step, output);
-          if (!output.stepResult.success && output.needsRollback) {
-            for (const pendingStep of pending) pendingStep.status = 'skipped';
-          }
         }
       }
-
-      if (
-        results.some(
-          (result) =>
-            result.status === 'fulfilled' &&
-            !result.value.output.stepResult.success &&
-            result.value.output.needsRollback,
-        )
-      ) {
-        break;
-      }
     }
+  }
+
+  private selectConflictFreeSteps(ready: ExecutionStep[]): ExecutionStep[] {
+    const writeTargets = new Set<string>();
+    return ready.filter((step) => {
+      const target = this.deps.getWriteTarget(step);
+      if (!target) return true;
+      if (writeTargets.has(target)) return false;
+      writeTargets.add(target);
+      return true;
+    });
   }
 
   private async executePhaseSequential(
@@ -290,13 +289,6 @@ export class PhaseRunner {
 
       if (onStepComplete) {
         onStepComplete(step, output);
-      }
-
-      if (!output.stepResult.success && output.needsRollback) {
-        for (const remaining of phaseSteps.slice(phaseSteps.indexOf(step) + 1)) {
-          if (remaining.status === 'pending') remaining.status = 'skipped';
-        }
-        break;
       }
     }
   }

@@ -570,7 +570,7 @@ describe('Executor', () => {
 
       expect(callTool).not.toHaveBeenCalled();
       expect(result.stepResult.success).toBe(false);
-      expect(result.needsRollback).toBe(true);
+      expect(result.needsRollback).toBe(false);
       expect(events).toEqual([
         expect.objectContaining({
           type: 'validation_failed',
@@ -578,6 +578,33 @@ describe('Executor', () => {
           path: 'src/broken.ts',
         }),
       ]);
+    });
+
+    it('allows valid JSONC configuration content through pre-write validation', async () => {
+      const callTool = vi.fn().mockResolvedValue({ success: true });
+      const executor = new Executor(
+        makeConfig({
+          getFileSystemFacts: projectFacts,
+          hallucinationGuard: new HallucinationGuard({
+            projectRoot: '/test',
+            enabledChecks: { importValidity: false, fileExistence: false },
+          }),
+        }),
+      );
+      executor.registerMCPClient('files', {
+        callTool,
+        listTools: vi.fn().mockResolvedValue([]),
+      });
+      executor.registerToolMapping('create_file', 'files');
+
+      const content = '{\n  // compiler settings\n  "compilerOptions": { "strict": true, },\n}';
+      const result = await executor.executeStep(
+        makeStep({ params: { path: 'tsconfig.json', content } }),
+        makeExecutionContext(),
+      );
+
+      expect(result.stepResult.success).toBe(true);
+      expect(callTool).toHaveBeenCalledWith('create_file', { path: 'tsconfig.json', content });
     });
 
     it('projects arbitrary patches, ignores stale content, and binds the original hash', async () => {

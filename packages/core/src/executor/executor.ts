@@ -65,8 +65,15 @@ export class Executor {
       throwIfAborted: (signal) => this.throwIfAborted(signal),
       getMaxRecoveryAttempts: () => this.getMaxRecoveryAttempts(),
       createRecoveryFingerprint: (errors) => this.createRecoveryFingerprint(errors),
+      getWriteTarget: (step) => this.getWriteTarget(step),
       parallelExecution: Boolean(config.parallelExecution),
     });
+  }
+
+  private getWriteTarget(step: ExecutionStep): string | undefined {
+    if (step.action !== 'create_file' && step.action !== 'apply_patch') return undefined;
+    const path = typeof step.params.path === 'string' ? step.params.path : undefined;
+    return path ? resolve(this.config.projectRoot, path) : undefined;
   }
 
   private debugLog(...args: unknown[]): void {
@@ -193,9 +200,7 @@ export class Executor {
               duration: Date.now() - startTime,
             },
             validation: preflight.validation,
-            // No mutation happened, but existing runners use this flag to stop
-            // dependent work after a write failure.
-            needsRollback: true,
+            needsRollback: false,
           });
         }
         toolParams = preflight.toolParams;
@@ -578,7 +583,16 @@ export class Executor {
     if (!language || language === 'yaml') return undefined;
 
     if (step.action === 'create_file') {
-      if (typeof toolParams.content !== 'string') return undefined;
+      if (typeof toolParams.content !== 'string') {
+        return {
+          path,
+          content: '',
+          validation: this.buildWriteValidationFailure(
+            `Cannot preflight create_file: content for ${path} must be a string`,
+          ),
+          toolParams,
+        };
+      }
       return {
         path,
         content: toolParams.content,
@@ -592,7 +606,17 @@ export class Executor {
     }
 
     const originalContent = context.collectedContext.files.get(path);
-    const patches = Array.isArray(toolParams.patches) ? (toolParams.patches as FilePatch[]) : [];
+    if (!Array.isArray(toolParams.patches)) {
+      return {
+        path,
+        content: '',
+        validation: this.buildWriteValidationFailure(
+          `Cannot preflight patch: patches for ${path} must be an array`,
+        ),
+        toolParams,
+      };
+    }
+    const patches = toolParams.patches as FilePatch[];
     if (originalContent === undefined) {
       return {
         path,

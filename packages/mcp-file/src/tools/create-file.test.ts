@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -27,6 +27,57 @@ describe('createFile', () => {
 
     expect(result.success).toBe(false);
     expect(readFileSync(target, 'utf-8')).toBe('existing content');
+  });
+
+  it('rejects invalid source content before creating a file or snapshot', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mcp-file-create-'));
+    roots.push(root);
+    const manager = new SnapshotManager(root);
+
+    const result = createFile({ path: 'broken.ts', content: 'const value = ;' }, root, manager);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/syntax validation failed/i);
+    expect(existsSync(join(root, 'broken.ts'))).toBe(false);
+    expect(manager.getFileSnapshots(join(root, 'broken.ts'))).toHaveLength(0);
+  });
+
+  it('accepts JSONC for known configuration paths and keeps ordinary JSON strict', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mcp-file-create-'));
+    roots.push(root);
+    const manager = new SnapshotManager(root);
+    const jsonc = '{\n  // compiler settings\n  "compilerOptions": { "strict": true, },\n}';
+
+    expect(createFile({ path: 'tsconfig.json', content: jsonc }, root, manager).success).toBe(true);
+    expect(createFile({ path: 'package.json', content: jsonc }, root, manager).success).toBe(false);
+    expect(existsSync(join(root, 'package.json'))).toBe(false);
+  });
+
+  it('preserves a file created concurrently before the exclusive write', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mcp-file-create-'));
+    roots.push(root);
+    const target = join(root, 'raced.ts');
+
+    class RacingSnapshotManager extends SnapshotManager {
+      override createSnapshot(filePath: string, operation: 'create' | 'modify' | 'delete'): string {
+        const snapshotId = super.createSnapshot(filePath, operation);
+        writeFileSync(target, 'concurrent writer', 'utf-8');
+        return snapshotId;
+      }
+    }
+
+    const manager = new RacingSnapshotManager(root);
+    const result = createFile(
+      { path: 'raced.ts', content: 'export const ours = true;' },
+      root,
+      manager,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/already exists/i);
+    expect(readFileSync(target, 'utf-8')).toBe('concurrent writer');
+    expect(manager.getFileSnapshots(target)).toHaveLength(0);
+    expect(readdirSync(join(root, '.frontagent', 'snapshots'))).toHaveLength(0);
   });
 
   it('creates a new file without overwrite permission', () => {

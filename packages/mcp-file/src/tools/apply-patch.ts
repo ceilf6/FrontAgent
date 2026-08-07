@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { validateSourceSyntax } from '@frontagent/hallucination-guard';
 import { applyFilePatches, type FilePatch, type PatchResult } from '@frontagent/shared';
 import * as Diff from 'diff';
 import { assertWritableByPolicy, resolveWritePath } from '../path-safety.js';
 import type { SnapshotManager } from '../snapshot.js';
+import { syntaxValidationError, validateFileSyntax } from '../syntax-validation.js';
 
 export interface ApplyPatchParams {
   path: string;
@@ -65,7 +65,17 @@ export function applyPatch(
     'original',
     'modified',
   );
-  const validation = validateProjectedSyntax(projected.content, filePath);
+  const validation = validateFileSyntax(projected.content, filePath);
+  if (!dryRun && !validation.syntaxValid) {
+    return {
+      success: false,
+      diff,
+      validation,
+      snapshotId: '',
+      error: syntaxValidationError(validation, filePath),
+    };
+  }
+
   const snapshotId = dryRun ? '' : snapshotManager.createSnapshot(safePath.fullPath, 'modify');
 
   if (!dryRun) {
@@ -95,44 +105,6 @@ function failure(error: string): PatchResult {
     snapshotId: '',
     error,
   };
-}
-
-function validateProjectedSyntax(content: string, filePath: string): PatchResult['validation'] {
-  const language = detectSyntaxLanguage(filePath);
-  if (!language) {
-    return { syntaxValid: true, lintErrors: [], typeErrors: [] };
-  }
-
-  const result = validateSourceSyntax({ code: content, language, filePath });
-  const errors =
-    result.details && typeof result.details === 'object' && 'errors' in result.details
-      ? (result.details.errors as Array<{
-          line: number;
-          column: number;
-          message: string;
-          code?: number;
-        }>)
-      : [];
-
-  return {
-    syntaxValid: result.pass,
-    lintErrors: errors.map((error) => ({
-      line: error.line,
-      column: error.column,
-      message: error.message,
-      rule: error.code === undefined ? 'syntax/parser' : `syntax/TS${error.code}`,
-      severity: 'error',
-    })),
-    typeErrors: [],
-  };
-}
-
-function detectSyntaxLanguage(filePath: string): 'typescript' | 'javascript' | 'json' | undefined {
-  const extension = filePath.split('.').pop()?.toLowerCase();
-  if (['ts', 'tsx', 'mts', 'cts'].includes(extension ?? '')) return 'typescript';
-  if (['js', 'jsx', 'mjs', 'cjs'].includes(extension ?? '')) return 'javascript';
-  if (extension === 'json') return 'json';
-  return undefined;
 }
 
 /**

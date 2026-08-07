@@ -27,6 +27,23 @@ afterEach(() => {
   roots = [];
 });
 
+describe('SnapshotManager.discardSnapshot', () => {
+  it('removes snapshot history and persisted metadata without touching the target', () => {
+    const root = makeRoot();
+    const targetFile = join(root, 'file.ts');
+    writeFileSync(targetFile, 'owned by another writer', 'utf-8');
+    const manager = new SnapshotManager(root);
+    const snapshotId = manager.createSnapshot(targetFile, 'create');
+
+    expect(manager.discardSnapshot(snapshotId)).toBe(true);
+
+    expect(manager.getSnapshot(snapshotId)).toBeUndefined();
+    expect(manager.getFileSnapshots(targetFile)).toHaveLength(0);
+    expect(existsSync(join(root, '.frontagent', 'snapshots', `${snapshotId}.json`))).toBe(false);
+    expect(existsSync(targetFile)).toBe(true);
+  });
+});
+
 describe('SnapshotManager.cleanup', () => {
   it('removes persisted snapshot files from disk when evicting old entries', () => {
     const root = makeRoot();

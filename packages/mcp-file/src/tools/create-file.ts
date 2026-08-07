@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { assertWritableByPolicy, resolveWritePath } from '../path-safety.js';
 import type { SnapshotManager } from '../snapshot.js';
+import { syntaxValidationError, validateFileSyntax } from '../syntax-validation.js';
 
 export interface CreateFileParams {
   path: string;
@@ -57,6 +58,15 @@ export function createFile(
     };
   }
 
+  if (typeof content !== 'string') {
+    return { success: false, error: 'File content must be a string' };
+  }
+
+  const syntaxValidation = validateFileSyntax(content, filePath);
+  if (!syntaxValidation.syntaxValid) {
+    return { success: false, error: syntaxValidationError(syntaxValidation, filePath) };
+  }
+
   // 检查文件是否已存在
   if (existsSync(safePath.fullPath) && !overwrite) {
     return {
@@ -71,6 +81,7 @@ export function createFile(
     existsSync(safePath.fullPath) ? 'modify' : 'create',
   );
 
+  let writeCompleted = false;
   try {
     // 确保目录存在
     const dir = dirname(safePath.fullPath);
@@ -85,6 +96,7 @@ export function createFile(
     } else {
       writeFileSync(safePath.fullPath, content, { encoding: 'utf-8', flag: 'wx' });
     }
+    writeCompleted = true;
     snapshotManager.updateSnapshotContent(snapshotId, content);
 
     return {
@@ -93,14 +105,28 @@ export function createFile(
       snapshotId,
     };
   } catch (error) {
-    // 回滚快照
-    snapshotManager.rollback(snapshotId);
+    if (writeCompleted) {
+      snapshotManager.rollback(snapshotId);
+    } else {
+      snapshotManager.discardSnapshot(snapshotId);
+    }
+
+    if (isAlreadyExistsError(error) && !overwrite) {
+      return {
+        success: false,
+        error: `File already exists: ${filePath}. Set overwrite=true to overwrite.`,
+      };
+    }
 
     return {
       success: false,
       error: `Failed to create file: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
+}
+
+function isAlreadyExistsError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error && error.code === 'EEXIST';
 }
 
 /**

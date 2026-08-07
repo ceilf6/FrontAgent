@@ -352,7 +352,29 @@ describe('applyPatch line-range validation', () => {
     expect(readFixture(root)).toBe(FIXTURE);
   });
 
-  it('reports parser-backed syntax validation for the projected result', () => {
+  it('rejects invalid projected syntax before writing or creating a snapshot', () => {
+    const root = makeRoot();
+    makeFixture(root);
+    const snapshotManager = new SnapshotManager(root);
+
+    const result = applyPatch(
+      {
+        path: 'src/sample.ts',
+        patches: [{ operation: 'replace', startLine: 1, endLine: 5, content: 'const x = ;' }],
+      },
+      root,
+      snapshotManager,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.validation.syntaxValid).toBe(false);
+    expect(result.snapshotId).toBe('');
+    expect(result.diff).toContain('const x = ;');
+    expect(snapshotManager.getFileSnapshots(join(root, 'src/sample.ts'))).toHaveLength(0);
+    expect(readFixture(root)).toBe(FIXTURE);
+  });
+
+  it('reports parser-backed syntax validation for a dry-run preview', () => {
     const root = makeRoot();
     makeFixture(root);
 

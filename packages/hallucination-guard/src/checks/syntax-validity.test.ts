@@ -147,6 +147,49 @@ describe('checkSyntaxValidity', () => {
       expect(result.pass).toBe(true);
     });
 
+    it('accepts JSONC only for known configuration paths', async () => {
+      const jsonc = '{\n  // compiler settings\n  "compilerOptions": { "strict": true, },\n}';
+      const paths = [
+        'tsconfig.json',
+        'configs/tsconfig.build.json',
+        'jsconfig.web.json',
+        '.vscode/settings.json',
+        'C:\\repo\\.vscode\\tasks.json',
+      ];
+
+      for (const filePath of paths) {
+        await expect(
+          checkSyntaxValidity({ code: jsonc, language: 'json', filePath }),
+        ).resolves.toEqual(expect.objectContaining({ pass: true }));
+      }
+    });
+
+    it('keeps package and application JSON strict', async () => {
+      const jsonc = '{\n  // not valid strict JSON\n  "name": "test",\n}';
+
+      for (const filePath of ['package.json', 'data.json']) {
+        const result = await checkSyntaxValidity({ code: jsonc, language: 'json', filePath });
+        expect(result.pass).toBe(false);
+      }
+    });
+
+    it('reports malformed JSONC configuration syntax', async () => {
+      const result = await checkSyntaxValidity({
+        code: '{\n  "compilerOptions": {\n',
+        language: 'json',
+        filePath: 'tsconfig.json',
+      });
+
+      expect(result.pass).toBe(false);
+      expect(result.details).toEqual(
+        expect.objectContaining({
+          errors: expect.arrayContaining([
+            expect.objectContaining({ line: expect.any(Number), column: expect.any(Number) }),
+          ]),
+        }),
+      );
+    });
+
     it('detects invalid JSON', async () => {
       const code = `{name: "test"}`;
       const result = await checkSyntaxValidity({ code, language: 'json' });

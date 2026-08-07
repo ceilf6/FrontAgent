@@ -32,7 +32,7 @@ export function validateSourceSyntax(input: SyntaxValidityCheckInput): Hallucina
         errors = checkJavaScriptSyntax(code, language, filePath);
         break;
       case 'json':
-        errors = checkJsonSyntax(code);
+        errors = checkJsonSyntax(code, filePath);
         break;
       case 'yaml':
         // YAML parsing is intentionally outside the current validation scope.
@@ -175,7 +175,14 @@ function checkOuterMarkdownFence(code: string): SyntaxErrorDetail | undefined {
   return undefined;
 }
 
-function checkJsonSyntax(code: string): SyntaxErrorDetail[] {
+function checkJsonSyntax(code: string, filePath?: string): SyntaxErrorDetail[] {
+  if (filePath && isKnownJsoncConfigPath(filePath)) {
+    const sourceFile = ts.parseJsonText(filePath, code) as unknown as ParsedSourceFile;
+    return sourceFile.parseDiagnostics
+      .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error)
+      .map((diagnostic) => formatDiagnostic(sourceFile, diagnostic));
+  }
+
   try {
     JSON.parse(code);
     return [];
@@ -200,6 +207,15 @@ function checkJsonSyntax(code: string): SyntaxErrorDetail[] {
     const location = offsetToLocation(code, position);
     return [{ ...location, message: error.message }];
   }
+}
+
+function isKnownJsoncConfigPath(filePath: string): boolean {
+  const normalized = filePath.replaceAll('\\', '/');
+  const baseName = normalized.slice(normalized.lastIndexOf('/') + 1).toLowerCase();
+  return (
+    /^(?:tsconfig|jsconfig)(?:\.[^/]+)?\.json$/.test(baseName) ||
+    /(?:^|\/)\.vscode\/[^/]+\.json$/i.test(normalized)
+  );
 }
 
 function offsetToLocation(code: string, offset: number): { line: number; column: number } {

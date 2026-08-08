@@ -48,10 +48,11 @@ describe('VS Code extension manifest', () => {
     }
   });
 
-  it('does not leave Playwright as an external runtime require in the built bundle', () => {
+  it('keeps runtime dependencies self-contained in the built bundle', () => {
     const bundlePath = resolve(root, 'dist', 'extension.cjs');
     if (!existsSync(bundlePath)) return;
     const bundle = readFileSync(bundlePath, 'utf8');
     expect(bundle).not.toMatch(/require\(["']playwright["']\)/);
+    expect(bundle).not.toMatch(/require\(["']typescript["']\)/);
   });
 });

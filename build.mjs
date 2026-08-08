@@ -12,7 +12,9 @@ await build({
   target: 'node20',
   format: 'esm',
   outfile: resolve(__dirname, 'dist/index.mjs'),
-  external: ['playwright', 'ts-morph'],
+  // Runtime parser dependency: keep it beside the published CLI instead of
+  // embedding the full compiler in dist/index.mjs.
+  external: ['playwright', 'ts-morph', 'typescript'],
   jsx: 'automatic',
   plugins: [
     {

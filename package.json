@@ -72,7 +72,8 @@
   "homepage": "https://github.com/ceilf6/FrontAgent#readme",
   "dependencies": {
     "playwright": "^1.60.0",
-    "ts-morph": "^28.0.0"
+    "ts-morph": "^28.0.0",
+    "typescript": "^6.0.3"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
@@ -80,7 +81,6 @@
     "esbuild": "^0.28.0",
     "gitnexus": "1.6.6",
     "turbo": "^2.9.14",
-    "typescript": "^6.0.3",
     "vitest": "^4.1.7"
   },
   "pnpm": {

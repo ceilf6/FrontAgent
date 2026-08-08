@@ -227,6 +227,7 @@ function checkJsonSyntax(code: string, filePath?: string): SyntaxErrorDetail[] {
 function isKnownJsoncConfigPath(filePath: string): boolean {
   const normalized = filePath.replaceAll('\\', '/').toLowerCase();
   const baseName = normalized.slice(normalized.lastIndexOf('/') + 1);
+  if (isStrictJsonPath(normalized, baseName)) return false;
   if (baseName.endsWith('.jsonc')) return true;
   if (/^(?:tsconfig|jsconfig)(?:\.[^/]+)?\.json$/.test(baseName)) return true;
   if (baseName === '.eslintrc.json') return true;
@@ -241,10 +242,27 @@ function isKnownJsoncConfigPath(filePath: string): boolean {
     return true;
   }
 
-  return (
+  if (
     normalized === '.devcontainer.json' ||
     normalized.endsWith('/.devcontainer.json') ||
     /(?:^|\/)\.devcontainer\/(?:[^/]+\/)?devcontainer\.json$/.test(normalized)
+  ) {
+    return true;
+  }
+
+  return baseName.endsWith('.json');
+}
+
+function isStrictJsonPath(normalizedPath: string, baseName: string): boolean {
+  return (
+    baseName === 'package.json' ||
+    baseName === 'package-lock.json' ||
+    baseName === 'npm-shrinkwrap.json' ||
+    baseName === 'turbo.json' ||
+    baseName === 'data.json' ||
+    baseName.endsWith('.lock.json') ||
+    normalizedPath.endsWith('/.frontagent/settings.json') ||
+    normalizedPath === '.frontagent/settings.json'
   );
 }
 

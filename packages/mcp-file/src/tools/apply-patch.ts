@@ -68,10 +68,13 @@ export function applyPatch(
     'original',
     'modified',
   );
+  const originalValidation = __frontagentSyntaxValidationEnabled
+    ? validateFileSyntax(originalContent, filePath)
+    : { syntaxValid: true, lintErrors: [], typeErrors: [] };
   const validation = __frontagentSyntaxValidationEnabled
     ? validateFileSyntax(projected.content, filePath)
     : { syntaxValid: true, lintErrors: [], typeErrors: [] };
-  if (!dryRun && !validation.syntaxValid) {
+  if (!validation.syntaxValid && originalValidation.syntaxValid) {
     return {
       success: false,
       diff,

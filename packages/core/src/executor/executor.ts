@@ -710,12 +710,21 @@ export class Executor {
       };
     }
 
+    const originalSyntaxValidation =
+      language && language !== 'yaml'
+        ? await this.config.hallucinationGuard.validateSyntax(originalContent, language, path)
+        : { pass: true, results: [] };
+    const projectedSyntaxValidation =
+      language && language !== 'yaml'
+        ? await this.config.hallucinationGuard.validateSyntax(projected.content, language, path)
+        : { pass: true, results: [] };
+
     return {
       path,
       content: projected.content,
       validation:
-        language && language !== 'yaml'
-          ? await this.config.hallucinationGuard.validateSyntax(projected.content, language, path)
+        !projectedSyntaxValidation.pass && originalSyntaxValidation.pass
+          ? projectedSyntaxValidation
           : { pass: true, results: [] },
       toolParams: {
         ...toolParams,

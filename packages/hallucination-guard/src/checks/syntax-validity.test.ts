@@ -173,6 +173,14 @@ describe('checkSyntaxValidity', () => {
       }
     });
 
+    it('accepts JSONC for configuration files outside the explicit legacy list', async () => {
+      const jsonc = '{\n  // tool settings\n  "enabled": true,\n}';
+      for (const filePath of ['biome.json', 'nest-cli.json', 'components.json']) {
+        const result = await checkSyntaxValidity({ code: jsonc, language: 'json', filePath });
+        expect(result.pass).toBe(true);
+      }
+    });
+
     it('keeps package and application JSON strict', async () => {
       const jsonc = '{\n  // not valid strict JSON\n  "name": "test",\n}';
 

@@ -375,6 +375,26 @@ describe('applyPatch line-range validation', () => {
     expect(readFixture(root)).toBe(FIXTURE);
   });
 
+  it('allows a patch to improve an already-invalid source file', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'src'), { recursive: true });
+    const target = join(root, 'src', 'broken.ts');
+    writeFileSync(target, 'export const broken = {\nconst keep = 1;', 'utf-8');
+
+    const result = applyPatch(
+      {
+        path: 'src/broken.ts',
+        patches: [{ operation: 'replace', startLine: 2, content: 'const keep = 2;' }],
+      },
+      root,
+      new SnapshotManager(root),
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.validation.syntaxValid).toBe(false);
+    expect(readFileSync(target, 'utf-8')).toContain('const keep = 2;');
+  });
+
   it('reports parser-backed syntax validation for a dry-run preview', () => {
     const root = makeRoot();
     makeFixture(root);
@@ -389,7 +409,7 @@ describe('applyPatch line-range validation', () => {
       new SnapshotManager(root),
     );
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
     expect(result.validation.syntaxValid).toBe(false);
     expect(result.validation.lintErrors[0]).toEqual(
       expect.objectContaining({ rule: expect.stringMatching(/^syntax\//), severity: 'error' }),

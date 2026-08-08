@@ -27,6 +27,20 @@ const rate = (rows) => (rows.length ? rows.filter((r) => r.pass).length / rows.l
 const avg = (rows, k) => (rows.length ? Math.round(rows.reduce((s, r) => s + (r[k] ?? 0), 0) / rows.length) : 0);
 const sum = (rows, k) => rows.reduce((s, r) => s + (r[k] ?? 0), 0);
 const sumEvent = (rows, k) => rows.reduce((s, r) => s + (r.events?.[k] ?? 0), 0);
+const sumPreWriteNonSyntax = (rows) =>
+  rows.reduce(
+    (total, row) =>
+      total +
+      Object.entries(row.events ?? {}).reduce(
+        (sum, [key, value]) =>
+          key.startsWith('validation_failed:pre_write:') &&
+          key !== 'validation_failed:pre_write:syntax_validity'
+            ? sum + value
+            : sum,
+        0,
+      ),
+    0,
+  );
 const pct = (x) => `${(x * 100).toFixed(1)}%`;
 const count = (rows) => `${rows.filter((r) => r.pass).length}/${rows.length}`;
 
@@ -87,7 +101,8 @@ console.log(`# FrontAgent 消融评测：SDD 规格约束对一次通过率的�
    | 阶段 | SDD 关 | SDD 开 |
    |---|---|---|
    | \`pre_execution\`（执行前结构性拦截） | ${sumEvent(arms.ablation, 'validation_failed:pre_execution')} | ${sumEvent(arms.full, 'validation_failed:pre_execution')} |
-   | \`pre_write\`（写盘前内容拦截） | ${sumEvent(arms.ablation, 'validation_failed:pre_write')} | ${sumEvent(arms.full, 'validation_failed:pre_write')} |
+   | \`pre_write:syntax_validity\`（写盘前解析器拦截） | ${sumEvent(arms.ablation, 'validation_failed:pre_write:syntax_validity')} | ${sumEvent(arms.full, 'validation_failed:pre_write:syntax_validity')} |
+   | \`pre_write:other\`（其他写盘前拒绝） | ${sumPreWriteNonSyntax(arms.ablation)} | ${sumPreWriteNonSyntax(arms.full)} |
    | \`post_write\`（已落盘后判失败） | ${sumEvent(arms.ablation, 'validation_failed:post_write')} | ${sumEvent(arms.full, 'validation_failed:post_write')} |
 
    > 全为 0 时先分清「未接线」与「零拦截」：若 JSONL 里连 \`validation_failed\` 这个裸键

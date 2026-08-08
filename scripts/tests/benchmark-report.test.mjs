@@ -26,7 +26,9 @@ test('benchmark report renders validation failures for every write stage', () =>
       `${JSON.stringify(
         makeRow({
           'validation_failed:pre_execution': 1,
-          'validation_failed:pre_write': 2,
+          'validation_failed:pre_write': 3,
+          'validation_failed:pre_write:syntax_validity': 2,
+          'validation_failed:pre_write:patch_projection': 1,
           'validation_failed:post_write': 3,
         }),
       )}\n`,
@@ -37,7 +39,10 @@ test('benchmark report renders validation failures for every write stage', () =>
       `${JSON.stringify(
         makeRow({
           'validation_failed:pre_execution': 4,
-          'validation_failed:pre_write': 5,
+          'validation_failed:pre_write': 7,
+          'validation_failed:pre_write:syntax_validity': 5,
+          'validation_failed:pre_write:write_preflight_input': 1,
+          'validation_failed:pre_write:stale_patch_context': 1,
           'validation_failed:post_write': 6,
         }),
       )}\n`,
@@ -49,7 +54,8 @@ test('benchmark report renders validation failures for every write stage', () =>
     });
 
     assert.match(report, /`pre_execution`（执行前结构性拦截） \| 1 \| 4 \|/);
-    assert.match(report, /`pre_write`（写盘前内容拦截） \| 2 \| 5 \|/);
+    assert.match(report, /`pre_write:syntax_validity`（写盘前解析器拦截） \| 2 \| 5 \|/);
+    assert.match(report, /`pre_write:other`（其他写盘前拒绝） \| 1 \| 2 \|/);
     assert.match(report, /`post_write`（已落盘后判失败） \| 3 \| 6 \|/);
   } finally {
     rmSync(dir, { recursive: true, force: true });

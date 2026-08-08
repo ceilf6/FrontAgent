@@ -245,6 +245,14 @@ describe('HallucinationGuard', () => {
     ).resolves.toEqual({ pass: true, results: [], blockedBy: undefined });
   });
 
+  it('reports mutable check state through isCheckEnabled', () => {
+    const guard = new HallucinationGuard({ projectRoot: TEST_ROOT });
+
+    expect(guard.isCheckEnabled('syntaxValidity')).toBe(true);
+    guard.setCheckEnabled('syntaxValidity', false);
+    expect(guard.isCheckEnabled('syntaxValidity')).toBe(false);
+  });
+
   it('honors disabled file existence checks on the fast path', async () => {
     const guard = new HallucinationGuard({
       projectRoot: TEST_ROOT,

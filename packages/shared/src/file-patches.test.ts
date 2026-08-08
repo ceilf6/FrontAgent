@@ -37,6 +37,15 @@ describe('applyFilePatches', () => {
     ).toEqual({ ok: true, content: 'line1\nsecond\nfirst\nline2\nline3\nline4\nline5' });
   });
 
+  it('rejects replace and insert patches without content', () => {
+    for (const operation of ['replace', 'insert'] as const) {
+      expect(applyFilePatches(FIXTURE, [{ operation, startLine: 2 }])).toEqual({
+        ok: false,
+        error: `Invalid patch (${operation}): content is required`,
+      });
+    }
+  });
+
   it('rejects invalid bounds', () => {
     expect(
       applyFilePatches(FIXTURE, [{ operation: 'replace', startLine: 0, content: 'x' }]),

@@ -43,7 +43,11 @@ export function applyFilePatches(
 
 function validatePatchBounds(patches: readonly FilePatch[], lineCount: number): string | null {
   for (const patch of patches) {
-    const { operation, startLine, endLine } = patch;
+    const { operation, startLine, endLine, content } = patch;
+
+    if ((operation === 'replace' || operation === 'insert') && content === undefined) {
+      return `Invalid patch (${operation}): content is required`;
+    }
 
     if (!Number.isInteger(startLine) || startLine < 1) {
       return `Invalid patch (${operation}): startLine ${startLine} must be an integer >= 1`;

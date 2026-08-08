@@ -613,6 +613,48 @@ describe('Executor', () => {
       });
     });
 
+    it('does not update collected context after a successful dry-run patch', async () => {
+      const original = 'export const value = 1;';
+      const callTool = vi
+        .fn()
+        .mockImplementation(async (name: string) =>
+          name === 'read_file'
+            ? { success: true, content: original }
+            : { success: true, snapshotId: '', validation: { syntaxValid: true } },
+        );
+      const executor = new Executor(
+        makeConfig({
+          getFileSystemFacts: () => ({ ...projectFacts(), existingFiles: new Set(['src/a.ts']) }),
+          hallucinationGuard: new HallucinationGuard({
+            projectRoot: '/test',
+            enabledChecks: { importValidity: false, fileExistence: false },
+          }),
+        }),
+      );
+      executor.registerMCPClient('files', { callTool, listTools: vi.fn().mockResolvedValue([]) });
+      executor.registerToolMapping('read_file', 'files');
+      executor.registerToolMapping('apply_patch', 'files');
+      const context = makeExecutionContext({
+        collectedContext: { files: new Map([['src/a.ts', original]]) },
+      });
+
+      const result = await executor.executeStep(
+        makeStep({
+          action: 'apply_patch',
+          tool: 'apply_patch',
+          params: {
+            path: 'src/a.ts',
+            dryRun: true,
+            patches: [{ operation: 'replace', startLine: 1, content: 'export const value = 2;' }],
+          },
+        }),
+        context,
+      );
+
+      expect(result.stepResult.success).toBe(true);
+      expect(context.collectedContext.files.get('src/a.ts')).toBe(original);
+    });
+
     it('projects arbitrary patches, ignores stale content, and binds the original hash', async () => {
       const original = 'export const first = 1;\nexport const second = 2;';
       const callTool = vi
@@ -672,6 +714,48 @@ describe('Executor', () => {
       expect(context.collectedContext.files.get('src/value.ts')).toBe(
         'export const first = 3;\nexport const second = 2;\nexport const third = 4;',
       );
+    });
+
+    it('binds non-code patches to the refreshed original and updates context', async () => {
+      const original = '# title\nold';
+      const projected = '# title\nnew';
+      const callTool = vi
+        .fn()
+        .mockImplementation(async (name: string) =>
+          name === 'read_file'
+            ? { success: true, content: original }
+            : { success: true, snapshotId: 'snap-md' },
+        );
+      const executor = new Executor(
+        makeConfig({
+          getFileSystemFacts: () => ({ ...projectFacts(), existingFiles: new Set(['README.md']) }),
+        }),
+      );
+      executor.registerMCPClient('files', { callTool, listTools: vi.fn().mockResolvedValue([]) });
+      executor.registerToolMapping('read_file', 'files');
+      executor.registerToolMapping('apply_patch', 'files');
+      const context = makeExecutionContext({
+        collectedContext: { files: new Map([['README.md', original]]) },
+      });
+
+      const result = await executor.executeStep(
+        makeStep({
+          action: 'apply_patch',
+          tool: 'apply_patch',
+          params: {
+            path: 'README.md',
+            patches: [{ operation: 'replace', startLine: 2, content: 'new' }],
+          },
+        }),
+        context,
+      );
+
+      expect(result.stepResult.success).toBe(true);
+      expect(callTool).toHaveBeenCalledWith(
+        'apply_patch',
+        expect.objectContaining({ __frontagentExpectedOriginalHash: expect.any(String) }),
+      );
+      expect(context.collectedContext.files.get('README.md')).toBe(projected);
     });
 
     it('rejects a patch whose projected final content is invalid', async () => {

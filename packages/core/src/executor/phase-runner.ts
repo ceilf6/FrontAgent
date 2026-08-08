@@ -229,7 +229,10 @@ export class PhaseRunner {
     return ready.filter((step) => {
       const target = this.deps.getWriteTarget(step);
       if (!target) return true;
-      if (writeTargets.has(target)) return false;
+      if (writeTargets.has(target)) {
+        step.params.__frontagentDeferredSameTargetWrite = true;
+        return false;
+      }
       writeTargets.add(target);
       return true;
     });

@@ -92,7 +92,7 @@ describe('createFile', () => {
     );
 
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/already exists/i);
+    expect(result.error).toMatch(/appeared concurrently/i);
     expect(readFileSync(target, 'utf-8')).toBe('concurrent writer');
     expect(manager.getFileSnapshots(target)).toHaveLength(0);
     expect(readdirSync(join(root, '.frontagent', 'snapshots'))).toHaveLength(0);

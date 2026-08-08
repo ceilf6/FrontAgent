@@ -250,7 +250,11 @@ export class Executor {
         this.validateAfterExecution(step, toolResult, toolParams, preflight?.content),
       );
 
-      if (preflight?.content && this.isSuccessfulToolResult(toolResult)) {
+      if (
+        preflight?.content &&
+        this.isSuccessfulToolResult(toolResult) &&
+        (toolParams as Record<string, unknown>).dryRun !== true
+      ) {
         context.collectedContext.files.set(preflight.path, preflight.content);
       }
 
@@ -449,6 +453,7 @@ export class Executor {
 
       {
         const cachedContent = context.collectedContext.files.get(path);
+        const wasDeferredSameTargetWrite = step.params.__frontagentDeferredSameTargetWrite === true;
         this.debugLog(`[Executor] 📖 Refreshing ${path} before apply_patch...`);
 
         try {
@@ -462,8 +467,8 @@ export class Executor {
             context.collectedContext.files.set(path, readResult.content);
             if (
               Array.isArray(step.params.patches) &&
-              cachedContent !== undefined &&
-              cachedContent !== readResult.content
+              (wasDeferredSameTargetWrite ||
+                (cachedContent !== undefined && cachedContent !== readResult.content))
             ) {
               const message = `Cannot apply explicit patches: ${path} changed after its patch context was collected`;
               return {
@@ -642,7 +647,6 @@ export class Executor {
     const path = typeof toolParams.path === 'string' ? toolParams.path : undefined;
     if (!path) return undefined;
     const language = detectLanguage(path);
-    if (!language || language === 'yaml') return undefined;
 
     if (step.action === 'create_file') {
       if (typeof toolParams.content !== 'string') {
@@ -659,11 +663,14 @@ export class Executor {
       return {
         path,
         content: toolParams.content,
-        validation: await this.config.hallucinationGuard.validateSyntax(
-          toolParams.content,
-          language,
-          path,
-        ),
+        validation:
+          language && language !== 'yaml'
+            ? await this.config.hallucinationGuard.validateSyntax(
+                toolParams.content,
+                language,
+                path,
+              )
+            : { pass: true, results: [] },
         toolParams,
       };
     }
@@ -706,11 +713,10 @@ export class Executor {
     return {
       path,
       content: projected.content,
-      validation: await this.config.hallucinationGuard.validateSyntax(
-        projected.content,
-        language,
-        path,
-      ),
+      validation:
+        language && language !== 'yaml'
+          ? await this.config.hallucinationGuard.validateSyntax(projected.content, language, path)
+          : { pass: true, results: [] },
       toolParams: {
         ...toolParams,
         __frontagentExpectedOriginalHash: createHash('sha256')

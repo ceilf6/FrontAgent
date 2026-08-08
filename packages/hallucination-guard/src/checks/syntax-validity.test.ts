@@ -190,6 +190,17 @@ describe('checkSyntaxValidity', () => {
       }
     });
 
+    it('rejects non-JSON values and unquoted keys in JSONC files', async () => {
+      for (const code of ['{foo: 1}', '{"x": undefined}', '{"x": NaN}']) {
+        const result = await checkSyntaxValidity({
+          code,
+          language: 'json',
+          filePath: 'tsconfig.json',
+        });
+        expect(result.pass).toBe(false);
+      }
+    });
+
     it('reports malformed JSONC configuration syntax', async () => {
       const result = await checkSyntaxValidity({
         code: '{\n  "compilerOptions": {\n',

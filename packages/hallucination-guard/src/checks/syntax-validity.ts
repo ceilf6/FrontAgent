@@ -192,10 +192,10 @@ function checkOuterMarkdownFence(code: string): SyntaxErrorDetail | undefined {
 
 function checkJsonSyntax(code: string, filePath?: string): SyntaxErrorDetail[] {
   if (filePath && isKnownJsoncConfigPath(filePath)) {
-    const sourceFile = ts.parseJsonText(filePath, code) as unknown as ParsedSourceFile;
-    return sourceFile.parseDiagnostics
-      .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error)
-      .map((diagnostic) => formatDiagnostic(sourceFile, diagnostic));
+    const parsed = ts.parseConfigFileTextToJson(filePath, code);
+    if (!parsed.error) return [];
+    const sourceFile = ts.parseJsonText(filePath, code);
+    return [formatDiagnostic(sourceFile, parsed.error)];
   }
 
   try {

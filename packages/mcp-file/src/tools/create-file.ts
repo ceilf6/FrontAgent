@@ -71,8 +71,8 @@ export function createFile(
     }
   }
 
-  // 检查文件是否已存在
-  if (existsSync(safePath.fullPath) && !overwrite) {
+  const existedBeforeWrite = existsSync(safePath.fullPath);
+  if (existedBeforeWrite && !overwrite) {
     return {
       success: false,
       error: `File already exists: ${filePath}. Set overwrite=true to overwrite.`,
@@ -82,7 +82,7 @@ export function createFile(
   // 创建快照
   const snapshotId = snapshotManager.createSnapshot(
     safePath.fullPath,
-    existsSync(safePath.fullPath) ? 'modify' : 'create',
+    existedBeforeWrite ? 'modify' : 'create',
   );
 
   let writeCompleted = false;
@@ -95,7 +95,7 @@ export function createFile(
 
     // Use exclusive creation for non-overwrite writes so a file created after
     // the initial existence check cannot be overwritten by a race.
-    if (overwrite) {
+    if (overwrite && existedBeforeWrite) {
       writeFileSync(safePath.fullPath, content, 'utf-8');
     } else {
       writeFileSync(safePath.fullPath, content, { encoding: 'utf-8', flag: 'wx' });
@@ -109,16 +109,19 @@ export function createFile(
       snapshotId,
     };
   } catch (error) {
-    if (writeCompleted) {
+    const lostExclusiveRace = isAlreadyExistsError(error) && !existedBeforeWrite;
+    if (lostExclusiveRace) {
+      snapshotManager.discardSnapshot(snapshotId);
+    } else if (overwrite || writeCompleted) {
       snapshotManager.rollback(snapshotId);
     } else {
       snapshotManager.discardSnapshot(snapshotId);
     }
 
-    if (isAlreadyExistsError(error) && !overwrite) {
+    if (lostExclusiveRace) {
       return {
         success: false,
-        error: `File already exists: ${filePath}. Set overwrite=true to overwrite.`,
+        error: `File appeared concurrently: ${filePath}. Retry after reading the current file.`,
       };
     }
 

@@ -49,8 +49,8 @@ const diffPp = ((rate(arms.full) - rate(arms.ablation)) * 100).toFixed(1);
 
 console.log(`# FrontAgent 消融评测：SDD 规格约束对一次通过率的影响
 
-> **先读这条**：本轮原计划消融「SDD + 幻觉防控（guard）」两项，实测发现 **guard 无法通过既有配置关闭**（见「意外发现」节）。
-> 因此本报告的有效结论限于 **SDD 开 / 关**；guard 在两臂中均处于启用状态。
+> **历史数据口径**：2026-07-12 冻结结果生成时，guard 开关与写盘前拦截尚未接线，因此当轮结论只覆盖 SDD 开 / 关。
+> 当前代码已支持按检查项关闭 guard，并将解析器拦截前置到写盘前；重跑后的事件应使用下方分阶段、分类型计数解释。
 
 ## 方法
 
@@ -74,16 +74,15 @@ console.log(`# FrontAgent 消融评测：SDD 规格约束对一次通过率的�
 
 **差值：${diffPp} 个百分点（SDD 开 − SDD 关）。** 在 ${commonIds.length} 条任务的样本量下，该差值不足以支持「SDD 提升一次通过率」的结论。
 
-## 意外发现：幻觉防控层没有拦下它本应拦下的东西
+## 历史发现与当前状态
 
-本轮最有价值的产出不是通过率，而是三处经代码定位的缺陷：
+2026-07-12 冻结结果暴露了三处缺陷；以下文本保留历史证据并标明当前状态：
 
-1. **\`hallucinationGuard.enabledChecks\` 对执行路径无效（死配置）**
-   该字段只在 \`HallucinationGuard.validate()\` 中被读取，而执行器从不调用该方法——执行器走的是 \`validateFilePath()\` / \`validateCode()\`（\`executor.ts\`），这两个方法直接调用底层 check，**完全不查 \`enabledChecks\`**（\`guard.ts\`）。
-   后果：guard 无法通过公开配置关闭，本次消融实验的 guard 臂因此失效。
+1. **历史缺陷：\`hallucinationGuard.enabledChecks\` 未贯通执行路径（已修复）**
+   当前 \`validateFilePath()\` / \`validateSyntax()\` / \`validateImports()\` 已分别遵循开关，guard 可配置、可消融。
 
-2. **校验发生在写盘之后，且默认不回滚**
-   \`validateAfterExecution\` 在工具执行完成后才校验；失败仅将 step 标记为 \`success: false\`，回滚条件是 \`step.validation.some(v => v.required)\`——而 LLM 生成的计划中 \`validation\` 常为空数组，于是**不触发回滚，已写入的坏文件留在磁盘上**。
+2. **历史缺陷：解析器校验发生在写盘之后（已修复）**
+   当前 create/patch 的完整投影会在写盘前通过解析器校验；\`post_write\` 仅保留依赖工作区状态的 import 校验。
 
 3. **\`validation_failed\` 事件${
      sumEvent(arms.full, 'validation_failed') + sumEvent(arms.ablation, 'validation_failed') > 0
@@ -108,7 +107,7 @@ console.log(`# FrontAgent 消融评测：SDD 规格约束对一次通过率的�
    > 全为 0 时先分清「未接线」与「零拦截」：若 JSONL 里连 \`validation_failed\` 这个裸键
    > 都不存在，说明该轮数据产自事件接线之前，此时 0 不构成任何证据。
 
-**实证**：失败样本中出现 \`TS1127: Invalid character\`——markdown 代码围栏被原样写进 \`.tsx\` 文件并落盘，两臂皆有。这正是 \`checkSyntaxValidity\` 的目标场景，guard 在运行却未阻止其落盘，与缺陷 2 的机制一致。
+**历史实证**：旧数据中的失败样本曾出现 \`TS1127: Invalid character\`——markdown 代码围栏被原样写进 \`.tsx\` 文件。当前写盘前解析器回归测试已覆盖并阻止该路径；需重跑冻结任务集衡量修复后的真实拦截数。
 
 ## 分类通过率
 
@@ -124,12 +123,8 @@ console.log(`
 ## 结论与后续
 
 - **不宣称 SDD 提升了一次通过率**：本任务集上差值 ${diffPp}pp，样本量 ${commonIds.length}，不构成证据。
-- **不宣称多层校验拦截了幻觉**：在 ${sum(arms.full, 'llmCalls') + sum(arms.ablation, 'llmCalls')} 次 LLM 调用中零拦截记录，且语法错误文件确实落盘。**该「零」已被限定**——见 \`benchmarks/results/2026-07-31-validation-telemetry.md\`：事件当时无发射点，零是观测缺陷而非拦截结果。
-- **后续（按优先级）**：
-  1. 修复缺陷 1——让 \`enabledChecks\` 贯通 \`validateFilePath\`/\`validateCode\`，使 guard 可配置、可消融。
-  2. 修复缺陷 2——校验前置到写盘前，或在校验失败时无条件回滚。
-  3. 修复缺陷 3——在执行器校验路径上补 \`validation_failed\` 事件。
-  4. 修完重跑同一冻结任务集，得到 guard 的真实前后对比。
+- **旧数据不证明多层校验有效或无效**：历史轮次的事件尚未接线；新数据必须用上方分阶段、分类型指标解释。
+- **后续**：重跑同一冻结任务集，分别报告写盘前解析器拦截、其他 preflight 拒绝和 post-write import 失败，得到修复后的真实前后对比。
 - **评测资产可复用**：冻结任务集、夹具、双臂开关、机器验收、断点续跑均已固化，任何架构改动都可用同一口径复测。
 
 ## 失败清单（复盘素材）

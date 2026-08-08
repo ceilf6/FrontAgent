@@ -1,10 +1,10 @@
 import { extname } from 'node:path';
-import type { HallucinationCheckResult } from '@frontagent/shared';
+import type { HallucinationCheckResult, SyntaxLanguage } from '@frontagent/shared';
 import ts from 'typescript';
 
 export interface SyntaxValidityCheckInput {
   code: string;
-  language: 'typescript' | 'javascript' | 'json' | 'yaml';
+  language: SyntaxLanguage;
   filePath?: string;
 }
 
@@ -15,12 +15,23 @@ export interface SyntaxErrorDetail {
   code?: number;
 }
 
+export interface SyntaxValidityDetails {
+  errors: SyntaxErrorDetail[];
+  language: SyntaxLanguage;
+}
+
+export interface SyntaxValidityCheckResult
+  extends Omit<HallucinationCheckResult, 'type' | 'details'> {
+  type: 'syntax_validity';
+  details?: SyntaxValidityDetails;
+}
+
 interface ParsedSourceFile extends ts.SourceFile {
   readonly parseDiagnostics: readonly ts.Diagnostic[];
 }
 
 /** Validate source syntax synchronously for callers that run inside file tools. */
-export function validateSourceSyntax(input: SyntaxValidityCheckInput): HallucinationCheckResult {
+export function validateSourceSyntax(input: SyntaxValidityCheckInput): SyntaxValidityCheckResult {
   const { code, language, filePath } = input;
 
   try {
@@ -57,12 +68,16 @@ export function validateSourceSyntax(input: SyntaxValidityCheckInput): Hallucina
       message: `Syntax is valid for ${language}`,
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     return {
       pass: false,
       type: 'syntax_validity',
       severity: 'block',
-      message: `Syntax check failed: ${error instanceof Error ? error.message : String(error)}`,
-      details: { error: String(error) },
+      message: `Syntax check failed: ${message}`,
+      details: {
+        errors: [{ line: 1, column: 1, message }],
+        language,
+      },
     };
   }
 }
@@ -72,7 +87,7 @@ export function validateSourceSyntax(input: SyntaxValidityCheckInput): Hallucina
  */
 export async function checkSyntaxValidity(
   input: SyntaxValidityCheckInput,
-): Promise<HallucinationCheckResult> {
+): Promise<SyntaxValidityCheckResult> {
   return validateSourceSyntax(input);
 }
 
@@ -210,11 +225,26 @@ function checkJsonSyntax(code: string, filePath?: string): SyntaxErrorDetail[] {
 }
 
 function isKnownJsoncConfigPath(filePath: string): boolean {
-  const normalized = filePath.replaceAll('\\', '/');
-  const baseName = normalized.slice(normalized.lastIndexOf('/') + 1).toLowerCase();
+  const normalized = filePath.replaceAll('\\', '/').toLowerCase();
+  const baseName = normalized.slice(normalized.lastIndexOf('/') + 1);
+  if (baseName.endsWith('.jsonc')) return true;
+  if (/^(?:tsconfig|jsconfig)(?:\.[^/]+)?\.json$/.test(baseName)) return true;
+  if (baseName === '.eslintrc.json') return true;
+
+  const vscodeMatch = normalized.match(/(?:^|\/)\.vscode\/([^/]+)$/);
+  if (
+    vscodeMatch &&
+    ['settings.json', 'tasks.json', 'launch.json', 'extensions.json', 'mcp.json'].includes(
+      vscodeMatch[1],
+    )
+  ) {
+    return true;
+  }
+
   return (
-    /^(?:tsconfig|jsconfig)(?:\.[^/]+)?\.json$/.test(baseName) ||
-    /(?:^|\/)\.vscode\/[^/]+\.json$/i.test(normalized)
+    normalized === '.devcontainer.json' ||
+    normalized.endsWith('/.devcontainer.json') ||
+    /(?:^|\/)\.devcontainer\/(?:[^/]+\/)?devcontainer\.json$/.test(normalized)
   );
 }
 

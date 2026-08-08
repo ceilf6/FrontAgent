@@ -13,6 +13,7 @@ export interface ApplyPatchParams {
   dryRun?: boolean;
   __frontagentSecurityApproved?: boolean;
   __frontagentExpectedOriginalHash?: string;
+  __frontagentSyntaxValidationEnabled?: boolean;
 }
 
 /**
@@ -30,6 +31,7 @@ export function applyPatch(
     dryRun = false,
     __frontagentSecurityApproved = false,
     __frontagentExpectedOriginalHash,
+    __frontagentSyntaxValidationEnabled = true,
   } = params;
 
   const safePath = resolveWritePath(filePath, projectRoot);
@@ -65,7 +67,9 @@ export function applyPatch(
     'original',
     'modified',
   );
-  const validation = validateFileSyntax(projected.content, filePath);
+  const validation = __frontagentSyntaxValidationEnabled
+    ? validateFileSyntax(projected.content, filePath)
+    : { syntaxValid: true, lintErrors: [], typeErrors: [] };
   if (!dryRun && !validation.syntaxValid) {
     return {
       success: false,

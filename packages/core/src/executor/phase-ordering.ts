@@ -1,4 +1,4 @@
-import type { ExecutionStep } from '@frontagent/shared';
+import { detectSyntaxLanguage, type ExecutionStep } from '@frontagent/shared';
 import type { PhaseExecutionGroup } from './types.js';
 
 export function getPhasePriority(phase: string): number {
@@ -141,25 +141,4 @@ export function buildOrderedPhaseGroups(
   return topologicalSortPhaseGroups(Array.from(phaseGroups.values()), debugWarn);
 }
 
-export function detectLanguage(path: string): 'typescript' | 'javascript' | 'json' | 'yaml' | null {
-  const ext = path.split('.').pop()?.toLowerCase();
-  switch (ext) {
-    case 'ts':
-    case 'tsx':
-    case 'mts':
-    case 'cts':
-      return 'typescript';
-    case 'js':
-    case 'jsx':
-    case 'mjs':
-    case 'cjs':
-      return 'javascript';
-    case 'json':
-      return 'json';
-    case 'yaml':
-    case 'yml':
-      return 'yaml';
-    default:
-      return null;
-  }
-}
+export const detectLanguage = detectSyntaxLanguage;

@@ -257,6 +257,10 @@ export class HallucinationGuard {
     this.config.sddConfig = sddConfig;
   }
 
+  isCheckEnabled(check: keyof NonNullable<GuardConfig['enabledChecks']>): boolean {
+    return this.enabledChecks[check];
+  }
+
   /**
    * 启用/禁用检查
    */

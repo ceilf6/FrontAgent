@@ -7,11 +7,13 @@ describe('stripInternalArgs', () => {
       path: 'package.json',
       __frontagentSecurityApproved: true,
       __frontagentExpectedOriginalHash: 'sha256',
+      __frontagentSyntaxValidationEnabled: false,
     });
 
     expect(result).toEqual({ path: 'package.json' });
     expect('__frontagentSecurityApproved' in result).toBe(false);
     expect('__frontagentExpectedOriginalHash' in result).toBe(false);
+    expect('__frontagentSyntaxValidationEnabled' in result).toBe(false);
   });
 
   it('removes any __frontagent-prefixed key', () => {

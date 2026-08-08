@@ -154,6 +154,15 @@ describe('checkSyntaxValidity', () => {
         'configs/tsconfig.build.json',
         'jsconfig.web.json',
         '.vscode/settings.json',
+        '.vscode/tasks.json',
+        '.vscode/launch.json',
+        '.vscode/extensions.json',
+        '.vscode/mcp.json',
+        '.devcontainer.json',
+        '.devcontainer/devcontainer.json',
+        '.devcontainer/node/devcontainer.json',
+        '.eslintrc.json',
+        'turbo.jsonc',
         'C:\\repo\\.vscode\\tasks.json',
       ];
 
@@ -167,7 +176,15 @@ describe('checkSyntaxValidity', () => {
     it('keeps package and application JSON strict', async () => {
       const jsonc = '{\n  // not valid strict JSON\n  "name": "test",\n}';
 
-      for (const filePath of ['package.json', 'data.json']) {
+      for (const filePath of [
+        'package.json',
+        'nested/package.json',
+        'data.json',
+        'turbo.json',
+        '.frontagent/settings.json',
+        '.vscode/data.json',
+        '.vscode/package.json',
+      ]) {
         const result = await checkSyntaxValidity({ code: jsonc, language: 'json', filePath });
         expect(result.pass).toBe(false);
       }

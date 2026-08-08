@@ -3,7 +3,9 @@
  * MCP clients. These markers (e.g. `__frontagentSecurityApproved`) are set
  * exclusively by the trusted executor after a real security decision; honoring
  * them from raw client arguments would let any caller bypass write-approval
- * gates. They are stripped at the MCP server boundary before dispatch.
+ * gates. Consistency and validation-policy markers are also trusted executor
+ * metadata. They are stripped at the external stdio server boundary before
+ * dispatch; trusted in-process adapters deliberately preserve them.
  */
 const INTERNAL_KEY_PREFIX = '__frontagent';
 

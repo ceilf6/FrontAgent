@@ -30,6 +30,7 @@ function makeConfig(overrides: Partial<ExecutorConfig> = {}): ExecutorConfig {
     projectRoot: '/test',
     hallucinationGuard: {
       validateFilePath: vi.fn(),
+      isCheckEnabled: vi.fn().mockReturnValue(true),
       validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
       validateImports: vi.fn().mockResolvedValue({ pass: true, results: [] }),
       validateCode: vi.fn(),
@@ -452,6 +453,7 @@ describe('Executor', () => {
         expect(callTool).toHaveBeenCalledWith('create_file', {
           path: 'src/broken.ts',
           content: invalidContent,
+          __frontagentSyntaxValidationEnabled: false,
         });
         expect(result.stepResult.success).toBe(true);
         expect(result.validation).toEqual({ pass: true, results: [], blockedBy: undefined });
@@ -604,7 +606,11 @@ describe('Executor', () => {
       );
 
       expect(result.stepResult.success).toBe(true);
-      expect(callTool).toHaveBeenCalledWith('create_file', { path: 'tsconfig.json', content });
+      expect(callTool).toHaveBeenCalledWith('create_file', {
+        path: 'tsconfig.json',
+        content,
+        __frontagentSyntaxValidationEnabled: true,
+      });
     });
 
     it('projects arbitrary patches, ignores stale content, and binds the original hash', async () => {
@@ -739,6 +745,7 @@ describe('Executor', () => {
         makeConfig({
           hallucinationGuard: {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
+            isCheckEnabled: vi.fn().mockReturnValue(true),
             validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
             validateImports: vi.fn().mockResolvedValue({
               pass: false,
@@ -790,6 +797,7 @@ describe('Executor', () => {
         makeConfig({
           hallucinationGuard: {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
+            isCheckEnabled: vi.fn().mockReturnValue(true),
             validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
             validateImports: vi.fn().mockResolvedValue({ pass: true, results: [] }),
             validateCode: vi.fn(),

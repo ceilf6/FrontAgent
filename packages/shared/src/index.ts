@@ -43,6 +43,8 @@ export type {
   SecurityRuleProvenance,
   SecurityRuleSource,
 } from './security/types.js';
+// Syntax language detection
+export { detectSyntaxLanguage, type SyntaxLanguage } from './syntax-language.js';
 // Types - MCP
 export type {
   FilePatch,

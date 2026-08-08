@@ -14,6 +14,7 @@ export interface CreateFileParams {
   content: string;
   overwrite?: boolean;
   __frontagentSecurityApproved?: boolean;
+  __frontagentSyntaxValidationEnabled?: boolean;
 }
 
 export interface CreateFileResult {
@@ -36,6 +37,7 @@ export function createFile(
     content,
     overwrite = false,
     __frontagentSecurityApproved = false,
+    __frontagentSyntaxValidationEnabled = true,
   } = params;
 
   const safePath = resolveWritePath(filePath, projectRoot);
@@ -62,9 +64,11 @@ export function createFile(
     return { success: false, error: 'File content must be a string' };
   }
 
-  const syntaxValidation = validateFileSyntax(content, filePath);
-  if (!syntaxValidation.syntaxValid) {
-    return { success: false, error: syntaxValidationError(syntaxValidation, filePath) };
+  if (__frontagentSyntaxValidationEnabled) {
+    const syntaxValidation = validateFileSyntax(content, filePath);
+    if (!syntaxValidation.syntaxValid) {
+      return { success: false, error: syntaxValidationError(syntaxValidation, filePath) };
+    }
   }
 
   // 检查文件是否已存在

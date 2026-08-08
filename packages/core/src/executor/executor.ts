@@ -167,7 +167,15 @@ export class Executor {
         });
       }
 
-      let toolParams = { ...step.params };
+      let toolParams = {
+        ...step.params,
+        ...(['create_file', 'apply_patch'].includes(step.action)
+          ? {
+              __frontagentSyntaxValidationEnabled:
+                this.config.hallucinationGuard.isCheckEnabled('syntaxValidity'),
+            }
+          : {}),
+      };
 
       if (this.config.debug) {
         const stepAny = step as { needsCodeGeneration?: boolean };

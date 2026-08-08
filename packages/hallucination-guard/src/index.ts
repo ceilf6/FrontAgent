@@ -23,6 +23,8 @@ export {
   checkSyntaxValidity,
   type SyntaxErrorDetail,
   type SyntaxValidityCheckInput,
+  type SyntaxValidityCheckResult,
+  type SyntaxValidityDetails,
   validateSourceSyntax,
 } from './checks/syntax-validity.js';
 export {

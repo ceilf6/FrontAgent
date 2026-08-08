@@ -42,6 +42,24 @@ describe('createFile', () => {
     expect(manager.getFileSnapshots(join(root, 'broken.ts'))).toHaveLength(0);
   });
 
+  it('allows trusted in-process callers to disable syntax validation', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mcp-file-create-'));
+    roots.push(root);
+
+    const result = createFile(
+      {
+        path: 'broken.ts',
+        content: 'const value = ;',
+        __frontagentSyntaxValidationEnabled: false,
+      },
+      root,
+      new SnapshotManager(root),
+    );
+
+    expect(result.success).toBe(true);
+    expect(readFileSync(join(root, 'broken.ts'), 'utf-8')).toBe('const value = ;');
+  });
+
   it('accepts JSONC for known configuration paths and keeps ordinary JSON strict', () => {
     const root = mkdtempSync(join(tmpdir(), 'mcp-file-create-'));
     roots.push(root);

@@ -347,6 +347,7 @@ describe('applyPatch line-range validation', () => {
 
     expect(rejected.success).toBe(false);
     expect(rejected.error).toMatch(/changed since executor preflight/i);
+    expect(rejected.errorCode).toBe('stale_original_hash');
     expect(rejected.snapshotId).toBe('');
     expect(staleManager.getFileSnapshots(join(root, 'src/sample.ts'))).toHaveLength(0);
     expect(readFixture(root)).toBe(FIXTURE);

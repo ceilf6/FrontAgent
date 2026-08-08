@@ -615,7 +615,13 @@ describe('Executor', () => {
 
     it('projects arbitrary patches, ignores stale content, and binds the original hash', async () => {
       const original = 'export const first = 1;\nexport const second = 2;';
-      const callTool = vi.fn().mockResolvedValue({ success: true, snapshotId: 'snap-1' });
+      const callTool = vi
+        .fn()
+        .mockImplementation(async (name: string) =>
+          name === 'read_file'
+            ? { success: true, content: original }
+            : { success: true, snapshotId: 'snap-1' },
+        );
       const guard = new HallucinationGuard({
         projectRoot: '/test',
         enabledChecks: { importValidity: false, fileExistence: false },
@@ -634,6 +640,7 @@ describe('Executor', () => {
         listTools: vi.fn().mockResolvedValue([]),
       });
       executor.registerToolMapping('apply_patch', 'files');
+      executor.registerToolMapping('read_file', 'files');
       const context = makeExecutionContext({
         collectedContext: { files: new Map([['src/value.ts', original]]) },
       });

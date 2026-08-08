@@ -24,6 +24,8 @@ export interface FilePatch {
   content?: string;
 }
 
+export type PatchErrorCode = 'stale_original_hash';
+
 export interface PatchResult {
   success: boolean;
   diff: string;
@@ -34,6 +36,7 @@ export interface PatchResult {
   };
   snapshotId: string;
   error?: string;
+  errorCode?: PatchErrorCode;
 }
 
 export interface LintError {

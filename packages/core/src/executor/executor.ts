@@ -219,9 +219,24 @@ export class Executor {
       );
 
       if (typeof toolResult === 'object' && toolResult !== null) {
-        const resultObj = toolResult as { success?: boolean; error?: string };
+        const resultObj = toolResult as {
+          success?: boolean;
+          error?: string;
+          errorCode?: string;
+        };
         if (resultObj.success === false && resultObj.error) {
-          const isSkippableError = this.isSkippableError(resultObj.error, step, toolParams);
+          if (resultObj.errorCode === 'stale_original_hash') {
+            await this.refreshCollectedFileContext(
+              (toolParams as Record<string, unknown>).path,
+              context,
+            );
+          }
+          const isSkippableError = this.isSkippableError(
+            resultObj.error,
+            step,
+            toolParams,
+            resultObj.errorCode,
+          );
           if (isSkippableError) {
             if (this.config.debug) {
               console.log(`[Executor] Skipping step due to tool error: ${resultObj.error}`);
@@ -271,6 +286,25 @@ export class Executor {
         },
         needsRollback: true,
       });
+    }
+  }
+
+  private async refreshCollectedFileContext(
+    pathValue: unknown,
+    context: { task: AgentTask; collectedContext: ExecutorCollectedContext },
+  ): Promise<void> {
+    if (typeof pathValue !== 'string') return;
+    context.collectedContext.files.delete(pathValue);
+    try {
+      const readResult = (await this.callTool('read_file', { path: pathValue })) as {
+        success?: boolean;
+        content?: string;
+      };
+      if (readResult.success && typeof readResult.content === 'string') {
+        context.collectedContext.files.set(pathValue, readResult.content);
+      }
+    } catch {
+      // Leave the entry absent so recovery cannot reuse stale content.
     }
   }
 
@@ -334,9 +368,11 @@ export class Executor {
     errorMsg: string,
     step: ExecutionStep,
     params?: Record<string, unknown>,
+    errorCode?: string,
   ): boolean {
     const skillDecision = this.actionSkills.shouldSkipToolError({
       errorMsg,
+      errorCode,
       step,
       params: params ?? {},
     });
@@ -411,10 +447,9 @@ export class Executor {
         };
       }
 
-      if (!context.collectedContext.files.has(path)) {
-        this.debugLog(
-          `[Executor] 📖 File ${path} not in context, auto-reading before apply_patch...`,
-        );
+      {
+        const cachedContent = context.collectedContext.files.get(path);
+        this.debugLog(`[Executor] 📖 Refreshing ${path} before apply_patch...`);
 
         try {
           const readResult = (await this.callTool('read_file', { path })) as {
@@ -425,8 +460,27 @@ export class Executor {
 
           if (readResult.success && readResult.content !== undefined) {
             context.collectedContext.files.set(path, readResult.content);
+            if (
+              Array.isArray(step.params.patches) &&
+              cachedContent !== undefined &&
+              cachedContent !== readResult.content
+            ) {
+              const message = `Cannot apply explicit patches: ${path} changed after its patch context was collected`;
+              return {
+                pass: false,
+                results: [
+                  {
+                    pass: false,
+                    type: 'stale_patch_context',
+                    severity: 'block',
+                    message,
+                  },
+                ],
+                blockedBy: [message],
+              };
+            }
             this.debugLog(
-              `[Executor] ✅ Auto-read file ${path} (${readResult.content.length} chars) into context`,
+              `[Executor] ✅ Refreshed file ${path} (${readResult.content.length} chars) into context`,
             );
           } else {
             const errorMsg = readResult.error || 'Failed to read file';
@@ -596,6 +650,7 @@ export class Executor {
           path,
           content: '',
           validation: this.buildWriteValidationFailure(
+            'write_preflight_input',
             `Cannot preflight create_file: content for ${path} must be a string`,
           ),
           toolParams,
@@ -619,6 +674,7 @@ export class Executor {
         path,
         content: '',
         validation: this.buildWriteValidationFailure(
+          'write_preflight_input',
           `Cannot preflight patch: patches for ${path} must be an array`,
         ),
         toolParams,
@@ -630,6 +686,7 @@ export class Executor {
         path,
         content: '',
         validation: this.buildWriteValidationFailure(
+          'write_preflight_input',
           `Cannot preflight patch: original content for ${path} is unavailable`,
         ),
         toolParams,
@@ -641,7 +698,7 @@ export class Executor {
       return {
         path,
         content: '',
-        validation: this.buildWriteValidationFailure(projected.error),
+        validation: this.buildWriteValidationFailure('patch_projection', projected.error),
         toolParams,
       };
     }
@@ -663,13 +720,13 @@ export class Executor {
     };
   }
 
-  private buildWriteValidationFailure(message: string): ValidationResult {
+  private buildWriteValidationFailure(type: string, message: string): ValidationResult {
     return {
       pass: false,
       results: [
         {
           pass: false,
-          type: 'syntax_validity',
+          type,
           severity: 'block',
           message,
         },

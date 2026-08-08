@@ -54,6 +54,7 @@ export function applyPatch(
   ) {
     return failure(
       'Cannot apply patch: file changed since executor preflight; refusing to apply patches to a stale base',
+      'stale_original_hash',
     );
   }
 
@@ -101,13 +102,14 @@ function hashContent(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
-function failure(error: string): PatchResult {
+function failure(error: string, errorCode?: PatchResult['errorCode']): PatchResult {
   return {
     success: false,
     diff: '',
     validation: { syntaxValid: false, lintErrors: [], typeErrors: [] },
     snapshotId: '',
     error,
+    errorCode,
   };
 }
 

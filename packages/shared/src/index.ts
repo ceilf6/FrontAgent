@@ -51,6 +51,7 @@ export type {
   LintError,
   MCPPropertySchema,
   MCPToolDefinition,
+  PatchErrorCode,
   PatchResult,
   TypeError,
 } from './types/mcp.js';

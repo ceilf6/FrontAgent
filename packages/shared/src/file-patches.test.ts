@@ -1,3 +1,4 @@
+import type { FilePatch } from '@frontagent/shared';
 import { describe, expect, it } from 'vitest';
 import { applyFilePatches } from './file-patches.js';
 
@@ -44,6 +45,15 @@ describe('applyFilePatches', () => {
         error: `Invalid patch (${operation}): content is required`,
       });
     }
+  });
+
+  it('rejects an unknown operation instead of silently no-oping', () => {
+    // Cast through the type to simulate runtime data that bypassed the schema.
+    const bad = { operation: 'move' as FilePatch['operation'], startLine: 1, content: 'x' };
+    expect(applyFilePatches(FIXTURE, [bad])).toEqual({
+      ok: false,
+      error: 'Invalid patch operation: move (expected replace, insert, or delete)',
+    });
   });
 
   it('rejects invalid bounds', () => {

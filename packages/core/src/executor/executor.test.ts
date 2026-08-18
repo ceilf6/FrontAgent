@@ -758,6 +758,68 @@ describe('Executor', () => {
       expect(context.collectedContext.files.get('README.md')).toBe(projected);
     });
 
+    it('consumes the deferred-write marker so a resumed apply_patch is not blocked forever', async () => {
+      const original = 'export const value = 1;';
+      const callTool = vi
+        .fn()
+        .mockImplementation(async (name: string) =>
+          name === 'read_file'
+            ? { success: true, content: original }
+            : { success: true, snapshotId: 'snap-1' },
+        );
+      const executor = new Executor(
+        makeConfig({
+          getFileSystemFacts: () => ({ ...projectFacts(), existingFiles: new Set(['src/a.ts']) }),
+          hallucinationGuard: new HallucinationGuard({
+            projectRoot: '/test',
+            enabledChecks: { importValidity: false, fileExistence: false },
+          }),
+        }),
+      );
+      executor.registerMCPClient('files', { callTool, listTools: vi.fn().mockResolvedValue([]) });
+      executor.registerToolMapping('read_file', 'files');
+      executor.registerToolMapping('apply_patch', 'files');
+
+      const step = makeStep({
+        action: 'apply_patch',
+        tool: 'apply_patch',
+        params: {
+          path: 'src/a.ts',
+          __frontagentDeferredSameTargetWrite: true,
+          patches: [{ operation: 'replace', startLine: 1, content: 'export const value = 2;' }],
+        },
+      });
+
+      const firstRun = await executor.executeStep(
+        step,
+        makeExecutionContext({
+          collectedContext: { files: new Map([['src/a.ts', original]]) },
+        }),
+      );
+
+      // The marker forces one stale-context block, then must be consumed so a
+      // re-run (recovery or resume) is not blocked forever.
+      expect(firstRun.stepResult.success).toBe(false);
+      expect(firstRun.validation?.blockedBy?.join()).toMatch(/changed after/i);
+      expect(step.params.__frontagentDeferredSameTargetWrite).toBeUndefined();
+      expect(callTool).not.toHaveBeenCalledWith('apply_patch', expect.anything());
+
+      // Re-running the same step with matching content now succeeds: the marker
+      // is gone and the refreshed base is used for the expected-hash binding.
+      const secondRun = await executor.executeStep(
+        step,
+        makeExecutionContext({
+          collectedContext: { files: new Map([['src/a.ts', original]]) },
+        }),
+      );
+
+      expect(secondRun.stepResult.success).toBe(true);
+      expect(callTool).toHaveBeenCalledWith(
+        'apply_patch',
+        expect.objectContaining({ __frontagentExpectedOriginalHash: expect.any(String) }),
+      );
+    });
+
     it('rejects a patch whose projected final content is invalid', async () => {
       const original = 'export const value = 1;';
       const callTool = vi.fn().mockResolvedValue({ success: true });

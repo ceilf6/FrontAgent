@@ -191,19 +191,25 @@ function checkOuterMarkdownFence(code: string): SyntaxErrorDetail | undefined {
 }
 
 function checkJsonSyntax(code: string, filePath?: string): SyntaxErrorDetail[] {
-  if (filePath && isKnownJsoncConfigPath(filePath)) {
-    const parsed = ts.parseConfigFileTextToJson(filePath, code);
-    if (!parsed.error) return [];
-    const sourceFile = ts.parseJsonText(filePath, code);
-    return [formatDiagnostic(sourceFile, parsed.error)];
-  }
-
+  // Strict JSON first: any valid JSON document — object, array, or scalar
+  // root — passes. Only when strict parsing fails do we consider JSONC,
+  // because comments and trailing commas are allowed solely in known
+  // configuration paths. Routing every `.json` through the tsconfig parser
+  // first (as before) rejected valid top-level arrays and scalars with
+  // write-veto power.
   try {
     JSON.parse(code);
     return [];
   } catch (error) {
     if (!(error instanceof SyntaxError)) {
       return [{ line: 1, column: 1, message: String(error) }];
+    }
+
+    if (filePath && isKnownJsoncConfigPath(filePath)) {
+      const parsed = ts.parseConfigFileTextToJson(filePath, code);
+      if (!parsed.error) return [];
+      const sourceFile = ts.parseJsonText(filePath, code);
+      return [formatDiagnostic(sourceFile, parsed.error)];
     }
 
     const explicitLocation = error.message.match(/line\s+(\d+)\s+column\s+(\d+)/i);

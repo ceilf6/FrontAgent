@@ -98,6 +98,35 @@ describe('createFile', () => {
     expect(readdirSync(join(root, '.frontagent', 'snapshots'))).toHaveLength(0);
   });
 
+  it('honors overwrite intent when a file appears between the check and the write', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mcp-file-create-'));
+    roots.push(root);
+    const target = join(root, 'raced.ts');
+
+    class RacingSnapshotManager extends SnapshotManager {
+      override createSnapshot(filePath: string, operation: 'create' | 'modify' | 'delete'): string {
+        const snapshotId = super.createSnapshot(filePath, operation);
+        writeFileSync(target, 'concurrent writer', 'utf-8');
+        return snapshotId;
+      }
+    }
+
+    const manager = new RacingSnapshotManager(root);
+    const result = createFile(
+      {
+        path: 'raced.ts',
+        content: 'export const ours = true;',
+        overwrite: true,
+        __frontagentSecurityApproved: true,
+      },
+      root,
+      manager,
+    );
+
+    expect(result.success).toBe(true);
+    expect(readFileSync(target, 'utf-8')).toBe('export const ours = true;');
+  });
+
   it('creates a new file without overwrite permission', () => {
     const root = mkdtempSync(join(tmpdir(), 'mcp-file-create-'));
     roots.push(root);

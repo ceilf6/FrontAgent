@@ -93,9 +93,12 @@ export function createFile(
       mkdirSync(dir, { recursive: true });
     }
 
-    // Use exclusive creation for non-overwrite writes so a file created after
-    // the initial existence check cannot be overwritten by a race.
-    if (overwrite && existedBeforeWrite) {
+    // Exclusive creation only guards non-overwrite writes: a file created after
+    // the initial existence check must not be clobbered by a race. When
+    // overwrite is requested, honor that intent even if the file appears
+    // between the check and the write instead of failing with
+    // "appeared concurrently".
+    if (overwrite) {
       writeFileSync(safePath.fullPath, content, 'utf-8');
     } else {
       writeFileSync(safePath.fullPath, content, { encoding: 'utf-8', flag: 'wx' });

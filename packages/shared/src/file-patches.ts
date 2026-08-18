@@ -45,6 +45,10 @@ function validatePatchBounds(patches: readonly FilePatch[], lineCount: number): 
   for (const patch of patches) {
     const { operation, startLine, endLine, content } = patch;
 
+    if (operation !== 'replace' && operation !== 'insert' && operation !== 'delete') {
+      return `Invalid patch operation: ${String(operation)} (expected replace, insert, or delete)`;
+    }
+
     if ((operation === 'replace' || operation === 'insert') && content === undefined) {
       return `Invalid patch (${operation}): content is required`;
     }

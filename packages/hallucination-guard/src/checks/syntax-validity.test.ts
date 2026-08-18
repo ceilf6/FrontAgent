@@ -147,6 +147,78 @@ describe('checkSyntaxValidity', () => {
       expect(result.pass).toBe(true);
     });
 
+    it('accepts valid JSON with non-object roots at ordinary file paths', async () => {
+      const cases = [
+        { code: '[{"id": 1}, {"id": 2}]', filePath: 'mocks/users.json' },
+        { code: '["red", "green"]', filePath: 'fixtures/colors.json' },
+        { code: '"a plain string"', filePath: 'notes/title.json' },
+        { code: '123', filePath: 'data/count.json' },
+        { code: 'null', filePath: 'data/empty-value.json' },
+      ];
+
+      for (const { code, filePath } of cases) {
+        await expect(checkSyntaxValidity({ code, language: 'json', filePath })).resolves.toEqual(
+          expect.objectContaining({ pass: true }),
+        );
+      }
+    });
+
+    it('does not treat an ordinary JSON document as a tsconfig that requires an object root', async () => {
+      const result = await checkSyntaxValidity({
+        code: '[{"id": 1}]',
+        language: 'json',
+        filePath: 'mocks/users.json',
+      });
+
+      expect(result.pass).toBe(true);
+      expect(result.details?.errors).toBeUndefined();
+    });
+
+    it('accepts strict JSON documents unchanged when consumed by a strict consumer', async () => {
+      // A mock/list file that is strict JSON must stay byte-identical to what
+      // JSON.parse at runtime will see — no JSONC leniency for valid content.
+      const code = '{"items": [1, 2, 3], "name": "list"}';
+      const result = await checkSyntaxValidity({
+        code,
+        language: 'json',
+        filePath: 'mocks/items.json',
+      });
+
+      expect(result.pass).toBe(true);
+      expect(result.details).toBeUndefined();
+    });
+
+    it('keeps JSONC (comments) allowed for ordinary .json config-ish files while strict JSON wins for data files', async () => {
+      const jsonc = '{\n  // team tooling\n  "enabled": true,\n}';
+
+      // Config-shaped files outside the explicit list keep JSONC leniency.
+      await expect(
+        checkSyntaxValidity({ code: jsonc, language: 'json', filePath: 'biome.json' }),
+      ).resolves.toEqual(expect.objectContaining({ pass: true }));
+
+      // A data file that is strict JSON is not rewritten into JSONC form.
+      const strict = '{"enabled": true}';
+      await expect(
+        checkSyntaxValidity({ code: strict, language: 'json', filePath: 'mocks/flags.json' }),
+      ).resolves.toEqual(expect.objectContaining({ pass: true }));
+    });
+
+    it('documents empty-file behavior: lenient on JSONC paths, strict on strict paths', async () => {
+      // An empty file is tolerated on JSONC-capable paths (creating an empty
+      // config placeholder should not be blocked)...
+      for (const filePath of ['mocks/empty.json', 'tsconfig.json', 'turbo.jsonc']) {
+        await expect(
+          checkSyntaxValidity({ code: '', language: 'json', filePath }),
+        ).resolves.toEqual(expect.objectContaining({ pass: true }));
+      }
+      // ...but strict consumers reject empty content.
+      for (const filePath of ['package.json', 'data.json']) {
+        await expect(
+          checkSyntaxValidity({ code: '', language: 'json', filePath }),
+        ).resolves.toEqual(expect.objectContaining({ pass: false }));
+      }
+    });
+
     it('accepts JSONC only for known configuration paths', async () => {
       const jsonc = '{\n  // compiler settings\n  "compilerOptions": { "strict": true, },\n}';
       const paths = [

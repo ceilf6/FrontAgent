@@ -1,14 +1,7 @@
-import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type {
-  AgentTask,
-  ExecutionStep,
-  FilePatch,
-  StepResult,
-  ValidationResult,
-} from '@frontagent/shared';
-import { applyFilePatches, logger } from '@frontagent/shared';
+import type { AgentTask, ExecutionStep, StepResult, ValidationResult } from '@frontagent/shared';
+import { logger } from '@frontagent/shared';
 import {
   createDefaultExecutorSkillRegistry,
   type ExecutorActionSkill,
@@ -27,6 +20,7 @@ import type {
   MCPClient,
   PhaseExecutionGroup,
 } from './types.js';
+import { validateWriteBeforeExecution } from './write-preflight.js';
 
 export class Executor {
   private config: ExecutorConfig;
@@ -129,6 +123,14 @@ export class Executor {
       nowMs: () => this.nowMs(),
     });
 
+    // The phase runner marks a same-target write as deferred while a sibling
+    // writes first. That marker is runtime sequencing state, not plan content:
+    // consume it up front so it can never reach the tool, leak into a persisted
+    // session snapshot, or make a resumed apply_patch fail forever as
+    // stale_patch_context.
+    const deferredSameTargetWrite = step.params.__frontagentDeferredSameTargetWrite === true;
+    delete step.params.__frontagentDeferredSameTargetWrite;
+
     try {
       const paramValidation = await trace.withStage('validate_params', () =>
         this.validateStepParams(step),
@@ -141,7 +143,7 @@ export class Executor {
       }
 
       const preValidation = await trace.withStage('validate_before', () =>
-        this.validateBeforeExecution(step, context),
+        this.validateBeforeExecution(step, context, deferredSameTargetWrite),
       );
       if (!preValidation.pass) {
         const skip = this.getPreValidationSkip(step, preValidation);
@@ -196,7 +198,12 @@ export class Executor {
         }),
       );
 
-      const preflight = await this.validateWriteBeforeExecution(step, toolParams, context);
+      const preflight = await validateWriteBeforeExecution(
+        this.config.hallucinationGuard,
+        step,
+        toolParams,
+        context.collectedContext.files,
+      );
       if (preflight) {
         if (!preflight.validation.pass) {
           this.emitValidationFailed('pre_write', preflight.validation, step);
@@ -424,6 +431,7 @@ export class Executor {
   private async validateBeforeExecution(
     step: ExecutionStep,
     context: { task: AgentTask; collectedContext: ExecutorCollectedContext },
+    deferredSameTargetWrite = false,
   ): Promise<ValidationResult> {
     const results: ValidationResult['results'] = [];
 
@@ -453,7 +461,6 @@ export class Executor {
 
       {
         const cachedContent = context.collectedContext.files.get(path);
-        const wasDeferredSameTargetWrite = step.params.__frontagentDeferredSameTargetWrite === true;
         this.debugLog(`[Executor] 📖 Refreshing ${path} before apply_patch...`);
 
         try {
@@ -467,7 +474,7 @@ export class Executor {
             context.collectedContext.files.set(path, readResult.content);
             if (
               Array.isArray(step.params.patches) &&
-              (wasDeferredSameTargetWrite ||
+              (deferredSameTargetWrite ||
                 (cachedContent !== undefined && cachedContent !== readResult.content))
             ) {
               const message = `Cannot apply explicit patches: ${path} changed after its patch context was collected`;
@@ -626,127 +633,6 @@ export class Executor {
       pass: blockedBy.length === 0,
       results,
       blockedBy: blockedBy.length > 0 ? blockedBy : undefined,
-    };
-  }
-
-  private async validateWriteBeforeExecution(
-    step: ExecutionStep,
-    toolParams: Record<string, unknown>,
-    context: { task: AgentTask; collectedContext: ExecutorCollectedContext },
-  ): Promise<
-    | {
-        path: string;
-        content: string;
-        validation: ValidationResult;
-        toolParams: Record<string, unknown>;
-      }
-    | undefined
-  > {
-    if (step.action !== 'create_file' && step.action !== 'apply_patch') return undefined;
-
-    const path = typeof toolParams.path === 'string' ? toolParams.path : undefined;
-    if (!path) return undefined;
-    const language = detectLanguage(path);
-
-    if (step.action === 'create_file') {
-      if (typeof toolParams.content !== 'string') {
-        return {
-          path,
-          content: '',
-          validation: this.buildWriteValidationFailure(
-            'write_preflight_input',
-            `Cannot preflight create_file: content for ${path} must be a string`,
-          ),
-          toolParams,
-        };
-      }
-      return {
-        path,
-        content: toolParams.content,
-        validation:
-          language && language !== 'yaml'
-            ? await this.config.hallucinationGuard.validateSyntax(
-                toolParams.content,
-                language,
-                path,
-              )
-            : { pass: true, results: [] },
-        toolParams,
-      };
-    }
-
-    const originalContent = context.collectedContext.files.get(path);
-    if (!Array.isArray(toolParams.patches)) {
-      return {
-        path,
-        content: '',
-        validation: this.buildWriteValidationFailure(
-          'write_preflight_input',
-          `Cannot preflight patch: patches for ${path} must be an array`,
-        ),
-        toolParams,
-      };
-    }
-    const patches = toolParams.patches as FilePatch[];
-    if (originalContent === undefined) {
-      return {
-        path,
-        content: '',
-        validation: this.buildWriteValidationFailure(
-          'write_preflight_input',
-          `Cannot preflight patch: original content for ${path} is unavailable`,
-        ),
-        toolParams,
-      };
-    }
-
-    const projected = applyFilePatches(originalContent, patches);
-    if (!projected.ok) {
-      return {
-        path,
-        content: '',
-        validation: this.buildWriteValidationFailure('patch_projection', projected.error),
-        toolParams,
-      };
-    }
-
-    const originalSyntaxValidation =
-      language && language !== 'yaml'
-        ? await this.config.hallucinationGuard.validateSyntax(originalContent, language, path)
-        : { pass: true, results: [] };
-    const projectedSyntaxValidation =
-      language && language !== 'yaml'
-        ? await this.config.hallucinationGuard.validateSyntax(projected.content, language, path)
-        : { pass: true, results: [] };
-
-    return {
-      path,
-      content: projected.content,
-      validation:
-        !projectedSyntaxValidation.pass && originalSyntaxValidation.pass
-          ? projectedSyntaxValidation
-          : { pass: true, results: [] },
-      toolParams: {
-        ...toolParams,
-        __frontagentExpectedOriginalHash: createHash('sha256')
-          .update(originalContent, 'utf8')
-          .digest('hex'),
-      },
-    };
-  }
-
-  private buildWriteValidationFailure(type: string, message: string): ValidationResult {
-    return {
-      pass: false,
-      results: [
-        {
-          pass: false,
-          type,
-          severity: 'block',
-          message,
-        },
-      ],
-      blockedBy: [message],
     };
   }
 

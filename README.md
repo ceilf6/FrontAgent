@@ -1343,11 +1343,9 @@ That zero-interception count has since been qualified: [`2026-07-31-validation-t
 
 ## Download Stats (verifiable)
 
-<!-- npm-downloads:start -->
-**Cumulative npm downloads since 2026-01-14: 2447** (updated 2026-07-10, via GitHub Action)
-<!-- npm-downloads:end -->
+[![Cumulative npm downloads since 2026-01-14](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2F2026-01-14%3A2099-12-31%2Ffrontagent&query=%24.downloads&label=cumulative%20npm%20downloads%20since%202026-01-14)](https://www.npmjs.com/package/frontagent)
 
-Verify it yourself against the public npm registry API:
+The badge is rendered live by shields.io from the public npm registry endpoint below, so the number it shows is the one you can reproduce yourself:
 
 ```bash
 # macOS:  date -u -v-1d +%F   |  Linux:  date -u -d yesterday +%F

@@ -964,13 +964,17 @@ test('README documents the filesense ablation arm and its deep-fixture prerequis
   assert.match(readme, /pnpm --dir benchmarks\/eval\/fixture-deep install/u);
 });
 
-test('README exposes the verifiable npm downloads counter with its marker block', () => {
+test('README exposes the verifiable npm downloads counter as a live badge', () => {
   const readme = readFileSync('README.md', 'utf8');
 
   assert.match(readme, /## Download Stats \(verifiable\)/u);
-  // Marker comments are the GitHub Action's substitution anchors — do not rename.
-  assert.match(readme, /<!-- npm-downloads:start -->/u);
-  assert.match(readme, /<!-- npm-downloads:end -->/u);
+  // shields.io renders the count at view time from the same registry endpoint the
+  // verify command queries, so no workflow needs push access to the protected
+  // develop branch to keep it fresh. The start date is the package's first publish.
+  assert.match(
+    readme,
+    /img\.shields\.io\/badge\/dynamic\/json\?url=https%3A%2F%2Fapi\.npmjs\.org%2Fdownloads%2Fpoint%2F2026-01-14%3A/u,
+  );
   // The reader can verify the number against the public registry API.
   assert.match(readme, /api\.npmjs\.org\/downloads\/point/u);
 });

@@ -5,6 +5,7 @@
 // 本文件只回答一个问题——**关掉 filesense 会怎样**。两臂除 filesense 外配置完全相同。
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { summarizeExploration } from './exploration.mjs';
 
 const dir = process.argv[2] ?? 'benchmarks/eval/out';
 // --fixture deep 的产物落 `<arm>-deep.jsonl`
@@ -17,8 +18,9 @@ const load = (arm) =>
     .map((l) => JSON.parse(l));
 
 const withMap = (rows) => new Map(rows.map((r) => [r.taskId, r]));
-const fullAll = load('full');
-const offAll = load('no-filesense');
+const withExploration = (row) => ({ ...row, ...summarizeExploration(row.eventDetails?.explored, row.targetDirs) });
+const fullAll = load('full').map(withExploration);
+const offAll = load('no-filesense').map(withExploration);
 
 // 夹具与任务集必须两臂一致，否则「唯一变量是 filesense」这条前提就不成立。
 // 不校验的话，报告会拿一套夹具的方法学去描述另一套的产物——正是 #410 撤回结论的那类失真。
@@ -62,6 +64,7 @@ const rate = (rows) => (rows.length ? rows.filter((r) => r.pass).length / rows.l
 const avg = (rows, k) =>
   rows.length ? Math.round(rows.reduce((s, r) => s + (r[k] ?? 0), 0) / rows.length) : 0;
 const sum = (rows, k) => rows.reduce((s, r) => s + (r[k] ?? 0), 0);
+const explorationMetric = (rows, key, average = false) => rows.length && rows.every(row => typeof row[key] === 'number') ? (average ? avg(rows, key) : sum(rows, key)) : '未记录';
 const pct = (x) => `${(x * 100).toFixed(1)}%`;
 const count = (rows) => `${rows.filter((r) => r.pass).length}/${rows.length}`;
 const navTasks = (rows) => rows.filter((r) => (r.events?.filesense_navigated ?? 0) > 0);
@@ -159,19 +162,19 @@ console.log(`# FrontAgent 消融评测：filesense 目录导航对一次通过�
 
 ## 定位精度（本报告的主指标）
 
-通过率对「找得准不准」不敏感：两臂都能靠 list_directory / search_code 慢慢摸出来，
-**结果相同、代价不同**——而代价才是导航能力的直接体现。下表统计探索类步骤
-（read_file / list_directory / search_code）落在任务声明的 targetDirs 之外的次数。
-targetDirs 由任务自己声明，不是从结果反推的。
+探索结果根据事件发生时记录的路径存在性和工具输出判定。空文件的成功读取属于命中；
+跳过、失败或没有读到内容单独计数。glob 搜索不当作具体路径命中。
+旧记录缺少存在性证据时计为不可判定，不使用旧版计数推断命中。
 
 | 指标 | filesense 关 | filesense 开 |
 |---|---|---|
-| 平均探索步数 / 任务 | ${avg(arms.off, 'exploredCount')} | ${avg(arms.full, 'exploredCount')} |
-| **平均脱靶探索 / 任务** | **${avg(arms.off, 'offTargetExplored')}** | **${avg(arms.full, 'offTargetExplored')}** |
-| 累计脱靶探索 | ${sum(arms.off, 'offTargetExplored')} | ${sum(arms.full, 'offTargetExplored')} |
-
-> 脱靶数越低说明越少在无关目录里翻找。若两臂脱靶数接近，说明在这个任务集上
-> 目标位置本来就好猜，导航没有可发挥的空间——那是**任务设计**的结论，不是能力的结论。
+| 平均探索步数 / 任务 | ${explorationMetric(arms.off, 'exploredCount', true)} | ${explorationMetric(arms.full, 'exploredCount', true)} |
+| 命中目标目录且操作成功 | ${explorationMetric(arms.off, 'exploredHit')} | ${explorationMetric(arms.full, 'exploredHit')} |
+| 路径缺失 | ${explorationMetric(arms.off, 'exploredGhost')} | ${explorationMetric(arms.full, 'exploredGhost')} |
+| 失败或未读到内容 | ${explorationMetric(arms.off, 'exploredMiss')} | ${explorationMetric(arms.full, 'exploredMiss')} |
+| 脱靶探索 | ${explorationMetric(arms.off, 'offTargetExplored')} | ${explorationMetric(arms.full, 'offTargetExplored')} |
+| glob 搜索 | ${explorationMetric(arms.off, 'globExplored')} | ${explorationMetric(arms.full, 'globExplored')} |
+| 不可判定 | ${explorationMetric(arms.off, 'exploredUnknown')} | ${explorationMetric(arms.full, 'exploredUnknown')} |
 
 ## 分类通过率
 

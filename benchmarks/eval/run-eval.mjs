@@ -8,6 +8,7 @@ import { performance } from 'node:perf_hooks';
 import { runFrontAgentTask } from '../../packages/runtime-node/dist/run.js';
 import { createClaudeCliBackend, getUsageTally } from './claude-cli-backend.mjs';
 import { runChecks } from './checks.mjs';
+import { observeExploration, summarizeExploration } from './exploration.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -155,7 +156,7 @@ const backend = createClaudeCliBackend();
 /** 事件形状与 core 对不上时记在这里；主循环据此中止本臂，而不是继续产出假数据 */
 const harnessFailures = [];
 
-function collectEventDetail(details, event) {
+function collectEventDetail(details, event, workspace) {
   if (event.type === 'filesense_navigated') {
     // 这里跨包读 core 的 AgentEvent 字段，`.mjs` 拿不到类型约束。
     // core 一旦改名，entries 会静默变成 0、报告照样出「累计扫描条目 0」——
@@ -222,15 +223,10 @@ function collectEventDetail(details, event) {
     const action = event.step?.action;
     const params = event.step?.params ?? {};
     const where = params.path ?? params.directory ?? params.filePattern;
+    const exploration = observeExploration(event, workspace);
+    if (exploration) details.explored.push(exploration);
     if (where) {
-      // 记录步骤成败：读一个**不存在**的文件（模型猜错文件名）会失败，
-      // 而只判目录前缀会把它记成命中——那正是导航该防的幻觉，
-      // 盲区方向是低估导航价值、把两臂对照偏向零（issue #429）。
-      // 记在采集时而不是事后查工作区：工作区会被清理，判据不该依赖它。
       const ok = event.type === 'step_completed';
-      if (['read_file', 'list_directory', 'search_code'].includes(action)) {
-        details.explored.push({ action, path: String(where), ok });
-      }
       if (['create_file', 'apply_patch'].includes(action)) {
         details.touched.push({ action, path: String(where), ok });
       }
@@ -298,7 +294,7 @@ for (const task of tasks) {
             }
           }
         }
-        collectEventDetail(eventDetails, e);
+        collectEventDetail(eventDetails, e, ws);
       },
     });
     resultText = result?.output ?? '';
@@ -347,29 +343,8 @@ for (const task of tasks) {
     // 「按需供给 vs 全量倾倒」这条主张能不能拿数字说话，全靠这两个字段。
     filesenseEntries: eventDetails.filesense.reduce((sum, nav) => sum + (nav.entries ?? 0), 0),
     filesenseTruncated: eventDetails.filesense.some((nav) => nav.truncated),
-    // 定位精度：探索了多少路径，其中多少落在任务声明的目标目录之外。
-    // `targetDirs` 由任务自己在 tasks-deep.json 里声明，不是从结果反推的——
-    // 否则就是拿答案去评分。通过率对「找得准不准」太不敏感：两臂都能靠
-    // list_directory / search_code 慢慢摸出来，结果一样、代价不同，
-    // 而代价才是导航能力的直接体现。
-    exploredCount: eventDetails.explored.length,
-    // 三桶：命中（目录对且步骤成功）/ 幻觉（步骤失败，多为猜错文件名）/ 脱靶（成功但目录错）。
-    // 二分口径把「幻觉」误记为命中，见 #429。
-    exploredHit: task.targetDirs
-      ? eventDetails.explored.filter(
-          (e) => e.ok && !e.path.includes('*') && task.targetDirs.some((d) => e.path.startsWith(d)),
-        ).length
-      : null,
-    exploredGhost: eventDetails.explored.filter((e) => !e.ok && !e.path.includes('*')).length,
-    // 脱靶 = 探索到了一个**具体目录**且它不在目标目录下。
-    // glob 模式（`**/*Route*.tsx`）不指向具体目录，既不算命中也不算脱靶——
-    // 把它算成脱靶会惩罚「先 glob 再收敛」这条 prompt 明确推荐的流程。
-    offTargetExplored: task.targetDirs
-      ? eventDetails.explored.filter(
-          (e) => !e.path.includes('*') && !task.targetDirs.some((d) => e.path.startsWith(d)),
-        ).length
-      : null,
-    globExplored: eventDetails.explored.filter((e) => e.path.includes('*')).length,
+    // Counts are reproducible from observations captured during this run.
+    ...summarizeExploration(eventDetails.explored, task.targetDirs),
     elapsedMs: Math.round(performance.now() - t0),
     llmCalls,
     llmFailures,

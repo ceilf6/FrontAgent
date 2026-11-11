@@ -61,3 +61,54 @@ test('benchmark report renders validation failures for every write stage', () =>
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('filesense reports replay stored existence instead of trusting stale aggregate counters', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'frontagent-exploration-report-'));
+  try {
+    for (const arm of ['full', 'no-filesense']) {
+      const row = {
+        ...makeRow(arm === 'full' ? { filesense_navigated: 1 } : {}),
+        fixture: 'deep',
+        taskSet: 'tasks-deep.json',
+        targetDirs: ['src/app'],
+        filesenseConfigRequested: { enabled: arm === 'full' },
+        eventDetails: {
+          explored: [
+            { action: 'read_file', path: 'src/app/ghost.ts', exists: false, ok: true },
+            { action: 'read_file', path: 'src/app/old.ts', ok: true },
+            {
+              action: 'read_file',
+              path: 'src/apple/real.ts',
+              exists: true,
+              ok: true,
+              resultSuccess: true,
+              contentLength: 0,
+            },
+          ],
+        },
+        exploredHit: 99,
+        exploredGhost: 0,
+        offTargetExplored: 0,
+      };
+      writeFileSync(join(dir, `${arm}-deep.jsonl`), `${JSON.stringify(row)}\n`);
+    }
+    const report = execFileSync(
+      process.execPath,
+      ['benchmarks/eval/report-filesense.mjs', dir, 'deep'],
+      { encoding: 'utf8' },
+    );
+    assert.match(report, /命中目标目录且操作成功 \| 0 \| 0 \|/);
+    assert.match(report, /路径缺失 \| 1 \| 1 \|/);
+    assert.match(report, /脱靶探索 \| 1 \| 1 \|/);
+    assert.match(report, /不可判定 \| 1 \| 1 \|/);
+    const analysis = execFileSync(
+      process.execPath,
+      ['benchmarks/eval/analyze-exploration.mjs', dir, 'deep'],
+      { encoding: 'utf8' },
+    );
+    assert.match(analysis, /\| full \| 1 \| 0 \| \*\*1\*\* \| 1 \| 0 \| 0 \| 1 \|/);
+    assert.match(analysis, /路径缺失：`src\/app\/ghost.ts`/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

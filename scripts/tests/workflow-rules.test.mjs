@@ -299,7 +299,10 @@ test('package exposes required OSS Harness scripts', () => {
   // 一度需要打补丁才能用(见 057aa6a)。升级必须是一次经审阅的改动,而不是
   // 某次 lockfile 刷新的副产物——`patchedDependencies` 必须保持为空,否则
   // 说明又退回到打补丁的状态。
-  assert.equal(pkg.devDependencies.gitnexus, '1.6.9');
+  assert.equal(pkg.devDependencies.gitnexus, '1.6.12');
+  assert.equal(pkg.devDependencies['@biomejs/biome'], '2.6.3');
+  const biomeConfig = JSON.parse(readFileSync('biome.json', 'utf8'));
+  assert.equal(biomeConfig.$schema, 'https://biomejs.dev/schemas/2.6.3/schema.json');
   assert.equal(pkg.pnpm.patchedDependencies, undefined);
   assert.equal(pkg.scripts.prepare, 'pnpm hooks:install');
   assert.equal(pkg.scripts['hooks:install'], 'node scripts/workflows/install-hooks.mjs');
@@ -541,7 +544,7 @@ test('desktop release workflow publishes per-platform zips on version tags', () 
   const config = readFileSync('apps/desktop/electron-builder.yml', 'utf8');
 
   // Triggers: version tags publish; pull_request/dispatch build artifacts only.
-  assert.match(release, /tags:\s*\['v\*'\]/u);
+  assert.match(release, /tags:\s*\[(['"])v\*\1\]/u);
   assert.match(release, /pull_request:/u);
   assert.match(release, /workflow_dispatch:/u);
   // Build the zip on all three desktop OSes, building the workspace spine first.

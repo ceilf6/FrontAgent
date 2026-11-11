@@ -20,19 +20,19 @@ All notable changes to this project will be documented in this file.
 - **ci**: Every third-party action is pinned to a commit SHA with a trailing version comment. #437 was caused by a silent behavior change on the moving `@v4` tag — `actions/checkout` began refusing fork checkouts under `pull_request_target` and Repo Guard broke on every fork PR with no change on our side. The regression test added for it asserts workflow text, and Actions only warns on unknown `with:` keys, so the same class of drift could break checkout again while `test:workflows` stayed green; a new contract test now requires the SHA form. Each action is pinned where it already was — the two `actions/checkout@v4` usages stay on v4.4.0 rather than moving to v6, because that jump crosses the node20→node24 runtime change and repo-guard runs on a self-hosted runner whose version cannot be checked from here; aligning them is a separate, verifiable change. `ceilf6/repo-guard@main` is deliberately left on a moving ref — it is first-party, and whether to pin it is a maintainer policy call, noted rather than decided here. (#440)
 - **deps**: Dev-dependency group bump. Biome 2.4.16 → 2.5.6 needed a config migration (`recommended` → `preset`) and surfaced four findings, all real: an unsafe optional chain in a desktop test whose failure would have pointed at the wrong line, an SVG with no accessible name, a string concatenation, and three env vars `contract-check.mjs` reads without declaring — silenced by a `biome.json` `overrides` entry scoped to `scripts/workflows/**`, since that script is not a turbo task and declaring its variables in `globalPassThroughEnv` would have exposed them to every package's build/test/typecheck just to quiet one lint; any future script under that path inherits the exemption. The same rename silently disabled a guard in the Harness contract test that asserted the lint rule used as a traversal probe is still on — it now accepts both spellings, verified against every way 2.5.6 can switch that rule off. gitnexus 1.6.6 → 1.6.9 also moves the exact-version pin in that test, which is deliberate: the pin exists so a gitnexus upgrade is a reviewed change rather than a lockfile side effect. Also electron 42.4 → 42.8, turbo 2.9.16 → 2.10.8, vitest 4.1.8 → 4.1.10, vite 7.3.2 → 7.3.6, esbuild → `^0.28.1` everywhere (`apps/desktop` came from `^0.25.0`, so the Electron bundler crosses three minors; the root and `apps/vscode` from `^0.28.0`), concurrently 9.2.1 → 9.2.4 and @types/node 25.9.1 → 25.9.5. (#449)
 - **ci**: Contract Guard now skips dependabot-authored PRs. The gate requires two things dependabot structurally cannot supply — a `scripts/tests/` contract test in the same PR whenever a critical file changes, and a structured GitNexus impact summary in the PR body — so every dependency bump touching `.github/workflows/` failed it permanently. Those bumps are still gated by CODEOWNERS review and by CI, which is the only required status check. The skip is keyed on the PR author rather than `github.actor`, so it survives a maintainer running update-branch or pushing to the dependabot branch. (#443)
-- **ci**: Repo Guard can review fork PRs again. `actions/checkout` refuses fork checkouts under `pull_request_target` unless `allow-unsafe-pr-checkout` is set, and it does not read the workflow's own actor allowlist — so every fork PR failed at checkout before the review step ran. The opt-in is set explicitly and scoped by event to `pull_request_target` only, matching the path its justification covers: that path is gated on the PR author being a repo branch or a named allowlist entry. The `issue_comment` branch of the same step gates on the *commenter* rather than the PR author, and stays opted out, so a future widening of the action's guard cannot silently admit it. (#437)
+- **ci**: Repo Guard can review fork PRs again. `actions/checkout` refuses fork checkouts under `pull_request_target` unless `allow-unsafe-pr-checkout` is set, and it does not read the workflow's own actor allowlist — so every fork PR failed at checkout before the review step ran. The opt-in is set explicitly and scoped by event to `pull_request_target` only, matching the path its justification covers: that path is gated on the PR author being a repo branch or a named allowlist entry. The `issue_comment` branch of the same step gates on the _commenter_ rather than the PR author, and stays opted out, so a future widening of the action's guard cannot silently admit it. (#437)
 - **mcp-filesense**: `filesense_navigate` no longer accepts `writeMode: 'workspace'` — the value is removed from the tool schema and from the exported `NavigateOptions` type, and the engine rejects it at runtime for callers that are not type-checked. navigate is classified as a read-only tool by the executor's `SecurityManager`, so honouring a workspace write there would hand an approval-exempt tool a write primitive. The planner downgrades a configured `workspace` to `none` (warning once) so the navigation phase is not silently dropped. Note that `FRONTAGENT_FILESENSE_WRITE_MODE` currently has no observable effect at any value: `filesense_sync` does not read it and always writes indexes (#403).
 
 ### Fixed
 
 - **filesense**: Query and modification plans with discovery steps receive navigation without requiring prompt keywords. Scan roots come from planned paths and search directories; missing roots report warnings while valid roots continue scanning relative to the project. (#420, #425)
 - **benchmarks**: Exploration records capture path existence and read outcomes when events arrive. Run summaries and Filesense reports distinguish missing paths, failed or empty-result reads, off-target paths, globs, and unavailable evidence; replay does not depend on temporary workspaces or stale aggregate counters. (#429, #432)
-- **filesense**: The navigation step now actually runs first. `planner-skills` prepends it to the step array with `phase: 'preparation'`, but execution does not follow array order — `buildOrderedPhaseGroups` groups by phase and sorts by `getPhasePriority`, which had no branch for `preparation` and fell through to the catch-all 80. Navigation therefore ran *second-to-last*, after analysis (10), creation (20), install (30), validation (40), start (50), browser (60) and repository (70) — i.e. after every read and write it was supposed to inform. This is upstream of #434: grounding planned paths in what navigation enumerated cannot help if the enumeration happens afterwards. `preparation` now sorts at 5 — matched exactly rather than by substring, unlike the other branches: those tolerate the LLM's free-form phase wording, while `preparation` is a literal this repo writes itself, and an `includes('prepar')` would also hoist a model-authored "prepare release" to global first. A test pins the resulting execution order rather than just the number. (#446)
+- **filesense**: The navigation step now actually runs first. `planner-skills` prepends it to the step array with `phase: 'preparation'`, but execution does not follow array order — `buildOrderedPhaseGroups` groups by phase and sorts by `getPhasePriority`, which had no branch for `preparation` and fell through to the catch-all 80. Navigation therefore ran _second-to-last_, after analysis (10), creation (20), install (30), validation (40), start (50), browser (60) and repository (70) — i.e. after every read and write it was supposed to inform. This is upstream of #434: grounding planned paths in what navigation enumerated cannot help if the enumeration happens afterwards. `preparation` now sorts at 5 — matched exactly rather than by substring, unlike the other branches: those tolerate the LLM's free-form phase wording, while `preparation` is a literal this repo writes itself, and an `includes('prepar')` would also hoist a model-authored "prepare release" to global first. A test pins the resulting execution order rather than just the number. (#446)
 - **runtime-node**: `formatRunError` no longer rewrites any error containing "not found" or "404" into an LLM provider misconfiguration. It classified by substring, so `Cannot apply patch: file not found in context: src/hooks/useDebounce.ts` — a message from the `apply_patch` skill, with no LLM call involved — was reported as a 404 against a `provider`/`model`/`baseURL` triple read from config, making a fabricated story look well-evidenced. Real LLM request failures are now tagged at the source in `llm-service` (in the message text, since errors are flattened with `error.message` before reaching any formatter) and `formatRunError` switches on that tag. The original message is preserved alongside the hint in every branch rather than replaced. (#408)
-- **executor**: Write steps are validated *before* the content reaches disk, and a failed write is rolled back. Previously `validateAfterExecution` ran only after the tool had written, and rollback was gated on `step.validation.some(v => v.required)` — a field LLM-generated plans leave empty — so a bad file simply stayed on disk. The pre-write veto is deliberately narrow: only the deterministic markdown-fence criterion can stop a write, because the guard's `syntax_validity` check is a per-line quote-parity heuristic that blocks `"it's fine"`, multi-line template literals and JSX apostrophes (#413). `apply_patch` is covered too — codegen emits whole-file replaces, whose final content is fully known before the write. Rollback failure is reported instead of leaving callers at "rollback started", and `validation_failed` now carries a `stage` (`pre_execution` / `pre_write` / `post_write`) so interception can actually be counted (#388). On `apply_patch` — and only there — `syntax_validity` and `import_validity` are recorded but do not decide step outcome. That is not a loss of interception: before this change the patch path never reached `validateCode` at all, so those verdicts never constrained it; making the content validatable and simultaneously giving them veto power would fail legitimate modify steps over `@/alias` imports and modules a later step creates. `create_file` keeps blocking on both, unchanged. Demoted verdicts stay in `validation.results` and still emit `validation_failed`, so demotion does not also switch off the telemetry — consumers must read `result.pass` to tell a block from a record. (#387, #388, #413)
-- **guard**: `hallucinationGuard.enabled: false` now disables every `HallucinationGuard` check on the agent path while preserving project-root containment. It does not reach the executor's own filesystem-facts grounding, which blocks an `apply_patch` against a known-nonexistent path regardless of guard config — so an ablation arm that sets this flag is not running with *all* interception off. Disabling `fileExistence` alone now also keeps the containment result on `validate()`, where that path previously produced none. (#400)
-- **tooling**: `pnpm lint` works again from inside a worktree under `.claude/worktrees/`. The exclusion added for #439 was `**/`-prefixed, and Biome matches the traversal root by absolute path — so when Biome ran *from* such a worktree the root matched its own exclusion and `biome check .` reported "Checked 0 files" and exited non-zero, taking the pre-commit and pre-push hooks with it. The pattern is now anchored to the project root, which still keeps Biome out of a nested checkout at the root (the #439 failure). `.gitignore` deliberately keeps `**/`: git has no equivalent reverse failure, so it can afford the wider match. The two are therefore not equivalent protection — a worktree under a subdirectory's `.claude/` is git-ignored but *not* excluded from Biome, so a root `biome check .` still hits the #439 abort there; move such a worktree to the repo-root `.claude/worktrees/`. Both directions of the root case are pinned by a test that runs the real binary against a synthetic project root. (#444)
-- **tooling**: A git worktree under `.claude/worktrees/` — Claude Code's default location — no longer breaks the local quality gates, which also made the pre-commit and pre-push hooks unusable without `--no-verify`. The worktree is a full nested checkout, and it broke two gates independently: its own `biome.json` made root `biome check .` abort with a nested-root-configuration error before checking any file, and `git ls-files --others` reported it as a single trailing-slash entry — the way it reports an untracked *nested repository*, rather than recursing as it does for an ordinary directory — which `listPublicClaudeAssets()` then read with `readFileSync`, throwing `EISDIR`. Fixed on both levers, since Biome sets no `vcs.useIgnoreFile` and never consults `.gitignore`: a `**/.claude/worktrees/` ignore rule plus a matching `biome.json` `includes` exclusion. Directory entries are also dropped at the point where assets are read, rather than inside the listing helper, so a stray nested repository elsewhere under `.claude/` still trips the public-prefix and single-entrypoint assertions instead of being silently skipped — while no longer aborting the suite with `EISDIR`. (#439)
+- **executor**: Write steps are validated _before_ the content reaches disk, and a failed write is rolled back. Previously `validateAfterExecution` ran only after the tool had written, and rollback was gated on `step.validation.some(v => v.required)` — a field LLM-generated plans leave empty — so a bad file simply stayed on disk. The pre-write veto is deliberately narrow: only the deterministic markdown-fence criterion can stop a write, because the guard's `syntax_validity` check is a per-line quote-parity heuristic that blocks `"it's fine"`, multi-line template literals and JSX apostrophes (#413). `apply_patch` is covered too — codegen emits whole-file replaces, whose final content is fully known before the write. Rollback failure is reported instead of leaving callers at "rollback started", and `validation_failed` now carries a `stage` (`pre_execution` / `pre_write` / `post_write`) so interception can actually be counted (#388). On `apply_patch` — and only there — `syntax_validity` and `import_validity` are recorded but do not decide step outcome. That is not a loss of interception: before this change the patch path never reached `validateCode` at all, so those verdicts never constrained it; making the content validatable and simultaneously giving them veto power would fail legitimate modify steps over `@/alias` imports and modules a later step creates. `create_file` keeps blocking on both, unchanged. Demoted verdicts stay in `validation.results` and still emit `validation_failed`, so demotion does not also switch off the telemetry — consumers must read `result.pass` to tell a block from a record. (#387, #388, #413)
+- **guard**: `hallucinationGuard.enabled: false` now disables every `HallucinationGuard` check on the agent path while preserving project-root containment. It does not reach the executor's own filesystem-facts grounding, which blocks an `apply_patch` against a known-nonexistent path regardless of guard config — so an ablation arm that sets this flag is not running with _all_ interception off. Disabling `fileExistence` alone now also keeps the containment result on `validate()`, where that path previously produced none. (#400)
+- **tooling**: `pnpm lint` works again from inside a worktree under `.claude/worktrees/`. The exclusion added for #439 was `**/`-prefixed, and Biome matches the traversal root by absolute path — so when Biome ran _from_ such a worktree the root matched its own exclusion and `biome check .` reported "Checked 0 files" and exited non-zero, taking the pre-commit and pre-push hooks with it. The pattern is now anchored to the project root, which still keeps Biome out of a nested checkout at the root (the #439 failure). `.gitignore` deliberately keeps `**/`: git has no equivalent reverse failure, so it can afford the wider match. The two are therefore not equivalent protection — a worktree under a subdirectory's `.claude/` is git-ignored but _not_ excluded from Biome, so a root `biome check .` still hits the #439 abort there; move such a worktree to the repo-root `.claude/worktrees/`. Both directions of the root case are pinned by a test that runs the real binary against a synthetic project root. (#444)
+- **tooling**: A git worktree under `.claude/worktrees/` — Claude Code's default location — no longer breaks the local quality gates, which also made the pre-commit and pre-push hooks unusable without `--no-verify`. The worktree is a full nested checkout, and it broke two gates independently: its own `biome.json` made root `biome check .` abort with a nested-root-configuration error before checking any file, and `git ls-files --others` reported it as a single trailing-slash entry — the way it reports an untracked _nested repository_, rather than recursing as it does for an ordinary directory — which `listPublicClaudeAssets()` then read with `readFileSync`, throwing `EISDIR`. Fixed on both levers, since Biome sets no `vcs.useIgnoreFile` and never consults `.gitignore`: a `**/.claude/worktrees/` ignore rule plus a matching `biome.json` `includes` exclusion. Directory entries are also dropped at the point where assets are read, rather than inside the listing helper, so a stray nested repository elsewhere under `.claude/` still trips the public-prefix and single-entrypoint assertions instead of being silently skipped — while no longer aborting the suite with `EISDIR`. (#439)
 
 ## [2.2.0] - 2026-07-30
 
@@ -226,6 +226,7 @@ Test coverage increased from near-zero to **565 tests** across the monorepo, cov
 ## [1.0.9] - 2026-05-20
 
 ### Fixed
+
 - **mcp-shell**: Enforced the `timeout` parameter that was previously accepted but never used, preventing runaway commands from hanging indefinitely (default 60s with SIGTERM/SIGKILL escalation).
 - **mcp-shell**: Added a 10MB output size cap to prevent OOM when commands produce excessive stdout/stderr.
 - **shared**: Fixed `matchGlob` to escape regex metacharacters (`.`, `(`, `)`, `[`, `]`, `+`, `{`, `}`) before glob-to-regex conversion. Previously `src/utils.ts` would incorrectly match `src/utilsXts`.
@@ -233,31 +234,37 @@ Test coverage increased from near-zero to **565 tests** across the monorepo, cov
 - **mcp-file**: Fixed `isRegularFile` and `isDirectory` to return `false` for non-existent paths instead of throwing `ENOENT`.
 
 ### Changed
+
 - **shared**: Extracted `DEFAULT_LLM_TEMPERATURE` (0.2) and `DEFAULT_LLM_MAX_TOKENS` (4096) as shared constants. Previously CLI used 0.2 while runtime-node used 0.7, causing inconsistent model behavior.
 
 ## [1.0.7] - 2026-05-20
 
 ### Changed
+
 - Unified the npm package and VS Code extension versions at `1.0.7`.
 - Updated the root build script to generate the VS Code `.vsix` package alongside the npm CLI bundle.
 
 ## [1.0.4] - 2026-05-19
 
 ### Added
+
 - Added RAG query sub-stage timing in agent benchmark output and summaries.
 - Added RAG query result cache hit reporting for quantitative cold/warm analysis.
 
 ### Changed
+
 - Optimized warm RAG retrieval by reusing local knowledge-base indexes when `syncOnQuery` is disabled.
 - Reused the runtime knowledge-base instance so in-process RAG query caching can take effect.
 - Updated the agent-flow benchmark so `BENCH_CLEAR_CACHE=0` preserves `.frontagent` cache for warm-cache measurements.
 
 ### Fixed
+
 - Avoided repeatedly treating warm RAG benchmark runs as cold starts by preserving the benchmark workspace cache.
 
 ## [1.0.1] - 2026-04-30
 
 ### Added
+
 - Added the first FrontAgent VS Code desktop extension with an Activity Bar task console.
 - Added task input, current-file/selection context, browser URL context, run/cancel controls, phase and step progress, approval cards, and run log access in VS Code.
 - Added SDD initialization and validation commands to the VS Code extension.
@@ -265,6 +272,7 @@ Test coverage increased from near-zero to **565 tests** across the monorepo, cov
 - Added cooperative `AbortSignal` cancellation support across FrontAgent execution boundaries.
 
 ### Changed
+
 - Updated the npm package metadata for the `1.0.1` release.
 - Documented the two supported FrontAgent usage modes: CLI and VS Code extension.
 - Refactored `fa run` to reuse the shared Node runtime while preserving the existing Ink terminal workflow.
@@ -272,20 +280,24 @@ Test coverage increased from near-zero to **565 tests** across the monorepo, cov
 ## [0.1.8] - 2026-04-29
 
 ### Added
+
 - Added `fa -v` as a short alias for CLI version output.
 - Added `fa version` as an explicit version command.
 
 ## [0.1.7] - 2026-04-29
 
 ### Added
+
 - Added a progressive exploration protocol so file-system changes are planned as observe-first workflows before writes.
 - Added built-in FrontAgent identity context for query answers so identity and capability questions answer from stable agent facts.
 
 ### Changed
+
 - Shortened the published CLI command from `frontagent` to `fa`.
 - Simplified default `fa run` output to status, tool-call summary, and final answer while keeping verbose internals behind `--debug`.
 
 ### Fixed
+
 - Fixed the ESM bundle bootstrap so `fa run` no longer crashes on packages that expect `__filename`.
 - Normalized OpenAI-compatible base URLs that already include `/chat/completions`.
 - Made query tasks report a clear failure when no final answer is generated instead of presenting tool-only fallback as success.
@@ -293,21 +305,25 @@ Test coverage increased from near-zero to **565 tests** across the monorepo, cov
 ## [0.1.6] - 2026-03-22
 
 ### Added
+
 - Added Weaviate-backed semantic vector storage for RAG while keeping BM25 local.
 - Added RAG cache bundle export/import workflow for distributing prebuilt knowledge-base indexes.
 - Added a retrieval-only LLM query rewrite step that rewrites user input into frontend-oriented search queries before RAG.
 
 ### Changed
+
 - Clarified all RAG-facing terminology so remote RAG evidence is referred to as "knowledge base" instead of the current workspace repository.
 - Updated English and Chinese documentation with Weaviate, query rewrite, and cache bundle usage examples.
 
 ### Fixed
+
 - Prevented the planner from treating remote RAG hits as local workspace files during query tasks.
 - Improved semantic index resilience for Weaviate-backed retrieval and related RAG execution flow.
 
 ## [0.1.5] - 2026-03-16
 
 ### Fixed
+
 - Corrected npm publish metadata:
   - `bin.frontagent` uses `dist/index.cjs` to avoid npm auto-removal during publish.
   - `repository.url` normalized to `git+https://github.com/ceilf6/FrontAgent.git`.
@@ -316,20 +332,24 @@ Test coverage increased from near-zero to **565 tests** across the monorepo, cov
 ## [0.1.4] - 2026-03-16
 
 ### Added
+
 - Introduced an executor skills layer and extracted reusable execution logic into dedicated skills.
 - Added planner skill registry APIs for runtime registration/introspection and custom planning extension.
 - Added built-in repository-management phase injection skill for post-validation repository workflow steps.
 
 ### Changed
+
 - Unified browser tool naming to `browser_*` in planning/execution paths.
 - Added backward-compatible aliases in the CLI MCP web client for legacy browser tool names.
 - Updated English and Chinese documentation with skill extension usage examples.
 
 ### Fixed
+
 - Tightened planner snapshot typing with `ReadonlyMap` semantics to avoid accidental mutation in skills.
 - Corrected `search_code` examples to use supported parameters (`filePattern`) instead of unsupported `directory`.
 
 ## [0.1.3] - 2026-03-14
 
 ### Released
+
 - Previous stable release. See GitHub Release and tag history for details.

@@ -1,4 +1,5 @@
 import { findMarkdownCodeFence } from '@frontagent/hallucination-guard/syntax';
+import { detectSyntaxLanguage } from '@frontagent/shared';
 import type { z } from 'zod';
 import type { Message } from '../types.js';
 import {
@@ -27,10 +28,11 @@ export interface CodeGenerationDeps {
   }) => Promise<T>;
 }
 
-function cleanGeneratedCode(code: string, filePath: string, language: string): string {
+function cleanGeneratedCode(code: string, filePath: string): string {
   const response = code.trim();
   const fenced = response.match(/^(`{3,})[^`\r\n]*\r?\n([\s\S]*?)\r?\n\1$/);
   const cleaned = fenced ? fenced[2].trim() : response;
+  const language = detectSyntaxLanguage(filePath);
 
   if (
     (language === 'typescript' || language === 'javascript') &&
@@ -106,7 +108,7 @@ ${CODE_MINIMALISM_DISCIPLINE}`;
   ];
 
   const code = await deps.generateText({ messages, system, temperature: 0.2 });
-  return cleanGeneratedCode(code, options.filePath, options.language);
+  return cleanGeneratedCode(code, options.filePath);
 }
 
 export async function analyzeCode(
@@ -175,7 +177,7 @@ ${CODE_MINIMALISM_DISCIPLINE}`;
   ];
 
   const code = await deps.generateText({ messages, system, temperature: 0.2 });
-  return cleanGeneratedCode(code, options.filePath, options.language);
+  return cleanGeneratedCode(code, options.filePath);
 }
 
 export function parseTypeScriptErrors(

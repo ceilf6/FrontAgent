@@ -83,6 +83,33 @@ function context(content?: string) {
 }
 
 describe('executor with real file tools', () => {
+  it.each(['create_file', 'apply_patch'] as const)(
+    'preserves generated README Markdown when executing %s',
+    async (action) => {
+      const response =
+        '# Project\n\nInstall dependencies:\n\n```sh\npnpm install\n```\n\nStart the app:\n\n```sh\npnpm dev\n```\n\nOpen the local development URL.';
+      const { executor, projectRoot } = setup(true, response);
+      const executionContext = context();
+      if (action === 'apply_patch') {
+        const original = '# Project\n\nSetup instructions coming soon.';
+        writeFileSync(join(projectRoot, 'README.md'), original);
+        executionContext.collectedContext.files.set('README.md', original);
+      }
+
+      const result = await executor.executeStep(
+        step('readme', action, {
+          path: 'README.md',
+          codeDescription: 'Write a README with shell examples',
+          changeDescription: 'Add installation and development instructions',
+        }),
+        executionContext,
+      );
+
+      expect(result.stepResult).toMatchObject({ success: true });
+      expect(readFileSync(join(projectRoot, 'README.md'), 'utf8')).toBe(response);
+    },
+  );
+
   it('passes rejected generation to the existing recovery callback', async () => {
     const response = '```ts\nexport const a = 1;\n```\n```ts\nexport const b = 2;\n```';
     const { executor, projectRoot } = setup(true, response);

@@ -26,6 +26,10 @@ export interface SyntaxValidityCheckResult
   details?: SyntaxValidityDetails;
 }
 
+interface ParsedJsonSourceFile extends ts.JsonSourceFile {
+  readonly parseDiagnostics: readonly ts.Diagnostic[];
+}
+
 interface ParsedSourceFile extends ts.SourceFile {
   readonly parseDiagnostics: readonly ts.Diagnostic[];
 }
@@ -191,12 +195,7 @@ function checkOuterMarkdownFence(code: string): SyntaxErrorDetail | undefined {
 }
 
 function checkJsonSyntax(code: string, filePath?: string): SyntaxErrorDetail[] {
-  // Strict JSON first: any valid JSON document — object, array, or scalar
-  // root — passes. Only when strict parsing fails do we consider JSONC,
-  // because comments and trailing commas are allowed solely in known
-  // configuration paths. Routing every `.json` through the tsconfig parser
-  // first (as before) rejected valid top-level arrays and scalars with
-  // write-veto power.
+  // Valid JSON roots include arrays and scalars; only known configuration paths allow JSONC.
   try {
     JSON.parse(code);
     return [];
@@ -206,10 +205,10 @@ function checkJsonSyntax(code: string, filePath?: string): SyntaxErrorDetail[] {
     }
 
     if (filePath && isKnownJsoncConfigPath(filePath)) {
-      const parsed = ts.parseConfigFileTextToJson(filePath, code);
-      if (!parsed.error) return [];
       const sourceFile = ts.parseJsonText(filePath, code);
-      return [formatDiagnostic(sourceFile, parsed.error)];
+      const diagnostics = [...(sourceFile as ParsedJsonSourceFile).parseDiagnostics];
+      ts.convertToObject(sourceFile, diagnostics);
+      return diagnostics.map((diagnostic) => formatDiagnostic(sourceFile, diagnostic));
     }
 
     const explicitLocation = error.message.match(/line\s+(\d+)\s+column\s+(\d+)/i);
@@ -233,17 +232,31 @@ function checkJsonSyntax(code: string, filePath?: string): SyntaxErrorDetail[] {
 function isKnownJsoncConfigPath(filePath: string): boolean {
   const normalized = filePath.replaceAll('\\', '/').toLowerCase();
   const baseName = normalized.slice(normalized.lastIndexOf('/') + 1);
-  if (isStrictJsonPath(normalized, baseName)) return false;
   if (baseName.endsWith('.jsonc')) return true;
   if (/^(?:tsconfig|jsconfig)(?:\.[^/]+)?\.json$/.test(baseName)) return true;
-  if (baseName === '.eslintrc.json') return true;
+  if (
+    [
+      '.eslintrc.json',
+      'turbo.json',
+      'biome.json',
+      'deno.json',
+      'nest-cli.json',
+      'components.json',
+    ].includes(baseName)
+  )
+    return true;
 
   const vscodeMatch = normalized.match(/(?:^|\/)\.vscode\/([^/]+)$/);
   if (
     vscodeMatch &&
-    ['settings.json', 'tasks.json', 'launch.json', 'extensions.json', 'mcp.json'].includes(
-      vscodeMatch[1],
-    )
+    [
+      'settings.json',
+      'tasks.json',
+      'launch.json',
+      'extensions.json',
+      'mcp.json',
+      'keybindings.json',
+    ].includes(vscodeMatch[1])
   ) {
     return true;
   }
@@ -256,20 +269,7 @@ function isKnownJsoncConfigPath(filePath: string): boolean {
     return true;
   }
 
-  return baseName.endsWith('.json');
-}
-
-function isStrictJsonPath(normalizedPath: string, baseName: string): boolean {
-  return (
-    baseName === 'package.json' ||
-    baseName === 'package-lock.json' ||
-    baseName === 'npm-shrinkwrap.json' ||
-    baseName === 'turbo.json' ||
-    baseName === 'data.json' ||
-    baseName.endsWith('.lock.json') ||
-    normalizedPath.endsWith('/.frontagent/settings.json') ||
-    normalizedPath === '.frontagent/settings.json'
-  );
+  return false;
 }
 
 function offsetToLocation(code: string, offset: number): { line: number; column: number } {

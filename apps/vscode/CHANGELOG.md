@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Security: endpoint settings committed by a repository in `.vscode/settings.json` no longer select the host that receives your API key and task context. `frontagent.provider`, `frontagent.model`, and `frontagent.baseUrl` are resolved per scope; a workspace-supplied value is withheld until you approve that exact endpoint, and is ignored entirely when the workspace is not trusted.
+- **Breaking:** `frontagent.apiKey` is `machine`-scoped and read only from User Settings. A key previously set in workspace settings stops being honoured; move it to User Settings or, preferably, run `FrontAgent: Configure` to store it in SecretStorage.
+- **Breaking:** `FrontAgent: Configure` and the sidebar form now save to User Settings, so they set your default for every workspace. The sidebar form also prefills only from User Settings; values coming from the environment or from an approved workspace endpoint now appear as a placeholder rather than as editable text, so saving cannot copy them into your user configuration by accident. To vary the model or endpoint per project, set it in that project's `.vscode/settings.json` and approve the prompt once.
+- `FrontAgent: Configure` and the sidebar Configure form now save provider, model, and base URL to User Settings instead of Workspace settings, so a repository cannot overwrite them. Configure also prefills from User Settings, so accepting the dialog cannot promote a repository-supplied endpoint into your user configuration.
+- A dismissed endpoint prompt is remembered for the rest of the session rather than reappearing on every message, and the sidebar then points at the reset command instead of an approval prompt that will not reappear.
+- Security: repository-supplied values are flattened to a single bounded line before they appear in the confirmation dialog, so a repository cannot use newlines to inject its own sentences or push the warning out of view.
+- Added `FrontAgent: Reset Workspace Endpoint Approval` to revoke a previously approved workspace endpoint.
+
 ## 2.2.0
 
 - Aligned the extension package with the FrontAgent `2.2.0` release.

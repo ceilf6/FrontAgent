@@ -409,7 +409,7 @@ describe('applyPatch line-range validation', () => {
       new SnapshotManager(root),
     );
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
     expect(result.validation.syntaxValid).toBe(false);
     expect(result.validation.lintErrors[0]).toEqual(
       expect.objectContaining({ rule: expect.stringMatching(/^syntax\//), severity: 'error' }),
@@ -439,4 +439,23 @@ describe('applyPatch line-range validation', () => {
     expect(snapshotManager.getFileSnapshots(join(root, 'src/sample.ts'))).toHaveLength(0);
     expect(readFixture(root)).toBe(FIXTURE);
   });
+});
+
+it('reports unchecked syntax when an external caller deliberately patches an invalid fixture', async () => {
+  const { stripInternalArgs } = await import('../internal-args.js');
+  const root = makeRoot();
+  writeFileSync(join(root, 'fixture.ts'), 'const x = 1;');
+  const args = stripInternalArgs({
+    path: 'fixture.ts',
+    patches: [{ operation: 'replace', startLine: 1, content: 'const x = ;' }],
+    skipSyntaxValidation: true,
+  });
+  const result = applyPatch(
+    args as unknown as import('./apply-patch.js').ApplyPatchParams,
+    root,
+    new SnapshotManager(root),
+  );
+  expect(result.success).toBe(true);
+  expect(result.validation.syntaxChecked).toBe(false);
+  expect(readFileSync(join(root, 'fixture.ts'), 'utf8')).toBe('const x = ;');
 });

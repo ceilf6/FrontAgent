@@ -1,5 +1,9 @@
 import * as vscode from 'vscode';
-import { configureFrontAgent, getWorkspaceFolder } from './settings-resolve.js';
+import {
+  configureFrontAgent,
+  getWorkspaceFolder,
+  resetWorkspaceEndpointApproval,
+} from './settings-resolve.js';
 import { FrontAgentViewProvider } from './view-provider.js';
 
 const VIEW_ID = 'frontagent.taskView';
@@ -88,9 +92,14 @@ export function activate(context: vscode.ExtensionContext) {
         await configureFrontAgent(context);
         await provider.refreshConfigurationStatus();
       }),
+      registerFrontAgentCommand('frontagent.resetEndpointApproval', async () => {
+        await resetWorkspaceEndpointApproval(context, vscode.workspace.workspaceFolders?.[0]);
+        provider.clearDeclinedEndpoints();
+        await provider.refreshConfigurationStatus();
+      }),
     );
     log(
-      'Activation complete. Registered commands: frontagent.run, frontagent.configure, frontagent.runCurrentFile, frontagent.runSelection, frontagent.initSdd, frontagent.validateSdd, frontagent.openRunLog, frontagent.showLogs.',
+      'Activation complete. Registered commands: frontagent.run, frontagent.configure, frontagent.runCurrentFile, frontagent.runSelection, frontagent.initSdd, frontagent.validateSdd, frontagent.openRunLog, frontagent.showLogs, frontagent.resetEndpointApproval.',
     );
   } catch (error) {
     logError('Activation failed.', error);

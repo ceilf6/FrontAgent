@@ -65,6 +65,13 @@ describe('checkSyntaxValidity', () => {
       expect(tsx.pass).toBe(true);
       expect(ts.pass).toBe(false);
       expect(jsx.pass).toBe(true);
+      await expect(
+        checkSyntaxValidity({
+          code: 'export const Card = () => <div />;',
+          language: 'javascript',
+          filePath: 'src/Card.js',
+        }),
+      ).resolves.toMatchObject({ pass: true });
       expect(jsWithTypes.pass).toBe(false);
     });
 
@@ -188,10 +195,10 @@ describe('checkSyntaxValidity', () => {
       expect(result.details).toBeUndefined();
     });
 
-    it('keeps JSONC (comments) allowed for ordinary .json config-ish files while strict JSON wins for data files', async () => {
+    it('keeps JSONC (comments) allowed for known configuration paths while strict JSON wins for data files', async () => {
       const jsonc = '{\n  // team tooling\n  "enabled": true,\n}';
 
-      // Config-shaped files outside the explicit list keep JSONC leniency.
+      // Tool configurations explicitly support comments and trailing commas.
       await expect(
         checkSyntaxValidity({ code: jsonc, language: 'json', filePath: 'biome.json' }),
       ).resolves.toEqual(expect.objectContaining({ pass: true }));
@@ -206,13 +213,13 @@ describe('checkSyntaxValidity', () => {
     it('documents empty-file behavior: lenient on JSONC paths, strict on strict paths', async () => {
       // An empty file is tolerated on JSONC-capable paths (creating an empty
       // config placeholder should not be blocked)...
-      for (const filePath of ['mocks/empty.json', 'tsconfig.json', 'turbo.jsonc']) {
+      for (const filePath of ['tsconfig.json', 'turbo.jsonc']) {
         await expect(
           checkSyntaxValidity({ code: '', language: 'json', filePath }),
         ).resolves.toEqual(expect.objectContaining({ pass: true }));
       }
       // ...but strict consumers reject empty content.
-      for (const filePath of ['package.json', 'data.json']) {
+      for (const filePath of ['package.json', 'data.json', 'mocks/empty.json']) {
         await expect(
           checkSyntaxValidity({ code: '', language: 'json', filePath }),
         ).resolves.toEqual(expect.objectContaining({ pass: false }));
@@ -235,6 +242,10 @@ describe('checkSyntaxValidity', () => {
         '.devcontainer/node/devcontainer.json',
         '.eslintrc.json',
         'turbo.jsonc',
+        'turbo.json',
+        'biome.json',
+        'deno.json',
+        '.vscode/keybindings.json',
         'C:\\repo\\.vscode\\tasks.json',
       ];
 
@@ -245,7 +256,7 @@ describe('checkSyntaxValidity', () => {
       }
     });
 
-    it('accepts JSONC for configuration files outside the explicit legacy list', async () => {
+    it('accepts JSONC for additional supported tool configurations', async () => {
       const jsonc = '{\n  // tool settings\n  "enabled": true,\n}';
       for (const filePath of ['biome.json', 'nest-cli.json', 'components.json']) {
         const result = await checkSyntaxValidity({ code: jsonc, language: 'json', filePath });
@@ -260,7 +271,8 @@ describe('checkSyntaxValidity', () => {
         'package.json',
         'nested/package.json',
         'data.json',
-        'turbo.json',
+        'mocks/flags.json',
+        'fixtures/users.json',
         '.frontagent/settings.json',
         '.vscode/data.json',
         '.vscode/package.json',
@@ -268,6 +280,16 @@ describe('checkSyntaxValidity', () => {
         const result = await checkSyntaxValidity({ code: jsonc, language: 'json', filePath });
         expect(result.pass).toBe(false);
       }
+    });
+
+    it('accepts JSONC array roots for keybindings', async () => {
+      await expect(
+        checkSyntaxValidity({
+          code: '[/* shortcut */ {"key":"ctrl+k",},]',
+          language: 'json',
+          filePath: '.vscode/keybindings.json',
+        }),
+      ).resolves.toMatchObject({ pass: true });
     });
 
     it('rejects non-JSON values and unquoted keys in JSONC files', async () => {

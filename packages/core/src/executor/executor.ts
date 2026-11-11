@@ -1,7 +1,8 @@
 import { existsSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { AgentTask, ExecutionStep, StepResult, ValidationResult } from '@frontagent/shared';
+import type { AgentTask, ExecutionStep, ValidationResult } from '@frontagent/shared';
 import { logger } from '@frontagent/shared';
+import { groundStepPath } from '../filesense/path-grounding.js';
 import {
   createDefaultExecutorSkillRegistry,
   type ExecutorActionSkill,
@@ -9,7 +10,7 @@ import {
 } from '../skills/index.js';
 import type { ExecutorOutput } from '../types.js';
 import { buildOrderedPhaseGroups, detectLanguage } from './phase-ordering.js';
-import { PhaseRunner } from './phase-runner.js';
+import { PhaseRunner, type StepExecutionOptions } from './phase-runner.js';
 import { executeStepsWithProgressEnforcement } from './progress-enforcement.js';
 import { executeStepsWithErrorFeedbackViaLangGraph } from './step-feedback-runner.js';
 import { createStepTraceRecorder } from './step-trace-recorder.js';
@@ -20,7 +21,18 @@ import type {
   MCPClient,
   PhaseExecutionGroup,
 } from './types.js';
+import {
+  describeWriteFailure,
+  readWrittenFile,
+  resolveWriteOutcome,
+  rollbackFailedWrite,
+} from './write-outcome.js';
 import { validateWriteBeforeExecution } from './write-preflight.js';
+import {
+  demoteNonDecidingVerdicts,
+  resolveWriteActionContent,
+  WRITE_ACTIONS,
+} from './write-validation.js';
 
 export class Executor {
   private config: ExecutorConfig;
@@ -52,7 +64,7 @@ export class Executor {
       detectLanguage: (path) => detectLanguage(path),
     });
     this.phaseRunner = new PhaseRunner({
-      executeStep: (step, ctx) => this.executeStep(step, ctx),
+      executeStep: (step, ctx, options) => this.executeStep(step, ctx, options),
       debugLog: (...args) => this.debugLog(...args),
       debugWarn: (...args) => this.debugWarn(...args),
       debugError: (...args) => this.debugError(...args),
@@ -114,6 +126,7 @@ export class Executor {
       task: AgentTask;
       collectedContext: ExecutorCollectedContext;
     },
+    options: StepExecutionOptions = {},
   ): Promise<ExecutorOutput> {
     const startTime = Date.now();
     const trace = createStepTraceRecorder({
@@ -122,14 +135,6 @@ export class Executor {
       step,
       nowMs: () => this.nowMs(),
     });
-
-    // The phase runner marks a same-target write as deferred while a sibling
-    // writes first. That marker is runtime sequencing state, not plan content:
-    // consume it up front so it can never reach the tool, leak into a persisted
-    // session snapshot, or make a resumed apply_patch fail forever as
-    // stale_patch_context.
-    const deferredSameTargetWrite = step.params.__frontagentDeferredSameTargetWrite === true;
-    delete step.params.__frontagentDeferredSameTargetWrite;
 
     try {
       const paramValidation = await trace.withStage('validate_params', () =>
@@ -142,8 +147,20 @@ export class Executor {
         return trace.finish(this.buildSkippedStepOutput(paramValidation.reason, startTime));
       }
 
+      // 路径接地必须发生在前置校验**之前**（#434 评审意见）。
+      //
+      // 幻觉 `read_file` 会被 `validateBeforeExecution` 里的 fileExistence 检查
+      // 判为 "does not exist"，随后 `getPreValidationSkip` 把整步 skip 掉并提前
+      // 返回——接地放在其后就永远执行不到，恰好在它唯一该起作用的那类步骤上失效。
+      // （这条 skip 分支返回 `success: true`，也正是 #432 里「幻觉步骤 ok 恒为 true」
+      // 的来源。）
+      //
+      // 就地改写 `step.params` 而不是只改一份副本：后续的校验、apply_patch 的
+      // auto-read、prepareToolParams 都读 `step.params`，只改副本会让它们各看各的路径。
+      this.groundStepPathInPlace(step);
+
       const preValidation = await trace.withStage('validate_before', () =>
-        this.validateBeforeExecution(step, context, deferredSameTargetWrite),
+        this.validateBeforeExecution(step, context, options),
       );
       if (!preValidation.pass) {
         const skip = this.getPreValidationSkip(step, preValidation);
@@ -169,7 +186,7 @@ export class Executor {
         });
       }
 
-      let toolParams = {
+      let toolParams: Record<string, unknown> = {
         ...step.params,
         ...(['create_file', 'apply_patch'].includes(step.action)
           ? {
@@ -198,6 +215,12 @@ export class Executor {
         }),
       );
 
+      const writePath = (toolParams.path ?? step.params.path) as string | undefined;
+      const dryRun = step.action === 'apply_patch' && toolParams.dryRun === true;
+      const vetoEnabled =
+        WRITE_ACTIONS.includes(step.action) &&
+        this.config.hallucinationGuard.isCheckEnabled('syntaxValidity') &&
+        toolParams.skipSyntaxValidation !== true;
       const preflight = await validateWriteBeforeExecution(
         this.config.hallucinationGuard,
         step,
@@ -206,7 +229,7 @@ export class Executor {
       );
       if (preflight) {
         if (!preflight.validation.pass) {
-          this.emitValidationFailed('pre_write', preflight.validation, step);
+          this.emitValidationFailed('pre_write', preflight.validation, step, preflight.path);
           const errorMsg = preflight.validation.blockedBy?.join('; ') || 'Invalid write content';
           return trace.finish({
             stepResult: {
@@ -215,7 +238,7 @@ export class Executor {
               duration: Date.now() - startTime,
             },
             validation: preflight.validation,
-            needsRollback: false,
+            needsRollback: true,
           });
         }
         toolParams = preflight.toolParams;
@@ -253,34 +276,69 @@ export class Executor {
         }
       }
 
+      // Read back once so validation and rollback describe the same disk content.
+      const landedPath = writePath;
+      const landedContent =
+        !dryRun && WRITE_ACTIONS.includes(step.action)
+          ? readWrittenFile(this.config.projectRoot, landedPath)
+          : undefined;
+
       const postValidation = await trace.withStage('validate_after', () =>
-        this.validateAfterExecution(step, toolResult, toolParams, preflight?.content),
+        this.validateAfterExecution(step, toolResult, toolParams, {
+          path: landedPath,
+          landedContent,
+          preflightContent: preflight?.content,
+        }),
       );
 
-      if (
-        preflight?.content &&
-        this.isSuccessfulToolResult(toolResult) &&
-        (toolParams as Record<string, unknown>).dryRun !== true
-      ) {
-        context.collectedContext.files.set(preflight.path, preflight.content);
-      }
+      const outcome = resolveWriteOutcome({
+        action: step.action,
+        landedPath,
+        landedContent,
+        priorContent: landedPath ? context.collectedContext.files.get(landedPath) : undefined,
+        toolResult,
+        postValidation,
+        vetoEnabled: vetoEnabled && !dryRun,
+        durationMs: Date.now() - startTime,
+      });
 
-      if (!postValidation.pass) {
-        this.emitValidationFailed('post_write', postValidation, step);
-      }
+      this.emitValidationFailed('post_write', outcome.validation, step, landedPath);
 
-      const stepResult: StepResult = {
-        success: postValidation.pass,
-        output: toolResult,
-        error: postValidation.pass ? undefined : postValidation.blockedBy?.join('; '),
-        duration: Date.now() - startTime,
-        snapshotId: (toolResult as { snapshotId?: string })?.snapshotId,
-      };
+      if (outcome.unreadablePath) {
+        this.debugWarn(
+          `[Executor] Could not read back ${outcome.unreadablePath} after the write; rollback was not attempted.`,
+        );
+      }
+      const rollbackOutcome = outcome.rollback
+        ? await rollbackFailedWrite(toolResult, {
+            rollback: (snapshotId) => this.rollback(snapshotId),
+            emitEvent: this.config.emitEvent,
+            warn: (message) => this.debugWarn(message),
+          })
+        : { rollbackFailed: false as boolean, error: undefined as string | undefined };
+
+      if (writePath && WRITE_ACTIONS.includes(step.action) && !dryRun) {
+        if (outcome.stepResult.success && landedContent !== undefined) {
+          context.collectedContext.files.set(writePath, landedContent);
+        } else if (outcome.stepResult.success && preflight) {
+          context.collectedContext.files.set(writePath, preflight.content);
+        } else {
+          context.collectedContext.files.delete(writePath);
+        }
+      }
 
       return trace.finish({
-        stepResult,
-        validation: postValidation,
-        needsRollback: !postValidation.pass && step.validation.some((v) => v.required),
+        stepResult: {
+          ...outcome.stepResult,
+          error: describeWriteFailure(
+            outcome.stepResult.error,
+            rollbackOutcome,
+            outcome.unreadablePath,
+          ),
+        },
+        validation: outcome.validation,
+        needsRollback: outcome.needsRollback,
+        rollbackFailed: rollbackOutcome.rollbackFailed,
       });
     } catch (error) {
       trace.markCatchIfEmpty(error);
@@ -431,7 +489,7 @@ export class Executor {
   private async validateBeforeExecution(
     step: ExecutionStep,
     context: { task: AgentTask; collectedContext: ExecutorCollectedContext },
-    deferredSameTargetWrite = false,
+    options: StepExecutionOptions = {},
   ): Promise<ValidationResult> {
     const results: ValidationResult['results'] = [];
 
@@ -474,8 +532,12 @@ export class Executor {
             context.collectedContext.files.set(path, readResult.content);
             if (
               Array.isArray(step.params.patches) &&
-              (deferredSameTargetWrite ||
-                (cachedContent !== undefined && cachedContent !== readResult.content))
+              ((options.deferredSameTargetWrite &&
+                (options.deferredOriginalContent === undefined ||
+                  options.deferredOriginalContent !== readResult.content)) ||
+                (!options.deferredSameTargetWrite &&
+                  cachedContent !== undefined &&
+                  cachedContent !== readResult.content))
             ) {
               const message = `Cannot apply explicit patches: ${path} changed after its patch context was collected`;
               return {
@@ -636,12 +698,55 @@ export class Executor {
     };
   }
 
-  private isSuccessfulToolResult(result: unknown): boolean {
-    return !(
-      typeof result === 'object' &&
-      result !== null &&
-      (result as { success?: boolean }).success === false
-    );
+  /**
+   * 用导航枚举出的真实目录清单校正步骤路径，**就地改写 `step.params`**（#434）。
+   *
+   * 就地而不是返回副本：后续的前置校验、`apply_patch` 的 auto-read、
+   * `prepareToolParams` 全都读 `step.params`，只改副本会让它们各看各的路径。
+   *
+   * 拒绝的情形也要发事件。只统计成功校正会让「接地覆盖率」读成 100%，
+   * 而被拒绝的那部分正是这套启发式的能力边界——那才是下一轮该改的东西。
+   */
+  private groundStepPathInPlace(step: ExecutionStep): void {
+    const path = step.params.path;
+    if (typeof path !== 'string' || !path) return;
+
+    const facts = this.config.getFileSystemFacts?.();
+    if (!facts) return;
+
+    const outcome = groundStepPath(path, step.action, facts);
+
+    if (outcome.corrected) {
+      const { from, to, score, candidateCount } = outcome.corrected;
+      this.debugLog(`[Executor] 🧭 路径接地：${from} → ${to}（相似度 ${score}）`);
+      step.params.path = to;
+      this.config.emitEvent?.({
+        type: 'filesense_path_grounded',
+        outcome: 'corrected',
+        stepId: step.stepId,
+        action: step.action,
+        from,
+        to,
+        score,
+        candidateCount,
+      });
+      return;
+    }
+
+    if (outcome.declined) {
+      this.debugLog(
+        `[Executor] 🧭 路径接地放弃：${outcome.declined.path}（${outcome.declined.reason}）`,
+      );
+      this.config.emitEvent?.({
+        type: 'filesense_path_grounded',
+        outcome: 'declined',
+        stepId: step.stepId,
+        action: step.action,
+        from: outcome.declined.path,
+        reason: outcome.declined.reason,
+        candidateCount: outcome.declined.candidates.length,
+      });
+    }
   }
 
   /**
@@ -654,13 +759,15 @@ export class Executor {
     stage: 'pre_execution' | 'pre_write' | 'post_write',
     validation: ValidationResult,
     step: ExecutionStep,
+    /** 已解析的写入路径；技能可能改写过 step.params.path */
+    resolvedPath?: string,
   ): void {
     if (validation.results.some((result) => !result.pass)) {
       this.config.emitEvent?.({
         type: 'validation_failed',
         stage,
         result: validation,
-        path: step.params.path as string | undefined,
+        path: resolvedPath ?? (step.params.path as string | undefined),
         stepId: step.stepId,
       });
     }
@@ -670,7 +777,11 @@ export class Executor {
     step: ExecutionStep,
     result: unknown,
     toolParams?: Record<string, unknown>,
-    preflightContent?: string,
+    write?: {
+      path: string | undefined;
+      landedContent: string | undefined;
+      preflightContent?: string;
+    },
   ): Promise<ValidationResult> {
     if (typeof result === 'object' && result !== null) {
       const resultObj = result as { success?: boolean; error?: string };
@@ -683,26 +794,23 @@ export class Executor {
       }
     }
 
-    if (['apply_patch', 'create_file'].includes(step.action)) {
-      const path = (toolParams?.path as string | undefined) ?? (step.params.path as string);
-      const content =
-        preflightContent ??
-        (result as { content?: string })?.content ??
-        (toolParams?.content as string | undefined) ??
-        (step.params.content as string | undefined);
-
-      if (content && path) {
+    if (toolParams?.dryRun === true) return { pass: true, results: [] };
+    if (WRITE_ACTIONS.includes(step.action)) {
+      const path = write?.path;
+      const content = resolveWriteActionContent(step, toolParams, {
+        landedContent: write?.landedContent,
+        patchContent: () => write?.preflightContent,
+        resultContent: (result as { content?: string })?.content,
+      });
+      if (typeof content === 'string' && path) {
         const language = detectLanguage(path);
         if (language === 'typescript' || language === 'javascript') {
-          return this.config.hallucinationGuard.validateImports(content, path);
+          const validation = await this.config.hallucinationGuard.validateImports(content, path);
+          return demoteNonDecidingVerdicts(validation, step.action);
         }
       }
     }
-
-    return {
-      pass: true,
-      results: [],
-    };
+    return { pass: true, results: [] };
   }
 
   async callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
@@ -885,10 +993,22 @@ export class Executor {
     return allResults;
   }
 
+  /**
+   * 撤销一次快照。返回形状在此归一化：工具成功时给 `message`，
+   * 而安全层拒绝时给的是 `{ success:false, error }`（`tool-call-handler.ts`）——
+   * 声明成必有 `message` 会让每个调用方各自 cast 一次去捞 `error`。
+   */
   async rollback(snapshotId: string): Promise<{ success: boolean; message: string }> {
     try {
-      const result = await this.callTool('rollback', { snapshotId });
-      return result as { success: boolean; message: string };
+      const result = (await this.callTool('rollback', { snapshotId })) as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+      };
+      return {
+        success: Boolean(result?.success),
+        message: result?.message ?? result?.error ?? 'rollback returned no message',
+      };
     } catch (error) {
       return {
         success: false,

@@ -69,7 +69,7 @@ export async function validateWriteBeforeExecution(
       path,
       content: toolParams.content,
       validation:
-        language && language !== 'yaml'
+        language && language !== 'yaml' && toolParams.skipSyntaxValidation !== true
           ? await guard.validateSyntax(toolParams.content, language, path)
           : { pass: true, results: [] },
       toolParams,
@@ -112,11 +112,11 @@ export async function validateWriteBeforeExecution(
   }
 
   const originalSyntaxValidation =
-    language && language !== 'yaml'
+    language && language !== 'yaml' && toolParams.skipSyntaxValidation !== true
       ? await guard.validateSyntax(originalContent, language, path)
       : { pass: true, results: [] };
   const projectedSyntaxValidation =
-    language && language !== 'yaml'
+    language && language !== 'yaml' && toolParams.skipSyntaxValidation !== true
       ? await guard.validateSyntax(projected.content, language, path)
       : { pass: true, results: [] };
 
@@ -124,7 +124,7 @@ export async function validateWriteBeforeExecution(
     path,
     content: projected.content,
     validation:
-      !projectedSyntaxValidation.pass && originalSyntaxValidation.pass
+      toolParams.dryRun !== true && !projectedSyntaxValidation.pass && originalSyntaxValidation.pass
         ? projectedSyntaxValidation
         : { pass: true, results: [] },
     toolParams: {

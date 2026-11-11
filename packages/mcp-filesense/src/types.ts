@@ -135,6 +135,18 @@ export interface NavigateResult {
   factsDelta: {
     existingFiles: string[];
     existingDirectories: string[];
+    /**
+     * 清单是否被定长裁剪。
+     *
+     * **与 `scanned.truncated` 是两回事**：后者只反映扫描有没有触到
+     * maxEntries / 超时，而这里的裁剪在扫描顺利完成时也会发生（每类 200 条，
+     * 超 maxBytes 时再压到 80）。
+     *
+     * 任何把「不在清单里」读作「文件不存在」的消费方都必须先看这两个标志，
+     * 否则会拿一份残缺清单去否定真实存在的路径。
+     */
+    filesTruncated: boolean;
+    directoriesTruncated: boolean;
   };
   warnings: string[];
   indexes?: IndexFile[];

@@ -1,6 +1,11 @@
+import type { EndpointTrustStatus } from './endpoint-trust.js';
 import type { ConfigStatus, MissingConfigField } from './state.js';
 
 export interface ConfigSourceValues {
+  /**
+   * Endpoint values that already cleared the workspace-trust gate. Callers must
+   * not pass raw merged settings here — see `resolveEndpointTrust`.
+   */
   settings: {
     provider?: string;
     model?: string;
@@ -12,6 +17,18 @@ export interface ConfigSourceValues {
     legacyApiKey?: string;
   };
   env: Record<string, string | undefined>;
+  /**
+   * Required on purpose: a caller that forgets it would silently resolve as
+   * "no workspace override", which is exactly the state this gate exists to
+   * detect. Pass `emptyEndpointTrustStatus()` when there is genuinely none.
+   */
+  endpointTrust: EndpointTrustStatus;
+  /** User-scope values, carried through for the Configure form's prefill. */
+  userScoped?: {
+    provider?: string;
+    model?: string;
+    baseUrl?: string;
+  };
 }
 
 function emptyToUndefined(value: string | undefined): string | undefined {
@@ -59,5 +76,11 @@ export function resolveConfigStatusFromSources(values: ConfigSourceValues): Conf
     hasApiKey: Boolean(apiKey),
     configured: missing.length === 0,
     missing,
+    endpointTrust: values.endpointTrust,
+    userScoped: {
+      provider: emptyToUndefined(values.userScoped?.provider) ?? null,
+      model: emptyToUndefined(values.userScoped?.model) ?? null,
+      baseUrl: emptyToUndefined(values.userScoped?.baseUrl) ?? null,
+    },
   };
 }

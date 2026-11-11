@@ -532,7 +532,19 @@ export function renderWebviewStateScript(): string {
       state = next;
       activeMode = next.mode || activeMode;
       $('status').textContent = next.isRunning ? next.lastActivityLabel || next.status : next.status;
-      $('sendButton').disabled = next.isRunning || !next.configStatus.configured;
+      // Sending is the only path that raises the endpoint confirmation, so it
+      // must stay enabled while an approval is pending — otherwise a user whose
+      // endpoint comes only from the workspace (every user upgrading from the
+      // version whose Configure wrote to Workspace scope) is told to send a
+      // message by a UI that forbids it. The run path is still fail-closed:
+      // declining leaves the config incomplete and fails with an explanation.
+      // Only while a prompt will actually appear: once declined, sending just
+      // starts a run that fails, so the banner's reset guidance is the real
+      // next step and Send goes back to reflecting the configured flag.
+      const trust = next.configStatus.endpointTrust || {};
+      const awaitingEndpointApproval = trust.requiresApproval && !trust.declinedThisSession;
+      $('sendButton').disabled =
+        next.isRunning || (!next.configStatus.configured && !awaitingEndpointApproval);
       $('stopButton').disabled = !next.isRunning;
       renderConfig(next.configStatus);
       renderMode();
@@ -557,8 +569,17 @@ export function renderWebviewConfigScript(): string {
       debug: { label: 'Debug', description: 'Trace and fix failures' }
     };
 
+    // Computed host-side by describeEndpointTrustNotice so this banner and the
+    // run-failure message always describe the trust state identically, and so
+    // an approved workspace endpoint keeps a standing indicator instead of the
+    // panel reverting to "ready with your settings".
+    function endpointTrustNotice(config) {
+      return (config.endpointTrust || {}).notice || '';
+    }
+
     function renderConfig(config) {
       const missing = config.missing || [];
+      const trustNotice = endpointTrustNotice(config);
       $('configBanner').className = config.configured ? 'config-banner ready' : 'config-banner';
       $('configText').textContent = config.configured
         ? \`\${config.provider} · \${config.model}\`
@@ -566,12 +587,40 @@ export function renderWebviewConfigScript(): string {
       $('configPrimary').textContent = config.configured
         ? \`\${config.provider} · \${config.model}\`
         : 'Model setup needed';
-      $('configSecondary').textContent = config.configured
-        ? 'Ready to run with workspace settings and SecretStorage.'
+      // The trust notice is appended, never substituted: replacing the
+      // "Configure now" guidance left an unconfigured user with no recovery
+      // path on screen at all.
+      const baseCopy = config.configured
+        ? 'Ready to run with your settings and SecretStorage.'
         : \`Missing \${missing.join(', ')}. Configure now or use the command palette.\`;
-      if (document.activeElement !== $('configProvider')) $('configProvider').value = config.provider || '';
-      if (document.activeElement !== $('configModel')) $('configModel').value = config.model || '';
-      if (document.activeElement !== $('configBaseUrl')) $('configBaseUrl').value = config.baseUrl || '';
+      $('configSecondary').textContent = trustNotice ? \`\${baseCopy} \${trustNotice}\` : baseCopy;
+      // Prefill from user scope, never from the gate's effective values. Saving
+      // writes to User Settings, so an effective-value prefill would let one
+      // Save promote an approved workspace endpoint to the global default.
+      // The effective value goes in the placeholder instead, so a user whose
+      // config comes from the environment (or an approved workspace endpoint)
+      // can still see what is actually in use without Save writing it into
+      // User Settings.
+      const own = config.userScoped || {};
+      if (document.activeElement !== $('configProvider')) {
+        $('configProvider').value = own.provider || '';
+        // A <select> has no placeholder, so the effective value goes in the
+        // empty option's label instead. Without this, a user configured from
+        // the environment or an approved workspace endpoint reads "Select
+        // provider" next to a banner saying the provider is ready. The option
+        // keeps its empty value, so Save still skips the field.
+        $('configProvider').options[0].textContent = config.provider
+          ? 'Select provider (currently: ' + config.provider + ')'
+          : 'Select provider';
+      }
+      if (document.activeElement !== $('configModel')) {
+        $('configModel').value = own.model || '';
+        $('configModel').placeholder = config.model || 'zai-org/GLM-4.6';
+      }
+      if (document.activeElement !== $('configBaseUrl')) {
+        $('configBaseUrl').value = own.baseUrl || '';
+        $('configBaseUrl').placeholder = config.baseUrl || 'https://api.siliconflow.cn/v1';
+      }
     }
 
     function renderMode() {

@@ -628,6 +628,42 @@ function detectProjectType(indexes: IndexFile[]): string | undefined {
   return undefined;
 }
 
+/** `factsDelta` 每类最多返回的条目数 */
+const FACTS_DELTA_LIMIT = 200;
+/** 超出 `maxBytes` 后进一步压缩到的条目数 */
+const FACTS_DELTA_COMPACT_LIMIT = 80;
+
+/**
+ * 构造 `factsDelta`，并**显式记录清单是否被裁剪**。
+ *
+ * `scanned.truncated` 只反映扫描过程有没有触到 maxEntries / 超时，与这里的
+ * 定长裁剪完全无关：扫描顺利完成（`truncated: false`）时，超过 200 条的目录
+ * 依然会被切掉尾巴。
+ *
+ * 消费方据此判断「不在清单里 ⇒ 文件不存在」时，这个区别是决定性的——
+ * 拿一份被悄悄截断的清单去否定一个真实存在的路径，会把正确的步骤改错
+ * （见 core 的 path-grounding 与 issue #434 的评审意见）。
+ */
+function buildFactsDelta(allChildren: Array<{ type: string; path: string }>): {
+  existingFiles: string[];
+  existingDirectories: string[];
+  filesTruncated: boolean;
+  directoriesTruncated: boolean;
+} {
+  const uniquePaths = (type: string) =>
+    Array.from(new Set(allChildren.filter((child) => child.type === type).map((c) => c.path)));
+
+  const files = uniquePaths('file');
+  const dirs = uniquePaths('dir');
+
+  return {
+    existingFiles: files.slice(0, FACTS_DELTA_LIMIT),
+    existingDirectories: dirs.slice(0, FACTS_DELTA_LIMIT),
+    filesTruncated: files.length > FACTS_DELTA_LIMIT,
+    directoriesTruncated: dirs.length > FACTS_DELTA_LIMIT,
+  };
+}
+
 export async function navigate(
   targetPath: string,
   options: NavigateOptions = {},
@@ -779,14 +815,7 @@ export async function navigate(
         : [],
     },
     candidates,
-    factsDelta: {
-      existingFiles: Array.from(
-        new Set(allChildren.filter((child) => child.type === 'file').map((child) => child.path)),
-      ).slice(0, 200),
-      existingDirectories: Array.from(
-        new Set(allChildren.filter((child) => child.type === 'dir').map((child) => child.path)),
-      ).slice(0, 200),
-    },
+    factsDelta: buildFactsDelta(allChildren),
     warnings,
   };
 
@@ -800,8 +829,22 @@ export async function navigate(
       `Navigation result exceeded maxBytes=${maxBytes}; returning compact summary.`,
     );
     result.candidates = result.candidates.slice(0, 10);
-    result.factsDelta.existingFiles = result.factsDelta.existingFiles.slice(0, 80);
-    result.factsDelta.existingDirectories = result.factsDelta.existingDirectories.slice(0, 80);
+    // 二次裁剪同样要如实反映到标志上，否则消费方会把一份 80 条的残缺清单
+    // 当作完整枚举，据此否定一个真实存在的路径。
+    result.factsDelta.filesTruncated =
+      result.factsDelta.filesTruncated ||
+      result.factsDelta.existingFiles.length > FACTS_DELTA_COMPACT_LIMIT;
+    result.factsDelta.directoriesTruncated =
+      result.factsDelta.directoriesTruncated ||
+      result.factsDelta.existingDirectories.length > FACTS_DELTA_COMPACT_LIMIT;
+    result.factsDelta.existingFiles = result.factsDelta.existingFiles.slice(
+      0,
+      FACTS_DELTA_COMPACT_LIMIT,
+    );
+    result.factsDelta.existingDirectories = result.factsDelta.existingDirectories.slice(
+      0,
+      FACTS_DELTA_COMPACT_LIMIT,
+    );
     result.indexes = undefined;
   }
 

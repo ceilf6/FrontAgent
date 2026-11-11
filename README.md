@@ -69,6 +69,10 @@ FrontAgent supports terminal, VS Code, and standalone desktop workflows:
 
 Install the VS Code extension from the Marketplace by searching for `FrontAgent` or the extension id `ceilf6.frontagent`.
 
+#### Endpoint trust in the VS Code extension
+
+`frontagent.provider`, `frontagent.model`, and `frontagent.baseUrl` select the host that receives your API key and task context, so the extension treats them as user-scoped configuration. A repository may propose them through its own `.vscode/settings.json`, but FrontAgent withholds a workspace-supplied endpoint until you confirm that exact provider/model/base URL for that workspace folder, re-asks whenever the repository changes it, and ignores it entirely when the workspace is not trusted. `frontagent.apiKey` is `machine`-scoped and is read only from User Settings. See [`apps/vscode/README.md`](apps/vscode/README.md) for details and the reset command.
+
 ### Desktop App
 
 The desktop client is a sandboxed Electron window wired to the real runtime (`window.frontagent` → IPC → `runFrontAgentTask`); it persists settings under your OS user-data directory and degrades gracefully if the runtime is unavailable.
@@ -1339,11 +1343,9 @@ That zero-interception count has since been qualified: [`2026-07-31-validation-t
 
 ## Download Stats (verifiable)
 
-<!-- npm-downloads:start -->
-**Cumulative npm downloads since 2026-01-14: 2447** (updated 2026-07-10, via GitHub Action)
-<!-- npm-downloads:end -->
+[![Cumulative npm downloads since 2026-01-14](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2F2026-01-14%3A2099-12-31%2Ffrontagent&query=%24.downloads&label=cumulative%20npm%20downloads%20since%202026-01-14)](https://www.npmjs.com/package/frontagent)
 
-Verify it yourself against the public npm registry API:
+The badge is rendered live by shields.io from the public npm registry endpoint below, so the number it shows is the one you can reproduce yourself:
 
 ```bash
 # macOS:  date -u -v-1d +%F   |  Linux:  date -u -d yesterday +%F

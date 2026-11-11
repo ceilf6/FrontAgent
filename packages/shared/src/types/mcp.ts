@@ -30,6 +30,8 @@ export interface PatchResult {
   success: boolean;
   diff: string;
   validation: {
+    /** False means syntaxValid is not a checked verdict. */
+    syntaxChecked?: boolean;
     syntaxValid: boolean;
     lintErrors: LintError[];
     typeErrors: TypeError[];

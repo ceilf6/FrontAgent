@@ -8,7 +8,7 @@ import type {
   SecurityDecision,
 } from '@frontagent/shared';
 import type { LLMService } from '../llm.js';
-import type { AgentLifecycleHooks } from '../types.js';
+import type { AgentEvent, AgentLifecycleHooks } from '../types.js';
 
 export interface MCPClient {
   callTool(name: string, args: Record<string, unknown>): Promise<unknown>;
@@ -21,7 +21,7 @@ export interface ExecutorConfig {
    * 这正是 issue #388 的内容：`validation_failed` 有类型定义、有 UI 消费方，
    * 却在全仓没有任何发射点。
    */
-  emitEvent?: (event: import('../types.js').AgentEvent) => void;
+  emitEvent?: (event: AgentEvent) => void;
   projectRoot: string;
   hallucinationGuard: HallucinationGuard;
   llmService: LLMService;
@@ -72,6 +72,7 @@ export interface ExecutorTraceStage {
     | 'validate_params'
     | 'validate_before'
     | 'prepare_tool_params'
+    | 'validate_content'
     | 'call_tool'
     | 'validate_after'
     | 'handle_tool_result'

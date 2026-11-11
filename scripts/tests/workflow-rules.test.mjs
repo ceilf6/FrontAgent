@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { assertGitWorkspaceRootMatchesCwd, getChangedFiles } from '../workflows/contract-check.mjs';
 import {
@@ -15,6 +27,21 @@ const validImpactSummary = [
   '- GitNexus impact: detect_changes reported Harness scripts only; context on evaluateGitNexusContract shows tests as callers.',
   '- Verification: node --test scripts/tests/workflow-rules.test.mjs passed.',
 ].join('\n');
+
+// `git ls-files --others` normally recurses into an untracked directory and
+// lists its files. It collapses to a single trailing-slash entry when the
+// directory is a nested repository — a linked worktree or an uninitialised
+// submodule (#439).
+//
+// Apply this only where entries are actually readFileSync'd. Filtering inside
+// listPublicClaudeAssets() would hide such an entry from the callers that are
+// supposed to catch it: the public-prefix assertion rejects any trailing-slash
+// entry, so it reports a stray nested repository anywhere under .claude/ —
+// including under an otherwise-allowed prefix — and dropping it first would
+// turn that into a silent pass.
+function dropDirectoryEntries(entries) {
+  return entries.filter((file) => !file.endsWith('/'));
+}
 
 function listPublicClaudeAssets() {
   const tracked = execFileSync('git', ['ls-files', '.claude'], { encoding: 'utf8' });
@@ -268,7 +295,11 @@ test('extractImpactSummary reads only the PR template impact section', () => {
 test('package exposes required OSS Harness scripts', () => {
   const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 
-  assert.equal(pkg.devDependencies.gitnexus, '1.6.6');
+  // 精确钉版本,不用 caret:契约门禁靠 `gitnexus analyze` 产出索引,这条依赖
+  // 一度需要打补丁才能用(见 057aa6a)。升级必须是一次经审阅的改动,而不是
+  // 某次 lockfile 刷新的副产物——`patchedDependencies` 必须保持为空,否则
+  // 说明又退回到打补丁的状态。
+  assert.equal(pkg.devDependencies.gitnexus, '1.6.9');
   assert.equal(pkg.pnpm.patchedDependencies, undefined);
   assert.equal(pkg.scripts.prepare, 'pnpm hooks:install');
   assert.equal(pkg.scripts['hooks:install'], 'node scripts/workflows/install-hooks.mjs');
@@ -376,6 +407,85 @@ test('CI and contract guard target develop and call named quality scripts', () =
   assert.match(contractGuard, /GITNEXUS_IMPACT_SUMMARY/u);
 });
 
+// Contract Guard 对 critical 文件同时要求「同 PR 有 scripts/tests/ 契约测试」和
+// 「PR 正文里的结构化 impact summary」;dependabot 两样都给不出,所以每一次碰
+// .github/workflows/ 的版本升级都会红。跳过判定必须挂在 PR 作者上而不是
+// github.actor——维护者对 dependabot 分支做 update-branch 后 actor 会变成维护者,
+// 用 actor 判定会让门禁重新变红。
+test('contract guard skips dependabot-authored PRs by author, not actor', () => {
+  // 只看有效行:负向断言必须不带 `if:` 前缀(见下),而那样的宽模式会连注释一起
+  // 匹配——把被拒绝的 actor 写法作为反例写进注释,本身是完全正确的做法,不该让
+  // 门禁变红。
+  const contractGuard = readFileSync('.github/workflows/contract-guard.yml', 'utf8')
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n');
+
+  assert.match(
+    contractGuard,
+    /if:\s*github\.event\.pull_request\.user\.login\s*!=\s*'dependabot\[bot\]'/u,
+    'contract guard must skip dependabot PRs, keyed on the PR author',
+  );
+  // 不带 `if:` 前缀:repo-guard.yml 用的是 `if: >` 换行的多行形式,而那正是
+  // 「向 repo-guard.yml 拼写看齐」时最可能被复制过来的写法;要求 `if:` 紧跟
+  // github.actor 会让它静默通过这条断言。
+  assert.doesNotMatch(
+    contractGuard,
+    /github\.actor\s*!=\s*'dependabot\[bot\]'/u,
+    'actor-keyed skip breaks as soon as a maintainer pushes to the dependabot branch',
+  );
+  // 这条豁免的前提:workflow 文件确实属于 critical 面,否则跳过就是无谓放松。
+  // 断言规则引擎的行为而不是它的源码文本——后者会把一次等价重写读成契约变更,
+  // 而本文件其余部分一直是直接调 classifyContractPaths 的。
+  assert.deepEqual(classifyContractPaths(['.github/workflows/contract-guard.yml']).critical, [
+    { file: '.github/workflows/contract-guard.yml', category: 'repo-harness' },
+  ]);
+});
+
+// #437 的机制:`actions/checkout@v4` 这条**移动的 tag** 悄悄改了行为(开始拒绝
+// pull_request_target 下的 fork checkout),Repo Guard 在我们这边零改动的情况下对
+// 每个 fork PR 全红。#438 补的回归测试断言的是 workflow **文本**,而 GitHub Actions
+// 对未知的 `with:` 键只告警不失败——tag 再动一次、把 `allow-unsafe-pr-checkout`
+// 改名或删掉,fork PR 会在 checkout 处坏掉而 test:workflows 照旧全绿,正是藏住
+// #437 的那套机制。所以这里要求的是 SHA,不是「某个 tag 名」。
+test('third-party actions are pinned to a commit SHA', () => {
+  // .yaml 也是合法的 workflow 后缀；只收 .yml 会让一个新增的 x.yaml 静默豁免整条规则。
+  //
+  // 边界:只扫 .github/workflows/。复合 action（.github/actions/**/action.yml）里的
+  // `uses:` 同样能引入移动 tag,同样会被这条规则静默豁免。今天这个目录不存在,
+  // 所以是零影响；真要新增复合 action 时,把它一并纳入扫描源，别重新推导一遍。
+  const workflows = readdirSync('.github/workflows').filter((file) => /\.ya?ml$/u.test(file));
+  assert.ok(workflows.length > 0, 'no workflows found');
+
+  // 第一方 action 例外:仓库自己控制它,钉 SHA 意味着 repo-guard 每次改动都要回来
+  // 提一个 bump PR。它确实也是移动 ref,且跑在带 secrets 的自托管 runner 上——
+  // 要不要一并钉住是维护者的策略决定,不在本条断言的范围内(#440)。
+  const FIRST_PARTY_UNPINNED = new Set(['ceilf6/repo-guard@main']);
+  const pinned = /^[0-9a-f]{40}$/u;
+
+  const offenders = [];
+  for (const file of workflows) {
+    const text = readFileSync(join('.github/workflows', file), 'utf8');
+    for (const line of text.split('\n')) {
+      const match = /^\s*(?:-\s*)?uses:\s*(\S+)/u.exec(line);
+      if (!match) continue;
+      const [owner, ref] = [match[1], match[1].split('@')[1] ?? ''];
+      // 本地 action / reusable workflow（`uses: ./.github/actions/foo`）没有 @ref，
+      // 结构上就钉不了 SHA；它们是本仓库的代码，不存在第三方漂移。
+      if (owner.startsWith('./')) continue;
+      if (FIRST_PARTY_UNPINNED.has(owner)) continue;
+      if (!pinned.test(ref)) offenders.push(`${file}: ${owner}`);
+      // 光有 SHA 读不出这是哪个版本,升级时无从判断跨了多少。要求尾注版本号。
+      // 锚定到 SHA 之后的注释:不锚定的话,行内任何位置出现的数字(比如一句
+      // 「# 见 #440」)都会被当成版本号,这条断言就形同虚设。
+      else if (!new RegExp(`@${ref}\\s*#\\s*v?\\d+(\\.\\d+)*(\\s|$)`, 'u').test(line))
+        offenders.push(`${file}: ${owner} (no version comment)`);
+    }
+  }
+
+  assert.deepEqual(offenders, [], `pin these to a commit SHA with a trailing # version comment`);
+});
+
 test('desktop app has an unsigned electron-builder packaging path', () => {
   const pkg = JSON.parse(readFileSync('apps/desktop/package.json', 'utf8'));
   const config = readFileSync('apps/desktop/electron-builder.yml', 'utf8');
@@ -477,6 +587,26 @@ test('README documents the desktop client as a supported usage path', () => {
   assert.match(readmeCn, /pnpm --filter @frontagent\/desktop package/u);
 });
 
+test('README documents the VS Code endpoint trust boundary', () => {
+  const readme = readFileSync('README.md', 'utf8');
+  const readmeCn = readFileSync('docs/README-CN.md', 'utf8');
+  const extensionReadme = readFileSync('apps/vscode/README.md', 'utf8');
+
+  // Workspace-supplied endpoint settings are gated, not merged silently.
+  assert.match(readme, /#### Endpoint trust in the VS Code extension/u);
+  assert.match(readme, /withholds a workspace-supplied endpoint until you confirm/u);
+  assert.match(readme, /`frontagent\.apiKey` is `machine`-scoped/u);
+  assert.match(readmeCn, /#### VS Code 插件的 endpoint 信任边界/u);
+  assert.match(readmeCn, /`frontagent\.apiKey` 为 `machine` 作用域/u);
+
+  // The extension README carries the operational detail, including the escape hatch.
+  assert.match(extensionReadme, /## Endpoint Trust/u);
+  assert.match(extensionReadme, /FrontAgent: Reset Workspace Endpoint Approval/u);
+  // The Global write target removes per-project config from the UI; the
+  // supported alternative must stay documented so it does not read as a bug.
+  assert.match(extensionReadme, /### Using a different model per project/u);
+});
+
 test('local Claude state markdown remains ignored', () => {
   assert.doesNotThrow(() =>
     execFileSync('git', ['check-ignore', '-q', '.claude/repo-evolver.local.md']),
@@ -484,6 +614,170 @@ test('local Claude state markdown remains ignored', () => {
   assert.doesNotThrow(() =>
     execFileSync('git', ['check-ignore', '-q', '.claude/ralph-loop.local.md']),
   );
+});
+
+// A git worktree under .claude/worktrees/ — Claude Code's default location —
+// is a full nested checkout. Two independent gates broke on it, so both levers
+// are pinned here: git must ignore the path, and Biome must not descend into
+// it (Biome sets no vcs.useIgnoreFile, so .gitignore alone does not stop the
+// nested-config error, which aborts the whole run before any file is checked).
+// See #439, and #444 for why Biome's exclusion is anchored while git's is not.
+test('a git worktree under .claude/worktrees does not break the local gates', () => {
+  assert.doesNotThrow(() =>
+    execFileSync('git', ['check-ignore', '-q', '.claude/worktrees/example-branch']),
+  );
+
+  const biomeConfig = JSON.parse(readFileSync('biome.json', 'utf8'));
+  assert.ok(
+    biomeConfig.files.includes.includes('!!.claude/worktrees'),
+    'biome must exclude .claude/worktrees, or a nested checkout aborts the whole run',
+  );
+  // Anchored, not `**/`-prefixed. Biome matches the traversal root by absolute
+  // path, so a `**/.claude/worktrees` pattern also matches the worktree itself
+  // when biome runs from inside one — `biome check .` then ignores everything
+  // and exits non-zero, killing every local gate in the worktree (#444). The
+  // behavioural test below pins both directions.
+  assert.ok(
+    !biomeConfig.files.includes.some((pattern) => /^!!\*\*\/\.claude\/worktrees/u.test(pattern)),
+    'a `**/`-prefixed worktrees exclusion matches the traversal root and disables lint inside a worktree (#444)',
+  );
+
+  // Assert the filter against synthetic input: with the ignore rule in place
+  // git no longer emits a directory entry, so listPublicClaudeAssets() cannot
+  // produce one to catch here.
+  assert.deepEqual(
+    dropDirectoryEntries(['.claude/skills/a/SKILL.md', '.claude/worktrees/some-branch/']),
+    ['.claude/skills/a/SKILL.md'],
+  );
+});
+
+// The config assertion above pins the pattern's *shape*; this pins what the
+// shape is for, by running the real binary against a synthetic project root.
+// Both directions matter and they pull against each other: excluding the
+// worktree hard enough to survive its nested biome.json (#439) is what made a
+// `**/` pattern also swallow the worktree when it *is* the traversal root
+// (#444). Skipped when the binary is absent (no `pnpm install`) or on Windows,
+// where the shim name differs — CI runs this on Linux.
+const biomeBin = join('node_modules', '.bin', 'biome');
+test('biome ignores a nested worktree from the root but still checks one from inside', {
+  skip: process.platform === 'win32' || !existsSync(biomeBin) ? 'biome binary unavailable' : false,
+}, () => {
+  const biomeAbsolute = join(process.cwd(), biomeBin);
+  // The probe below reads "did biome traverse here?" off a planted
+  // noDoubleEquals diagnostic. Turning that rule off in biome.json would make
+  // the worktree run report nothing and fail as if traversal had regressed —
+  // the misdirected error message #439 and #444 are both about. Fail on the
+  // real cause instead. The `suspicious` group already disables five rules, so
+  // this is not a hypothetical edit.
+  // Every way biome 2.5.6 can switch the probe off, each verified by planting
+  // `a == b` in a temp project and checking whether the rule is reported:
+  // `"off"`, `{ level: "off" }`, dropping the preset at either the linter or
+  // the group level — under both the current key (`preset`) and the pre-2.5 one
+  // (`recommended`, still honoured) — since this repo now has an `overrides`
+  // array, any override that touches the rule or its preset, and
+  // `linter.enabled: false`, which silences everything at once.
+  // Checking only the spelling in use today is how this guard silently died
+  // once already: the 2.4.16 → 2.5.6 migration renamed `recommended` to
+  // `preset` and the assertion kept reading `undefined`.
+  const biomeConfigJson = JSON.parse(readFileSync('biome.json', 'utf8'));
+  const linterRules = biomeConfigJson.linter?.rules;
+  // The bluntest switch of all: turning the linter off entirely. It reports no
+  // rule at all, so the probe goes quiet without any rule- or preset-level edit.
+  assert.notEqual(
+    biomeConfigJson.linter?.enabled,
+    false,
+    'this test probes traversal via a planted noDoubleEquals diagnostic; the linter is disabled',
+  );
+  const probeRule = linterRules?.suspicious?.noDoubleEquals;
+  const probeMessage =
+    'this test probes traversal via a planted noDoubleEquals diagnostic; pick another enabled rule if it gets disabled';
+  // 用「已知启用值的白名单」而不是「不等于关闭值」：后者是这条 guard 上次静默
+  // 失效的同一形状——键被改名、读到 undefined、断言恒真。不认识的拼写直接判失败，
+  // 由改配置的人来更新这里，而不是让 guard 悄悄放行。
+  // biome 的 PresetConfig 枚举是 recommended | all | none（取自
+  // node_modules/@biomejs/biome/configuration_schema.json）；缺省即 recommended。
+  const ENABLED_PRESETS = new Set([undefined, 'recommended', 'all']);
+  /** A preset slot is live only under a spelling we know keeps rules on. */
+  const presetEnabled = (rules) =>
+    ENABLED_PRESETS.has(rules?.preset) &&
+    (rules?.recommended === undefined || rules?.recommended === true);
+  assert.notEqual(
+    typeof probeRule === 'string' ? probeRule : probeRule?.level,
+    'off',
+    probeMessage,
+  );
+  assert.ok(presetEnabled(linterRules), probeMessage);
+  assert.ok(presetEnabled(linterRules?.suspicious), probeMessage);
+  // An override wins over the top-level config for the files it matches, so one
+  // that silences this rule would be invisible to the assertions above. Nothing
+  // may touch it at all — narrowing to "only overrides matching the fixture"
+  // would mean reimplementing biome's glob semantics here, and the probe is
+  // cheap to relocate if some override ever legitimately needs the rule off.
+  for (const override of biomeConfigJson.overrides ?? []) {
+    const overrideRules = override.linter?.rules;
+    assert.notEqual(
+      override.linter?.enabled,
+      false,
+      `${probeMessage} (a biome.json override disables the linter)`,
+    );
+    assert.equal(
+      overrideRules?.suspicious?.noDoubleEquals,
+      undefined,
+      `${probeMessage} (a biome.json override targets it)`,
+    );
+    assert.ok(
+      presetEnabled(overrideRules),
+      `${probeMessage} (a biome.json override drops the preset)`,
+    );
+    assert.ok(
+      presetEnabled(overrideRules?.suspicious),
+      `${probeMessage} (a biome.json override drops the suspicious preset)`,
+    );
+  }
+  const root = mkdtempSync(join(tmpdir(), 'frontagent-worktree-lint-'));
+  try {
+    const worktree = join(root, '.claude', 'worktrees', 'example-branch');
+    mkdirSync(worktree, { recursive: true });
+    // Both project roots get the real config — the behaviour under test is a
+    // property of biome.json, so a hand-written stub would not be evidence.
+    copyFileSync('biome.json', join(root, 'biome.json'));
+    copyFileSync('biome.json', join(worktree, 'biome.json'));
+    // The root file is clean; the worktree file carries one recommended-rule
+    // error. Which run reports it is the traversal evidence — a file count
+    // would also be satisfied by biome checking the config files alone.
+    writeFileSync(join(root, 'sample.ts'), "export const sample = 'root';\n");
+    writeFileSync(
+      join(worktree, 'sample.ts'),
+      'export function sample(a: unknown, b: unknown) {\n  return a == b;\n}\n',
+    );
+
+    const fromRoot = spawnSync(biomeAbsolute, ['check', '.'], { cwd: root, encoding: 'utf8' });
+    const rootOutput = `${fromRoot.stdout}${fromRoot.stderr}`;
+    // The nested biome.json is itself a root config: without the exclusion
+    // biome aborts with a nested-root-configuration error before checking
+    // anything, which is the #439 failure this must keep out.
+    assert.equal(fromRoot.status, 0, `biome failed at the root checkout:\n${rootOutput}`);
+    assert.doesNotMatch(
+      rootOutput,
+      /noDoubleEquals/u,
+      `the root run must not descend into the worktree (#439):\n${rootOutput}`,
+    );
+
+    const fromWorktree = spawnSync(biomeAbsolute, ['check', '.'], {
+      cwd: worktree,
+      encoding: 'utf8',
+    });
+    const worktreeOutput = `${fromWorktree.stdout}${fromWorktree.stderr}`;
+    // With a `**/` pattern this run reports "Checked 0 files" and exits 1 —
+    // the gate looks like it ran and failed, without inspecting anything.
+    assert.match(
+      worktreeOutput,
+      /noDoubleEquals/u,
+      `worktree contents must still be checked (#444):\n${worktreeOutput}`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('Claude reusable assets are public while local state stays private', () => {
@@ -494,13 +788,22 @@ test('Claude reusable assets are public while local state stays private', () => 
   assert.ok(publicClaudeAssets.includes('.claude/skills/gitnexus/gitnexus-cli/SKILL.md'));
   assert.ok(
     publicClaudeAssets.every(
-      (file) => file.startsWith('.claude/workflows/') || file.startsWith('.claude/skills/'),
+      (file) =>
+        // Reject directory entries explicitly. Without this a nested repository
+        // under an allowed prefix — `.claude/skills/some-skill/` — satisfies
+        // startsWith and slips past, which is exactly the case the trailing
+        // filter in the portability test would then silently skip (#439).
+        !file.endsWith('/') &&
+        (file.startsWith('.claude/workflows/') || file.startsWith('.claude/skills/')),
     ),
   );
 });
 
 test('public Harness workflow assets are portable', () => {
-  const publicClaudeAssets = listPublicClaudeAssets();
+  // Only this test reads the entries, so the directory filter belongs here:
+  // a stray nested repository would otherwise abort the suite with EISDIR
+  // instead of failing the public-prefix assertion above (#439).
+  const publicClaudeAssets = dropDirectoryEntries(listPublicClaudeAssets());
   const publicAssets = ['docs/oss-harness-engineering-workflow.md', ...publicClaudeAssets];
   const secretEnvNamePattern = /\b[A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET)\b/u;
 
@@ -661,13 +964,17 @@ test('README documents the filesense ablation arm and its deep-fixture prerequis
   assert.match(readme, /pnpm --dir benchmarks\/eval\/fixture-deep install/u);
 });
 
-test('README exposes the verifiable npm downloads counter with its marker block', () => {
+test('README exposes the verifiable npm downloads counter as a live badge', () => {
   const readme = readFileSync('README.md', 'utf8');
 
   assert.match(readme, /## Download Stats \(verifiable\)/u);
-  // Marker comments are the GitHub Action's substitution anchors — do not rename.
-  assert.match(readme, /<!-- npm-downloads:start -->/u);
-  assert.match(readme, /<!-- npm-downloads:end -->/u);
+  // shields.io renders the count at view time from the same registry endpoint the
+  // verify command queries, so no workflow needs push access to the protected
+  // develop branch to keep it fresh. The start date is the package's first publish.
+  assert.match(
+    readme,
+    /img\.shields\.io\/badge\/dynamic\/json\?url=https%3A%2F%2Fapi\.npmjs\.org%2Fdownloads%2Fpoint%2F2026-01-14%3A/u,
+  );
   // The reader can verify the number against the public registry API.
   assert.match(readme, /api\.npmjs\.org\/downloads\/point/u);
 });

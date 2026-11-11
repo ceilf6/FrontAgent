@@ -527,3 +527,50 @@ describe('PhaseRunner', () => {
     });
   });
 });
+
+it('keeps deferred writes out of a snapshot when the phase aborts before their turn', async () => {
+  const first = makeStep({ stepId: 'first', params: { path: 'a.ts' } });
+  const second = makeStep({ stepId: 'second', params: { path: 'a.ts' } });
+  const controller = new AbortController();
+  const executeStep = vi.fn().mockImplementation(async () => {
+    controller.abort();
+    return makeOutput();
+  });
+  const runner = new PhaseRunner(
+    makeDeps({
+      parallelExecution: true,
+      executeStep,
+      getWriteTarget: () => 'a.ts',
+      throwIfAborted: (signal) => signal?.throwIfAborted(),
+    }),
+  );
+  await expect(
+    runner.executeSinglePhaseWithRecovery(
+      makePhaseGroup([first, second]),
+      makeContext(),
+      new Set(),
+      [],
+      { signal: controller.signal },
+    ),
+  ).rejects.toBeDefined();
+  expect(executeStep).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(JSON.stringify(second)).params).toEqual({ path: 'a.ts' });
+  const resumedExecute = vi.fn().mockResolvedValue(makeOutput());
+  await new PhaseRunner(
+    makeDeps({
+      parallelExecution: true,
+      executeStep: resumedExecute,
+      getWriteTarget: () => 'a.ts',
+    }),
+  ).executeSinglePhaseWithRecovery(
+    makePhaseGroup([first, second]),
+    makeContext(),
+    new Set(),
+    [],
+    {},
+  );
+  expect(resumedExecute).toHaveBeenCalledWith(second, expect.anything(), {
+    deferredSameTargetWrite: false,
+    deferredOriginalContent: undefined,
+  });
+});

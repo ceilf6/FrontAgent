@@ -141,3 +141,21 @@ describe('createFile', () => {
     expect(readFileSync(join(root, 'new.ts'), 'utf-8')).toBe('export const value = 1;');
   });
 });
+
+it('allows an external client to create a deliberately invalid fixture', async () => {
+  const { stripInternalArgs } = await import('../internal-args.js');
+  const root = mkdtempSync(join(tmpdir(), 'mcp-file-fixture-'));
+  roots.push(root);
+  const args = stripInternalArgs({
+    path: 'fixture.ts',
+    content: 'const x = ;',
+    skipSyntaxValidation: true,
+  });
+  const result = createFile(
+    args as unknown as import('./create-file.js').CreateFileParams,
+    root,
+    new SnapshotManager(root),
+  );
+  expect(result.success).toBe(true);
+  expect(readFileSync(join(root, 'fixture.ts'), 'utf8')).toBe('const x = ;');
+});

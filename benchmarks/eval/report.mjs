@@ -82,20 +82,19 @@ console.log(`# FrontAgent 消融评测：SDD 规格约束对一次通过率的�
    当前 \`validateFilePath()\` / \`validateSyntax()\` / \`validateImports()\` 已分别遵循开关，guard 可配置、可消融。
 
 2. **历史缺陷：解析器校验发生在写盘之后（已修复）**
-   当前 create/patch 的完整投影会在写盘前通过解析器校验；\`post_write\` 仅保留依赖工作区状态的 import 校验。
+   当前 create/patch 的完整投影会在写盘前通过解析器校验；\`post_write\` 保留依赖工作区状态的 import 校验，并校验实际落盘内容。
 
-3. **\`validation_failed\` 事件${
-     sumEvent(arms.full, 'validation_failed') + sumEvent(arms.ablation, 'validation_failed') > 0
-       ? '为复合口径计数'
-       : '从未触发'
-   }**
+3. **\`validation_failed\` 拦截计数**
    两臂合计 ${sumEvent(arms.full, 'validation_failed') + sumEvent(arms.ablation, 'validation_failed')} 次。${
      sumEvent(arms.full, 'validation_failed') + sumEvent(arms.ablation, 'validation_failed') > 0
        ? '注意这是复合值，不是拦截数——见下方分阶段分解，以及 `benchmarks/results/2026-07-31-validation-telemetry.md`。'
        : '该事件当时在全仓没有任何发射点，所以它不可能是 0 以外的值：这个 0 证明的是「事件没接线」，不是「校验没拦住」。限定见 `benchmarks/results/2026-07-31-validation-telemetry.md`。'
    }
 
-   **按阶段分解**（事件接线后才有意义）：
+   **按阶段分解**（只有 \`pre_write\` 是真拦截；\`post_write\` 含「前向引用 import」这类
+   刻意放行落盘的失败，也含被降级为**不决定步骤成败**的判定——\`apply_patch\` 上的
+   \`syntax_validity\` 与 \`import_validity\` 只记录不否决，所以这一列的计数不等于
+   「有多少步骤因此失败」；\`pre_execution\` 是执行前结构性拦截）：
 
    | 阶段 | SDD 关 | SDD 开 |
    |---|---|---|
@@ -104,8 +103,8 @@ console.log(`# FrontAgent 消融评测：SDD 规格约束对一次通过率的�
    | \`pre_write:other\`（其他写盘前拒绝） | ${sumPreWriteNonSyntax(arms.ablation)} | ${sumPreWriteNonSyntax(arms.full)} |
    | \`post_write\`（已落盘后判失败） | ${sumEvent(arms.ablation, 'validation_failed:post_write')} | ${sumEvent(arms.full, 'validation_failed:post_write')} |
 
-   > 全为 0 时先分清「未接线」与「零拦截」：若 JSONL 里连 \`validation_failed\` 这个裸键
-   > 都不存在，说明该轮数据产自事件接线之前，此时 0 不构成任何证据。
+   > 上表全为 0 时要先分清「未接线」与「零拦截」：若 JSONL 里连 \`validation_failed\` 这个
+   > 裸键都不存在，说明该轮数据产自事件接线之前，此时 0 不构成任何证据。
 
 **历史实证**：旧数据中的失败样本曾出现 \`TS1127: Invalid character\`——markdown 代码围栏被原样写进 \`.tsx\` 文件。当前写盘前解析器回归测试已覆盖并阻止该路径；需重跑冻结任务集衡量修复后的真实拦截数。
 

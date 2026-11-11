@@ -93,6 +93,7 @@ export class FrontAgent {
     this.hallucinationGuard = new HallucinationGuard({
       projectRoot: config.projectRoot,
       sddConfig: this.sddConfig,
+      enabled: config.hallucinationGuard?.enabled,
       enabledChecks: config.hallucinationGuard?.checks,
     });
 

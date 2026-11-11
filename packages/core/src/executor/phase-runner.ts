@@ -2,10 +2,16 @@ import type { AgentTask, ExecutionStep } from '@frontagent/shared';
 import type { ExecutorOutput } from '../types.js';
 import type { ExecutorCollectedContext, PhaseExecutionGroup } from './types.js';
 
+export interface StepExecutionOptions {
+  deferredSameTargetWrite?: boolean;
+  deferredOriginalContent?: string;
+}
+
 export interface PhaseRunnerDeps {
   executeStep(
     step: ExecutionStep,
     context: { task: AgentTask; collectedContext: ExecutorCollectedContext },
+    options?: StepExecutionOptions,
   ): Promise<ExecutorOutput>;
   debugLog(...args: unknown[]): void;
   debugWarn(...args: unknown[]): void;
@@ -159,6 +165,7 @@ export class PhaseRunner {
     signal?: AbortSignal,
   ): Promise<void> {
     const pending: ExecutionStep[] = [];
+    const deferredWrites = new Map<ExecutionStep, string | undefined>();
     for (const step of phaseSteps) {
       // 会话恢复：已完成的步骤直接计入完成集合，不重复执行
       if (step.status === 'completed') {
@@ -194,14 +201,21 @@ export class PhaseRunner {
         continue;
       }
 
-      const runnable = this.selectConflictFreeSteps(ready);
+      const runnable = this.selectConflictFreeSteps(
+        ready,
+        deferredWrites,
+        context.collectedContext.files,
+      );
       for (const step of runnable) pending.splice(pending.indexOf(step), 1);
 
       const results = await Promise.allSettled(
         runnable.map(async (step) => {
           step.status = 'running';
           onStepStart?.(step);
-          const output = await this.deps.executeStep(step, context);
+          const output = await this.deps.executeStep(step, context, {
+            deferredSameTargetWrite: deferredWrites.has(step),
+            deferredOriginalContent: deferredWrites.get(step),
+          });
           return { step, output };
         }),
       );
@@ -224,13 +238,18 @@ export class PhaseRunner {
     }
   }
 
-  private selectConflictFreeSteps(ready: ExecutionStep[]): ExecutionStep[] {
+  private selectConflictFreeSteps(
+    ready: ExecutionStep[],
+    deferredWrites: Map<ExecutionStep, string | undefined>,
+    files: Map<string, string>,
+  ): ExecutionStep[] {
     const writeTargets = new Set<string>();
     return ready.filter((step) => {
       const target = this.deps.getWriteTarget(step);
       if (!target) return true;
       if (writeTargets.has(target)) {
-        step.params.__frontagentDeferredSameTargetWrite = true;
+        if (!deferredWrites.has(step))
+          deferredWrites.set(step, files.get(String(step.params.path)));
         return false;
       }
       writeTargets.add(target);

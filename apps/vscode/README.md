@@ -33,14 +33,33 @@ fa run "Create a user login page"
 
 FrontAgent for VS Code is a desktop extension. It uses Node.js, local file system access, shell tooling, and browser automation capabilities from the FrontAgent runtime.
 
-Configure a provider, model, base URL, and API key with `FrontAgent: Configure` or the sidebar configuration panel before running tasks. API keys entered there are stored in VS Code SecretStorage. You can also use `frontagent.apiKey` in Settings as a fallback when you explicitly want a settings-based key.
+Configure a provider, model, base URL, and API key with `FrontAgent: Configure` or the sidebar configuration panel before running tasks. API keys entered there are stored in VS Code SecretStorage, and the provider, model, and base URL are written to your **User Settings**. You can also use `frontagent.apiKey` in User Settings as a fallback when you explicitly want a settings-based key.
+
+## Endpoint Trust
+
+The provider, model, and base URL decide which host receives your API key and your task context, so FrontAgent treats them as user-scoped configuration.
+
+A repository can put these keys in its own `.vscode/settings.json`, and VS Code ranks folder settings above User Settings. FrontAgent therefore resolves them per scope instead of taking the merged value:
+
+- A workspace-supplied `provider`, `model`, or `baseUrl` that differs from your own is **not used** until you confirm it. The confirmation dialog names the destination host before the first request is made.
+- Your approval is bound to that workspace folder and to that exact provider/model/base URL. If the repository later changes any of them, FrontAgent asks again.
+- FrontAgent declares no `untrustedWorkspaces` support, so VS Code disables the extension entirely in Restricted Mode. The resolver additionally ignores workspace endpoint values whenever the workspace is not trusted, as defence in depth.
+- `frontagent.apiKey` is `machine`-scoped: it is read only from your User Settings and never from a workspace.
+
+Run `FrontAgent: Reset Workspace Endpoint Approval` to revoke an approval for the current workspace, or to be asked again after declining.
+
+> **Upgrading?** Earlier versions of `FrontAgent: Configure` saved to workspace settings. Those values are not migrated, so after running the new Configure they still sit in `.vscode/settings.json` (or your `.code-workspace`) and will keep being treated as a workspace override — you will be asked to confirm them. Delete them from the workspace file once your settings are in User Settings.
+
+### Using a different model per project
+
+`FrontAgent: Configure` and the sidebar form now save to User Settings, so they set your default for every workspace rather than for the project you happen to have open. To vary the model or endpoint per project, put it in that project's `.vscode/settings.json` and approve the prompt once — the approval is remembered for that folder. This is the trade for making a repository unable to silently choose where your API key goes.
 
 ## Extension Settings
 
-- `frontagent.provider`: LLM provider, `anthropic` or `openai`.
-- `frontagent.model`: Model name.
-- `frontagent.baseUrl`: API base URL.
-- `frontagent.apiKey`: Optional API key fallback; SecretStorage is recommended.
+- `frontagent.provider`: LLM provider, `anthropic` or `openai`. Workspace values need confirmation.
+- `frontagent.model`: Model name. Workspace values need confirmation.
+- `frontagent.baseUrl`: API base URL. Workspace values need confirmation.
+- `frontagent.apiKey`: Optional API key fallback, User Settings only; SecretStorage is recommended.
 - `frontagent.maxTokens`: Maximum output tokens.
 - `frontagent.temperature`: Sampling temperature.
 - `frontagent.securityMode`: Tool execution security mode.

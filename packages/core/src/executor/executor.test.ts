@@ -572,7 +572,7 @@ describe('Executor', () => {
 
       expect(callTool).not.toHaveBeenCalled();
       expect(result.stepResult.success).toBe(false);
-      expect(result.needsRollback).toBe(false);
+      expect(result.needsRollback).toBe(true);
       expect(events).toEqual([
         expect.objectContaining({
           type: 'validation_failed',
@@ -758,7 +758,7 @@ describe('Executor', () => {
       expect(context.collectedContext.files.get('README.md')).toBe(projected);
     });
 
-    it('consumes the deferred-write marker so a resumed apply_patch is not blocked forever', async () => {
+    it('keeps deferral state out of the plan and allows resume with the refreshed base', async () => {
       const original = 'export const value = 1;';
       const callTool = vi
         .fn()
@@ -785,7 +785,6 @@ describe('Executor', () => {
         tool: 'apply_patch',
         params: {
           path: 'src/a.ts',
-          __frontagentDeferredSameTargetWrite: true,
           patches: [{ operation: 'replace', startLine: 1, content: 'export const value = 2;' }],
         },
       });
@@ -795,17 +794,16 @@ describe('Executor', () => {
         makeExecutionContext({
           collectedContext: { files: new Map([['src/a.ts', original]]) },
         }),
+        { deferredSameTargetWrite: true, deferredOriginalContent: 'old content' },
       );
 
-      // The marker forces one stale-context block, then must be consumed so a
-      // re-run (recovery or resume) is not blocked forever.
+      // A stale deferred base blocks this invocation without mutating the plan.
       expect(firstRun.stepResult.success).toBe(false);
       expect(firstRun.validation?.blockedBy?.join()).toMatch(/changed after/i);
       expect(step.params.__frontagentDeferredSameTargetWrite).toBeUndefined();
       expect(callTool).not.toHaveBeenCalledWith('apply_patch', expect.anything());
 
-      // Re-running the same step with matching content now succeeds: the marker
-      // is gone and the refreshed base is used for the expected-hash binding.
+      // Resume uses the refreshed content without persisted scheduling state.
       const secondRun = await executor.executeStep(
         step,
         makeExecutionContext({

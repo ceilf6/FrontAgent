@@ -1,16 +1,17 @@
-import { validateSourceSyntax } from '@frontagent/hallucination-guard';
+import { validateSourceSyntax } from '@frontagent/hallucination-guard/syntax';
 import { detectSyntaxLanguage, type PatchResult } from '@frontagent/shared';
 
 export function validateFileSyntax(content: string, filePath: string): PatchResult['validation'] {
   const language = detectSyntaxLanguage(filePath);
-  if (!language) {
-    return { syntaxValid: true, lintErrors: [], typeErrors: [] };
+  if (!language || language === 'yaml') {
+    return { syntaxChecked: false, syntaxValid: true, lintErrors: [], typeErrors: [] };
   }
 
   const result = validateSourceSyntax({ code: content, language, filePath });
   const errors = result.details?.errors ?? [];
 
   return {
+    syntaxChecked: true,
     syntaxValid: result.pass,
     lintErrors: errors.map((error) => ({
       line: error.line,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { emptyEndpointTrustStatus } from './endpoint-trust.js';
 import { resolveConfigStatusFromSources } from './settings.js';
 
 describe('VS Code config resolution', () => {
@@ -7,6 +8,7 @@ describe('VS Code config resolution', () => {
       settings: {},
       secrets: {},
       env: {},
+      endpointTrust: emptyEndpointTrustStatus(),
     });
 
     expect(status.configured).toBe(false);
@@ -28,6 +30,7 @@ describe('VS Code config resolution', () => {
         MODEL: 'env-model',
         API_KEY: 'env-key',
       },
+      endpointTrust: emptyEndpointTrustStatus(),
     });
 
     expect(status).toMatchObject({
@@ -50,6 +53,7 @@ describe('VS Code config resolution', () => {
       },
       secrets: {},
       env: {},
+      endpointTrust: emptyEndpointTrustStatus(),
     });
 
     expect(status.configured).toBe(true);
@@ -66,6 +70,7 @@ describe('VS Code config resolution', () => {
         OPENAI_BASE_URL: 'https://example.test/v1',
         OPENAI_API_KEY: 'env-key',
       },
+      endpointTrust: emptyEndpointTrustStatus(),
     });
 
     expect(status.configured).toBe(true);

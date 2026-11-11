@@ -11,6 +11,7 @@ export interface ApplyPatchParams {
   path: string;
   patches: FilePatch[];
   dryRun?: boolean;
+  skipSyntaxValidation?: boolean;
   __frontagentSecurityApproved?: boolean;
   __frontagentExpectedOriginalHash?: string;
   __frontagentSyntaxValidationEnabled?: boolean;
@@ -29,6 +30,7 @@ export function applyPatch(
     path: filePath,
     patches,
     dryRun = false,
+    skipSyntaxValidation = false,
     __frontagentSecurityApproved = false,
     __frontagentExpectedOriginalHash,
     __frontagentSyntaxValidationEnabled = true,
@@ -68,13 +70,15 @@ export function applyPatch(
     'original',
     'modified',
   );
-  const originalValidation = __frontagentSyntaxValidationEnabled
-    ? validateFileSyntax(originalContent, filePath)
-    : { syntaxValid: true, lintErrors: [], typeErrors: [] };
-  const validation = __frontagentSyntaxValidationEnabled
-    ? validateFileSyntax(projected.content, filePath)
-    : { syntaxValid: true, lintErrors: [], typeErrors: [] };
-  if (!validation.syntaxValid && originalValidation.syntaxValid) {
+  const originalValidation =
+    __frontagentSyntaxValidationEnabled && !skipSyntaxValidation
+      ? validateFileSyntax(originalContent, filePath)
+      : { syntaxChecked: false, syntaxValid: true, lintErrors: [], typeErrors: [] };
+  const validation =
+    __frontagentSyntaxValidationEnabled && !skipSyntaxValidation
+      ? validateFileSyntax(projected.content, filePath)
+      : { syntaxChecked: false, syntaxValid: true, lintErrors: [], typeErrors: [] };
+  if (!dryRun && !validation.syntaxValid && originalValidation.syntaxValid) {
     return {
       success: false,
       diff,
@@ -109,7 +113,7 @@ function failure(error: string, errorCode?: PatchResult['errorCode']): PatchResu
   return {
     success: false,
     diff: '',
-    validation: { syntaxValid: false, lintErrors: [], typeErrors: [] },
+    validation: { syntaxChecked: false, syntaxValid: false, lintErrors: [], typeErrors: [] },
     snapshotId: '',
     error,
     errorCode,
@@ -121,10 +125,16 @@ function failure(error: string, errorCode?: PatchResult['errorCode']): PatchResu
  */
 export const applyPatchSchema = {
   name: 'apply_patch',
-  description: '应用最小化代码补丁到指定文件。支持替换、插入、删除操作。',
+  description:
+    '应用替换、插入、删除补丁。TS/JS/JSON 完整结果先做解析器校验；原文件合法而结果非法时拒绝写盘。原文件已有语法错误时允许部分修复；dryRun 仅预览，success 仅表示投影成功，语法结果见 validation.syntaxChecked/syntaxValid；测试 fixture 可显式设置 skipSyntaxValidation。',
   inputSchema: {
     type: 'object' as const,
     properties: {
+      skipSyntaxValidation: {
+        type: 'boolean',
+        description: '跳过语法校验，用于故意包含无效语法的测试 fixture；默认 false',
+        default: false,
+      },
       path: {
         type: 'string',
         description: '相对于项目根目录的文件路径',

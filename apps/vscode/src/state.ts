@@ -1,4 +1,5 @@
 import type { AgentEvent, AgentExecutionResult } from '@frontagent/runtime-node';
+import { type EndpointTrustStatus, emptyEndpointTrustStatus } from './endpoint-trust.js';
 
 export type ViewStatus = 'idle' | 'scanning' | 'planning' | 'executing' | 'done' | 'error';
 export type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'rolled_back';
@@ -22,6 +23,19 @@ export interface ConfigStatus {
   hasApiKey: boolean;
   configured: boolean;
   missing: MissingConfigField[];
+  /** Whether repository-supplied endpoint settings are pending or blocked. */
+  endpointTrust: EndpointTrustStatus;
+  /**
+   * The user's own values, independent of what the gate resolved. The Configure
+   * form writes to User Settings, so it must prefill from these — prefilling
+   * from the effective values would let one Save turn an approval scoped to a
+   * single workspace into the user's global default.
+   */
+  userScoped: {
+    provider: string | null;
+    model: string | null;
+    baseUrl: string | null;
+  };
 }
 
 export interface ViewStep {
@@ -83,6 +97,8 @@ export const emptyConfigStatus: ConfigStatus = {
   hasApiKey: false,
   configured: false,
   missing: ['provider', 'model', 'baseUrl', 'apiKey'],
+  endpointTrust: emptyEndpointTrustStatus(),
+  userScoped: { provider: null, model: null, baseUrl: null },
 };
 
 export function createInitialViewState(): ViewState {

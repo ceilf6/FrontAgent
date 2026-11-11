@@ -13,6 +13,7 @@ export interface CreateFileParams {
   path: string;
   content: string;
   overwrite?: boolean;
+  skipSyntaxValidation?: boolean;
   __frontagentSecurityApproved?: boolean;
   __frontagentSyntaxValidationEnabled?: boolean;
 }
@@ -36,6 +37,7 @@ export function createFile(
     path: filePath,
     content,
     overwrite = false,
+    skipSyntaxValidation = false,
     __frontagentSecurityApproved = false,
     __frontagentSyntaxValidationEnabled = true,
   } = params;
@@ -64,7 +66,7 @@ export function createFile(
     return { success: false, error: 'File content must be a string' };
   }
 
-  if (__frontagentSyntaxValidationEnabled) {
+  if (__frontagentSyntaxValidationEnabled && !skipSyntaxValidation) {
     const syntaxValidation = validateFileSyntax(content, filePath);
     if (!syntaxValidation.syntaxValid) {
       return { success: false, error: syntaxValidationError(syntaxValidation, filePath) };
@@ -144,10 +146,16 @@ function isAlreadyExistsError(error: unknown): error is NodeJS.ErrnoException {
  */
 export const createFileSchema = {
   name: 'create_file',
-  description: '创建新文件。如果目录不存在会自动创建。',
+  description:
+    '创建新文件并自动创建目录。TS/JS/JSON 内容先做解析器校验，失败则不写盘；测试 fixture 可显式设置 skipSyntaxValidation。',
   inputSchema: {
     type: 'object' as const,
     properties: {
+      skipSyntaxValidation: {
+        type: 'boolean',
+        description: '跳过语法校验，用于故意包含无效语法的测试 fixture；默认 false',
+        default: false,
+      },
       path: {
         type: 'string',
         description: '相对于项目根目录的文件路径',

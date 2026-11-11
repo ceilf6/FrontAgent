@@ -162,6 +162,37 @@ describe('consoleReducer', () => {
     expect(denied.log.at(-1)?.text).toContain('run_command');
   });
 
+  it('labels all validation failure stages distinctly', () => {
+    const result = {
+      pass: false,
+      results: [{ pass: false, type: 'syntax_validity', severity: 'block' as const }],
+      blockedBy: ['invalid content'],
+    };
+
+    const preExecution = consoleReducer(initialConsoleState, {
+      type: 'validation_failed',
+      stage: 'pre_execution',
+      result,
+      path: 'src/a.ts',
+    });
+    const preWrite = consoleReducer(initialConsoleState, {
+      type: 'validation_failed',
+      stage: 'pre_write',
+      result,
+      path: 'src/a.ts',
+    });
+    const postWrite = consoleReducer(initialConsoleState, {
+      type: 'validation_failed',
+      stage: 'post_write',
+      result,
+      path: 'src/a.ts',
+    });
+
+    expect(preExecution.log.at(-1)?.text).toContain('执行前校验失败');
+    expect(preWrite.log.at(-1)?.text).toContain('写盘前拦截');
+    expect(postWrite.log.at(-1)?.text).toContain('写盘后校验失败');
+  });
+
   it('completes and fails the run terminally', () => {
     const done = consoleReducer(
       { ...initialConsoleState, status: 'running', activeStepId: 's1' },

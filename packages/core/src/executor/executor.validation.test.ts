@@ -29,7 +29,8 @@ function makeConfig(overrides: Partial<ExecutorConfig> = {}): ExecutorConfig {
     projectRoot: '/test',
     hallucinationGuard: {
       validateFilePath: vi.fn(),
-      validateCode: vi.fn(),
+      validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
+      validateImports: vi.fn(),
       isCheckEnabled: () => true,
     } as unknown as ExecutorConfig['hallucinationGuard'],
     llmService: {
@@ -130,13 +131,14 @@ describe('Executor write validation', () => {
       try {
         mkdirSync(join(projectRoot, 'src'), { recursive: true });
         const content = 'export const a = 1;\n';
-        const validateCode = vi.fn().mockResolvedValue({ pass: true, results: [] });
+        const validateImports = vi.fn().mockResolvedValue({ pass: true, results: [] });
         const executor = new Executor(
           makeConfig({
             projectRoot,
             hallucinationGuard: {
               validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
-              validateCode,
+              validateImports,
+              validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
               isCheckEnabled: () => true,
             } as unknown as ExecutorConfig['hallucinationGuard'],
             getFileSystemFacts: () => ({
@@ -164,7 +166,7 @@ describe('Executor write validation', () => {
 
         // 落盘的正是被校验过的那份，所以写盘后不再跑第二次 guard
         expect(readFileSync(join(projectRoot, 'src', 'a.ts'), 'utf-8')).toBe(content);
-        expect(validateCode).toHaveBeenCalledTimes(1);
+        expect(validateImports).toHaveBeenCalledTimes(1);
         expect(callTool).toHaveBeenCalledTimes(1);
         expect(result.stepResult.success).toBe(true);
       } finally {
@@ -191,6 +193,8 @@ describe('Executor write validation', () => {
         );
         // 真实工具的返回形状：只有 success + snapshotId，内容靠落盘体现
         const callTool = vi.fn().mockImplementation((tool: string) => {
+          if (tool === 'read_file')
+            return Promise.resolve({ success: true, content: readFileSync(target, 'utf-8') });
           if (tool === 'rollback') {
             writeFileSync(target, original);
             return Promise.resolve({ success: true, message: 'rolled back' });
@@ -200,16 +204,19 @@ describe('Executor write validation', () => {
         });
         executor.registerMCPClient('files', { callTool, listTools: vi.fn().mockResolvedValue([]) });
         executor.registerToolMapping('apply_patch', 'files');
+        executor.registerToolMapping('read_file', 'files');
         executor.registerToolMapping('rollback', 'files');
 
         const result = await executor.executeStep(
           makeStep({
             action: 'apply_patch',
             tool: 'apply_patch',
-            // 局部行补丁：写盘前内容不可知，落到写盘后判定
+            // The tool writes different content from the valid preflight projection.
             params: {
               path: 'src/a.ts',
-              patches: [{ operation: 'replace', startLine: 2, endLine: 2, content: '```ts' }],
+              patches: [
+                { operation: 'replace', startLine: 2, endLine: 2, content: 'export const a = 2;' },
+              ],
             },
           }),
           makeExecutionContext({
@@ -233,12 +240,13 @@ describe('Executor write validation', () => {
     it('does not emit validation_failed when only the tool itself failed', async () => {
       const events: AgentEvent[] = [];
       // 内容本身没问题：失败只来自工具
-      const validateCode = vi.fn().mockResolvedValue({ pass: true, results: [] });
+      const validateImports = vi.fn().mockResolvedValue({ pass: true, results: [] });
       const executor = new Executor(
         makeConfig({
           hallucinationGuard: {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
-            validateCode,
+            validateImports,
+            validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
             isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
           emitEvent: (event) => events.push(event),
@@ -296,7 +304,13 @@ describe('Executor write validation', () => {
           }),
         );
         // 必须带 snapshotId：没有它 rollbackFailedWrite 直接短路，用例形同虚设
-        const callTool = vi.fn().mockResolvedValue({ success: true, snapshotId: 'snap-1' });
+        const callTool = vi
+          .fn()
+          .mockImplementation(async (tool: string) =>
+            tool === 'read_file'
+              ? { success: true, content: 'export const a = 1;\nexport const b = 2;\n' }
+              : { success: true, snapshotId: 'snap-1' },
+          );
         executor.registerMCPClient('files', {
           callTool,
           listTools: vi.fn().mockResolvedValue([]),
@@ -380,12 +394,19 @@ describe('Executor write validation', () => {
             emitEvent: (event) => events.push(event),
           }),
         );
-        const callTool = vi.fn().mockResolvedValue({ success: true, snapshotId: 'snap-1' });
+        const callTool = vi
+          .fn()
+          .mockImplementation(async (tool: string) =>
+            tool === 'read_file'
+              ? { success: true, content: 'export const a = 1;\nexport const b = 2;\n' }
+              : { success: true, snapshotId: 'snap-1' },
+          );
         executor.registerMCPClient('files', {
           callTool,
           listTools: vi.fn().mockResolvedValue([]),
         });
         executor.registerToolMapping('apply_patch', 'files');
+        executor.registerToolMapping('read_file', 'files');
 
         const original = 'export const a = 1;\nexport const b = 2;\n';
         const result = await executor.executeStep(
@@ -410,7 +431,7 @@ describe('Executor write validation', () => {
         );
 
         // 写工具从未被调用 → 坏内容根本没到磁盘，不必依赖回滚兜底
-        expect(callTool).not.toHaveBeenCalled();
+        expect(callTool).not.toHaveBeenCalledWith('apply_patch', expect.anything());
         expect(existsSync(join(projectRoot, 'src/a.tsx'))).toBe(false);
         expect(result.stepResult.error).toContain('Pre-write validation failed');
         expect(events.map((event) => event.type)).toEqual(['validation_failed']);
@@ -423,21 +444,23 @@ describe('Executor write validation', () => {
     // `{path, content, patches}` 是可达状态。若 content 能兜底，校验的就是一份
     // 不会被写入的内容，而真正落盘的补丁内容一次都不过 guard。
     it('validates the patch content, not a leftover content param, on apply_patch', async () => {
-      const validateCode = vi.fn().mockResolvedValue({ pass: true, results: [] });
+      const validateImports = vi.fn().mockResolvedValue({ pass: true, results: [] });
       const executor = new Executor(
         makeConfig({
           hallucinationGuard: {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
-            validateCode,
+            validateImports,
+            validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
             isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
         }),
       );
       executor.registerMCPClient('files', {
-        callTool: vi.fn().mockResolvedValue({ success: true }),
+        callTool: vi.fn().mockResolvedValue({ success: true, content: 'export const a = 1;\n' }),
         listTools: vi.fn().mockResolvedValue([]),
       });
       executor.registerToolMapping('apply_patch', 'files');
+      executor.registerToolMapping('read_file', 'files');
 
       const original = 'export const a = 1;\n';
       await executor.executeStep(
@@ -462,9 +485,9 @@ describe('Executor write validation', () => {
         }),
       );
 
-      expect(validateCode).toHaveBeenCalledTimes(1);
-      expect(validateCode.mock.calls[0]?.[0]).toContain('ACTUALLY_WRITTEN');
-      expect(validateCode.mock.calls[0]?.[0]).not.toContain('NEVER_WRITTEN');
+      expect(validateImports).toHaveBeenCalledTimes(1);
+      expect(validateImports.mock.calls[0]?.[0]).toContain('ACTUALLY_WRITTEN');
+      expect(validateImports.mock.calls[0]?.[0]).not.toContain('NEVER_WRITTEN');
     });
   });
 
@@ -489,6 +512,8 @@ describe('Executor write validation', () => {
           }),
         );
         const callTool = vi.fn().mockImplementation((tool: string) => {
+          if (tool === 'read_file')
+            return Promise.resolve({ success: true, content: readFileSync(target, 'utf-8') });
           if (tool === 'rollback') {
             return Promise.resolve({ success: true, message: 'rolled back' });
           }
@@ -497,6 +522,7 @@ describe('Executor write validation', () => {
         });
         executor.registerMCPClient('files', { callTool, listTools: vi.fn().mockResolvedValue([]) });
         executor.registerToolMapping('apply_patch', 'files');
+        executor.registerToolMapping('read_file', 'files');
         executor.registerToolMapping('rollback', 'files');
 
         const result = await executor.executeStep(
@@ -505,7 +531,9 @@ describe('Executor write validation', () => {
             tool: 'apply_patch',
             params: {
               path: 'src/a.ts',
-              patches: [{ operation: 'replace', startLine: 2, endLine: 2, content: '```ts' }],
+              patches: [
+                { operation: 'replace', startLine: 2, endLine: 2, content: 'export const a = 2;' },
+              ],
             },
           }),
           makeExecutionContext({
@@ -605,10 +633,7 @@ describe('Executor write validation', () => {
       });
     }
 
-    // 已知残留误报，钉住而不是假装不存在：判据是逐行正则，不识别上下文，所以
-    // 一份把 markdown 示例放进多行模板字符串的合法 .ts（prompt 常量最容易长成
-    // 这样）会被当成围栏挡下。#413 换成真 parser 后这条用例应当反转成「不再拦」。
-    it('pins the known template-literal false positive', async () => {
+    it('rejects unescaped backticks inside a template literal', async () => {
       const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-tmpl-fence-'));
       try {
         mkdirSync(join(projectRoot, 'src'), { recursive: true });
@@ -629,16 +654,15 @@ describe('Executor write validation', () => {
           makeStep({
             params: {
               path: 'src/prompt.ts',
-              // 合法 TS：围栏在模板字符串里面
+              // Unescaped backticks terminate the template and make this source invalid.
               content: 'export const PROMPT = `\nReply with:\n```ts\nconst a = 1;\n```\n`;\n',
             },
           }),
           makeExecutionContext(),
         );
 
-        // 当前行为：被挡下且中止剩余计划。这是取舍，不是意外。
         expect(callTool).not.toHaveBeenCalled();
-        expect(result.stepResult.error).toContain('Markdown code fence');
+        expect(result.stepResult.error).toContain('Syntax errors');
         expect(result.needsRollback).toBe(true);
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
@@ -673,7 +697,7 @@ describe('Executor write validation', () => {
         );
 
         expect(callTool).not.toHaveBeenCalled();
-        expect(result.stepResult.error).toContain('Markdown code fence');
+        expect(result.stepResult.error).toContain('Syntax errors');
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }
@@ -712,7 +736,7 @@ describe('Executor write validation', () => {
         // `syntaxValidity: false` 就关不掉写盘否决——正是 #386 让七月消融基准
         // guard 臂失效的机制。
         expect(callTool).toHaveBeenCalledTimes(1);
-        expect(result.stepResult.error ?? '').not.toContain('Markdown code fence');
+        expect(result.stepResult.error ?? '').not.toContain('Syntax errors');
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }
@@ -746,7 +770,7 @@ describe('Executor write validation', () => {
         );
 
         expect(callTool).toHaveBeenCalledTimes(1);
-        expect(result.stepResult.error ?? '').not.toContain('Markdown code fence');
+        expect(result.stepResult.error ?? '').not.toContain('Syntax errors');
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }
@@ -765,11 +789,13 @@ describe('Executor write validation', () => {
             hallucinationGuard: new HallucinationGuard({ projectRoot }),
           }),
         );
-        // 之前 apply_patch 从不进入 validateCode；本 PR 让它进了，于是这个
+        // 之前 apply_patch 从不进入 validateImports；本 PR 让它进了，于是这个
         // 逐行数引号奇偶的检查器第一次能判 modify 步骤成败——而它对 "it's fine"
         // 必然判 block（issue #413 实测）。写盘后的 syntax_validity 判定因此被剔除。
         const patched = 'export const msg = "it\'s fine";\n';
-        const callTool = vi.fn().mockImplementation(() => {
+        const callTool = vi.fn().mockImplementation((tool: string) => {
+          if (tool === 'read_file')
+            return Promise.resolve({ success: true, content: readFileSync(target, 'utf-8') });
           writeFileSync(target, patched);
           return Promise.resolve({ success: true, snapshotId: 'snap-1' });
         });
@@ -778,6 +804,7 @@ describe('Executor write validation', () => {
           listTools: vi.fn().mockResolvedValue([]),
         });
         executor.registerToolMapping('apply_patch', 'files');
+        executor.registerToolMapping('read_file', 'files');
         executor.registerToolMapping('rollback', 'files');
 
         const result = await executor.executeStep(
@@ -813,7 +840,7 @@ describe('Executor write validation', () => {
   // repo-guard 在 #402 上指出的三条空白。前两条锁住「哪些判据可以决定步骤成败」，
   // 第三条把中止语义从单步层推到调度层——它们各自对应一次真实的行为改变。
   describe('which verdicts may decide a write step', () => {
-    // 修复前 apply_patch 的内容根本到不了 validateCode（计划 schema 不发 patches，
+    // 修复前 apply_patch 的内容根本到不了 validateImports（计划 schema 不发 patches，
     // content 三个来源全 undefined），所以 import 检查从未约束过补丁路径。
     // resolveWriteContent 让整文件 replace 第一次可校验；如果顺手把 block 权也给
     // import_validity，一个合法的 modify 步骤就会失败，needsRollback 再把剩余计划
@@ -846,13 +873,14 @@ describe('Executor write validation', () => {
               writeFileSync(target, patched);
               return { success: true, snapshotId: 'snap-1' };
             }
-            return { success: true };
+            return { success: true, content: readFileSync(target, 'utf-8') };
           });
           executor.registerMCPClient('files', {
             callTool,
             listTools: vi.fn().mockResolvedValue([]),
           });
           executor.registerToolMapping('apply_patch', 'files');
+          executor.registerToolMapping('read_file', 'files');
 
           const result = await executor.executeStep(
             makeStep({
@@ -923,7 +951,7 @@ describe('Executor write validation', () => {
         expect(result.needsRollback).toBe(true);
         expect(
           events.filter(
-            (event) => event.type === 'validation_failed' && event.stage === 'post_write',
+            (event) => event.type === 'validation_failed' && event.stage === 'pre_write',
           ),
         ).toHaveLength(1);
       } finally {
@@ -932,7 +960,7 @@ describe('Executor write validation', () => {
     });
 
     // 反过来：apply_patch 上降级等于保持原状，那条路径此前内容根本到不了
-    // validateCode，所以同一个语法错误不该让 modify 步骤失败。
+    // validateImports，所以同一个语法错误不该让 modify 步骤失败。
     it('does not fail an apply_patch over a demoted syntax verdict', async () => {
       const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-patch-syntax-'));
       try {
@@ -964,6 +992,7 @@ describe('Executor write validation', () => {
         });
         executor.registerToolMapping('apply_patch', 'files');
         executor.registerToolMapping('read_file', 'files');
+        executor.registerToolMapping('read_file', 'files');
 
         const result = await executor.executeStep(
           makeStep({
@@ -994,10 +1023,7 @@ describe('Executor write validation', () => {
       }
     });
 
-    // 前置校验只覆盖「整文件 replace」——只改局部行的补丁最终内容要落盘才知道，
-    // resolveFullFileReplaceContent 对它返回 undefined。#387 对补丁路径的保护
-    // 因此是有条件的，该降级路径必须仍然落到写盘后判定，而不是静默变成「不校验」。
-    it('falls back to post-write validation for a partial-line patch', async () => {
+    it('rejects invalid partial-line projections before writing', async () => {
       const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-patch-partial-'));
       try {
         mkdirSync(join(projectRoot, 'src'), { recursive: true });
@@ -1028,6 +1054,7 @@ describe('Executor write validation', () => {
         });
         executor.registerToolMapping('apply_patch', 'files');
         executor.registerToolMapping('read_file', 'files');
+        executor.registerToolMapping('read_file', 'files');
 
         const result = await executor.executeStep(
           makeStep({
@@ -1035,9 +1062,9 @@ describe('Executor write validation', () => {
             tool: 'apply_patch',
             params: {
               path: 'src/a.ts',
-              // startLine 2：不是整文件替换，写盘前算不出最终内容
+              // A partial patch still has a complete, deterministic preflight projection.
               patches: [
-                { operation: 'replace', startLine: 2, endLine: 2, content: '```ts\nb\n```\n' },
+                { operation: 'replace', startLine: 2, endLine: 2, content: 'const broken = ;' },
               ],
             },
           }),
@@ -1046,20 +1073,19 @@ describe('Executor write validation', () => {
           }),
         );
 
-        // 写盘前没拦住（工具确实被调用了），但写盘后的围栏判据抓到并判失败。
-        expect(callTool).toHaveBeenCalledWith('apply_patch', expect.anything());
+        expect(callTool).not.toHaveBeenCalledWith('apply_patch', expect.anything());
         expect(result.stepResult.success).toBe(false);
-        expect(result.stepResult.error).toContain('Markdown code fence');
+        expect(result.stepResult.error).toContain('Syntax errors');
         expect(
           events.filter(
             (event) => event.type === 'validation_failed' && event.stage === 'post_write',
           ),
-        ).toHaveLength(1);
+        ).toHaveLength(0);
         expect(
           events.filter(
             (event) => event.type === 'validation_failed' && event.stage === 'pre_write',
           ),
-        ).toHaveLength(0);
+        ).toHaveLength(1);
       } finally {
         rmSync(projectRoot, { recursive: true, force: true });
       }
@@ -1131,7 +1157,7 @@ describe('Executor write validation', () => {
             hallucinationGuard: {
               validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
               // 内容判定失败，但落盘内容读不回来（工具报成功却没有真的写）
-              validateCode: vi.fn().mockResolvedValue({
+              validateImports: vi.fn().mockResolvedValue({
                 pass: false,
                 results: [
                   {
@@ -1143,6 +1169,7 @@ describe('Executor write validation', () => {
                 ],
                 blockedBy: ['Cannot resolve ./missing.js'],
               }),
+              validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
               isCheckEnabled: () => true,
             } as unknown as ExecutorConfig['hallucinationGuard'],
             security: { permissions: { allow: ['rollback'] } },
@@ -1233,7 +1260,7 @@ describe('Executor write validation', () => {
     //
     // 判据刻意不用围栏：围栏是**独立**于 postValidation 的失败来源，无论走复用
     // 还是重校验都会被抓到，用它做断言这条用例就测不到分支本身。改用只有
-    // validateCode 才产出的 import 判定——它在 apply_patch 上被降级，所以步骤照常
+    // validateImports 才产出的 import 判定——它在 apply_patch 上被降级，所以步骤照常
     // 成功，但会出现在 validation_failed 的载荷里，那正是重校验唯一的可观测差异。
     it('revalidates against what landed, not against what was checked', async () => {
       const projectRoot = mkdtempSync(join(tmpdir(), 'frontagent-stale-snapshot-'));
@@ -1266,6 +1293,7 @@ describe('Executor write validation', () => {
           listTools: vi.fn().mockResolvedValue([]),
         });
         executor.registerToolMapping('apply_patch', 'files');
+        executor.registerToolMapping('read_file', 'files');
         executor.registerToolMapping('read_file', 'files');
 
         const result = await executor.executeStep(
@@ -1339,6 +1367,7 @@ describe('Executor write validation', () => {
           listTools: vi.fn().mockResolvedValue([]),
         });
         executor.registerToolMapping('apply_patch', 'files');
+        executor.registerToolMapping('read_file', 'files');
         executor.registerToolMapping('read_file', 'files');
 
         const result = await executor.executeStep(

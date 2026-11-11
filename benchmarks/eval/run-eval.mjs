@@ -291,6 +291,12 @@ for (const task of tasks) {
         // 只按 type 聚合的话，事件加了 stage 也等于白加。
         if (e.stage) {
           events[`${e.type}:${e.stage}`] = (events[`${e.type}:${e.stage}`] ?? 0) + 1;
+          if (e.type === 'validation_failed') {
+            for (const check of (e.result?.results ?? []).filter((result) => !result.pass)) {
+              const typedKey = `${e.type}:${e.stage}:${check.type}`;
+              events[typedKey] = (events[typedKey] ?? 0) + 1;
+            }
+          }
         }
         collectEventDetail(eventDetails, e);
       },

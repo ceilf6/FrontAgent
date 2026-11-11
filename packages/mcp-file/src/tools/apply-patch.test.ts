@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -315,6 +316,107 @@ describe('applyPatch line-range validation', () => {
     expect(readFixture(root)).toBe('line1\ninserted\nline4\nline5');
   });
 
+  it('accepts the expected original hash and rejects a stale patch base before snapshot creation', () => {
+    const root = makeRoot();
+    makeFixture(root);
+    const matchingManager = new SnapshotManager(root);
+    const matchingHash = createHash('sha256').update(FIXTURE, 'utf8').digest('hex');
+
+    const accepted = applyPatch(
+      {
+        path: 'src/sample.ts',
+        patches: [{ operation: 'replace', startLine: 2, content: 'patched' }],
+        __frontagentExpectedOriginalHash: matchingHash,
+      },
+      root,
+      matchingManager,
+    );
+    expect(accepted.success).toBe(true);
+
+    writeFileSync(join(root, 'src/sample.ts'), FIXTURE, 'utf-8');
+    const staleManager = new SnapshotManager(root);
+    const rejected = applyPatch(
+      {
+        path: 'src/sample.ts',
+        patches: [{ operation: 'replace', startLine: 2, content: 'corrupted' }],
+        __frontagentExpectedOriginalHash: 'stale-hash',
+      },
+      root,
+      staleManager,
+    );
+
+    expect(rejected.success).toBe(false);
+    expect(rejected.error).toMatch(/changed since executor preflight/i);
+    expect(rejected.errorCode).toBe('stale_original_hash');
+    expect(rejected.snapshotId).toBe('');
+    expect(staleManager.getFileSnapshots(join(root, 'src/sample.ts'))).toHaveLength(0);
+    expect(readFixture(root)).toBe(FIXTURE);
+  });
+
+  it('rejects invalid projected syntax before writing or creating a snapshot', () => {
+    const root = makeRoot();
+    makeFixture(root);
+    const snapshotManager = new SnapshotManager(root);
+
+    const result = applyPatch(
+      {
+        path: 'src/sample.ts',
+        patches: [{ operation: 'replace', startLine: 1, endLine: 5, content: 'const x = ;' }],
+      },
+      root,
+      snapshotManager,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.validation.syntaxValid).toBe(false);
+    expect(result.snapshotId).toBe('');
+    expect(result.diff).toContain('const x = ;');
+    expect(snapshotManager.getFileSnapshots(join(root, 'src/sample.ts'))).toHaveLength(0);
+    expect(readFixture(root)).toBe(FIXTURE);
+  });
+
+  it('allows a patch to improve an already-invalid source file', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'src'), { recursive: true });
+    const target = join(root, 'src', 'broken.ts');
+    writeFileSync(target, 'export const broken = {\nconst keep = 1;', 'utf-8');
+
+    const result = applyPatch(
+      {
+        path: 'src/broken.ts',
+        patches: [{ operation: 'replace', startLine: 2, content: 'const keep = 2;' }],
+      },
+      root,
+      new SnapshotManager(root),
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.validation.syntaxValid).toBe(false);
+    expect(readFileSync(target, 'utf-8')).toContain('const keep = 2;');
+  });
+
+  it('reports parser-backed syntax validation for a dry-run preview', () => {
+    const root = makeRoot();
+    makeFixture(root);
+
+    const result = applyPatch(
+      {
+        path: 'src/sample.ts',
+        patches: [{ operation: 'replace', startLine: 1, endLine: 5, content: 'const x = ;' }],
+        dryRun: true,
+      },
+      root,
+      new SnapshotManager(root),
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.validation.syntaxValid).toBe(false);
+    expect(result.validation.lintErrors[0]).toEqual(
+      expect.objectContaining({ rule: expect.stringMatching(/^syntax\//), severity: 'error' }),
+    );
+    expect(readFixture(root)).toBe(FIXTURE);
+  });
+
   it('rejects the whole patch set before creating a snapshot when any patch is invalid', () => {
     const root = makeRoot();
     makeFixture(root);
@@ -337,4 +439,23 @@ describe('applyPatch line-range validation', () => {
     expect(snapshotManager.getFileSnapshots(join(root, 'src/sample.ts'))).toHaveLength(0);
     expect(readFixture(root)).toBe(FIXTURE);
   });
+});
+
+it('reports unchecked syntax when an external caller deliberately patches an invalid fixture', async () => {
+  const { stripInternalArgs } = await import('../internal-args.js');
+  const root = makeRoot();
+  writeFileSync(join(root, 'fixture.ts'), 'const x = 1;');
+  const args = stripInternalArgs({
+    path: 'fixture.ts',
+    patches: [{ operation: 'replace', startLine: 1, content: 'const x = ;' }],
+    skipSyntaxValidation: true,
+  });
+  const result = applyPatch(
+    args as unknown as import('./apply-patch.js').ApplyPatchParams,
+    root,
+    new SnapshotManager(root),
+  );
+  expect(result.success).toBe(true);
+  expect(result.validation.syntaxChecked).toBe(false);
+  expect(readFileSync(join(root, 'fixture.ts'), 'utf8')).toBe('const x = ;');
 });

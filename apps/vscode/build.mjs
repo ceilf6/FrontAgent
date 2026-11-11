@@ -8,6 +8,8 @@ await build({
   target: 'node20',
   format: 'cjs',
   outfile: resolve('dist/extension.cjs'),
+  // Keep runtime dependencies bundled: VSIX packaging uses --no-dependencies
+  // and excludes node_modules, so externalizing TypeScript would break activation.
   external: ['vscode', 'playwright'],
   define: {
     'import.meta.url': '__frontAgentImportMetaUrl',

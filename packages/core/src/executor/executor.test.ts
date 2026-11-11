@@ -5,6 +5,7 @@ import { HallucinationGuard } from '@frontagent/hallucination-guard';
 import type { AgentTask, ExecutionStep } from '@frontagent/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { ExecutorActionSkill } from '../skills/index.js';
+import type { AgentEvent } from '../types.js';
 import { createExecutor, Executor } from './executor.js';
 import { ExecutorToolCallHandler } from './tool-call-handler.js';
 import type { ExecutorCollectedContext, ExecutorConfig } from './types.js';
@@ -29,8 +30,10 @@ function makeConfig(overrides: Partial<ExecutorConfig> = {}): ExecutorConfig {
     projectRoot: '/test',
     hallucinationGuard: {
       validateFilePath: vi.fn(),
+      isCheckEnabled: vi.fn().mockReturnValue(true),
+      validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
+      validateImports: vi.fn().mockResolvedValue({ pass: true, results: [] }),
       validateCode: vi.fn(),
-      isCheckEnabled: () => true,
     } as unknown as ExecutorConfig['hallucinationGuard'],
     llmService: {
       name: 'test',
@@ -346,7 +349,6 @@ describe('Executor', () => {
               message: 'File src/missing.ts does not exist',
             }),
             validateCode: vi.fn(),
-            isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
         }),
       );
@@ -383,7 +385,6 @@ describe('Executor', () => {
               severity: 'info',
             }),
             validateCode: vi.fn(),
-            isCheckEnabled: () => true,
           } as unknown as ExecutorConfig['hallucinationGuard'],
         }),
       );
@@ -452,6 +453,7 @@ describe('Executor', () => {
         expect(callTool).toHaveBeenCalledWith('create_file', {
           path: 'src/broken.ts',
           content: invalidContent,
+          __frontagentSyntaxValidationEnabled: false,
         });
         expect(result.stepResult.success).toBe(true);
         expect(result.validation).toEqual({ pass: true, results: [], blockedBy: undefined });
@@ -531,6 +533,359 @@ describe('Executor', () => {
     });
   });
 
+  describe('pre-write validation (#387)', () => {
+    function projectFacts() {
+      return {
+        existingFiles: new Set<string>(),
+        existingDirectories: new Set(['src']),
+        nonExistentPaths: new Set<string>(),
+        directoryContents: new Map<string, string[]>(),
+      };
+    }
+
+    it('rejects invalid create_file content before invoking the MCP client', async () => {
+      const events: AgentEvent[] = [];
+      const callTool = vi.fn().mockResolvedValue({ success: true });
+      const executor = new Executor(
+        makeConfig({
+          getFileSystemFacts: projectFacts,
+          hallucinationGuard: new HallucinationGuard({
+            projectRoot: '/test',
+            enabledChecks: { importValidity: false, fileExistence: false },
+          }),
+          emitEvent: (event) => events.push(event),
+        }),
+      );
+      executor.registerMCPClient('files', {
+        callTool,
+        listTools: vi.fn().mockResolvedValue([]),
+      });
+      executor.registerToolMapping('create_file', 'files');
+
+      const result = await executor.executeStep(
+        makeStep({
+          validation: [],
+          params: { path: 'src/broken.ts', content: 'export const broken = {' },
+        }),
+        makeExecutionContext(),
+      );
+
+      expect(callTool).not.toHaveBeenCalled();
+      expect(result.stepResult.success).toBe(false);
+      expect(result.needsRollback).toBe(true);
+      expect(events).toEqual([
+        expect.objectContaining({
+          type: 'validation_failed',
+          stage: 'pre_write',
+          path: 'src/broken.ts',
+        }),
+      ]);
+    });
+
+    it('allows valid JSONC configuration content through pre-write validation', async () => {
+      const callTool = vi.fn().mockResolvedValue({ success: true });
+      const executor = new Executor(
+        makeConfig({
+          getFileSystemFacts: projectFacts,
+          hallucinationGuard: new HallucinationGuard({
+            projectRoot: '/test',
+            enabledChecks: { importValidity: false, fileExistence: false },
+          }),
+        }),
+      );
+      executor.registerMCPClient('files', {
+        callTool,
+        listTools: vi.fn().mockResolvedValue([]),
+      });
+      executor.registerToolMapping('create_file', 'files');
+
+      const content = '{\n  // compiler settings\n  "compilerOptions": { "strict": true, },\n}';
+      const result = await executor.executeStep(
+        makeStep({ params: { path: 'tsconfig.json', content } }),
+        makeExecutionContext(),
+      );
+
+      expect(result.stepResult.success).toBe(true);
+      expect(callTool).toHaveBeenCalledWith('create_file', {
+        path: 'tsconfig.json',
+        content,
+        __frontagentSyntaxValidationEnabled: true,
+      });
+    });
+
+    it('does not update collected context after a successful dry-run patch', async () => {
+      const original = 'export const value = 1;';
+      const callTool = vi
+        .fn()
+        .mockImplementation(async (name: string) =>
+          name === 'read_file'
+            ? { success: true, content: original }
+            : { success: true, snapshotId: '', validation: { syntaxValid: true } },
+        );
+      const executor = new Executor(
+        makeConfig({
+          getFileSystemFacts: () => ({ ...projectFacts(), existingFiles: new Set(['src/a.ts']) }),
+          hallucinationGuard: new HallucinationGuard({
+            projectRoot: '/test',
+            enabledChecks: { importValidity: false, fileExistence: false },
+          }),
+        }),
+      );
+      executor.registerMCPClient('files', { callTool, listTools: vi.fn().mockResolvedValue([]) });
+      executor.registerToolMapping('read_file', 'files');
+      executor.registerToolMapping('apply_patch', 'files');
+      const context = makeExecutionContext({
+        collectedContext: { files: new Map([['src/a.ts', original]]) },
+      });
+
+      const result = await executor.executeStep(
+        makeStep({
+          action: 'apply_patch',
+          tool: 'apply_patch',
+          params: {
+            path: 'src/a.ts',
+            dryRun: true,
+            patches: [{ operation: 'replace', startLine: 1, content: 'export const value = 2;' }],
+          },
+        }),
+        context,
+      );
+
+      expect(result.stepResult.success).toBe(true);
+      expect(context.collectedContext.files.get('src/a.ts')).toBe(original);
+    });
+
+    it('projects arbitrary patches, ignores stale content, and binds the original hash', async () => {
+      const original = 'export const first = 1;\nexport const second = 2;';
+      const callTool = vi
+        .fn()
+        .mockImplementation(async (name: string) =>
+          name === 'read_file'
+            ? { success: true, content: original }
+            : { success: true, snapshotId: 'snap-1' },
+        );
+      const guard = new HallucinationGuard({
+        projectRoot: '/test',
+        enabledChecks: { importValidity: false, fileExistence: false },
+      });
+      const executor = new Executor(
+        makeConfig({
+          getFileSystemFacts: () => ({
+            ...projectFacts(),
+            existingFiles: new Set(['src/value.ts']),
+          }),
+          hallucinationGuard: guard,
+        }),
+      );
+      executor.registerMCPClient('files', {
+        callTool,
+        listTools: vi.fn().mockResolvedValue([]),
+      });
+      executor.registerToolMapping('apply_patch', 'files');
+      executor.registerToolMapping('read_file', 'files');
+      const context = makeExecutionContext({
+        collectedContext: { files: new Map([['src/value.ts', original]]) },
+      });
+
+      const result = await executor.executeStep(
+        makeStep({
+          action: 'apply_patch',
+          tool: 'apply_patch',
+          params: {
+            path: 'src/value.ts',
+            content: 'export const stale = {',
+            patches: [
+              { operation: 'replace', startLine: 1, content: 'export const first = 3;' },
+              { operation: 'insert', startLine: 3, content: 'export const third = 4;' },
+            ],
+          },
+        }),
+        context,
+      );
+
+      expect(result.stepResult.success).toBe(true);
+      expect(callTool).toHaveBeenCalledWith(
+        'apply_patch',
+        expect.objectContaining({
+          path: 'src/value.ts',
+          __frontagentExpectedOriginalHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+      );
+      expect(context.collectedContext.files.get('src/value.ts')).toBe(
+        'export const first = 3;\nexport const second = 2;\nexport const third = 4;',
+      );
+    });
+
+    it('binds non-code patches to the refreshed original and updates context', async () => {
+      const original = '# title\nold';
+      const projected = '# title\nnew';
+      const callTool = vi
+        .fn()
+        .mockImplementation(async (name: string) =>
+          name === 'read_file'
+            ? { success: true, content: original }
+            : { success: true, snapshotId: 'snap-md' },
+        );
+      const executor = new Executor(
+        makeConfig({
+          getFileSystemFacts: () => ({ ...projectFacts(), existingFiles: new Set(['README.md']) }),
+        }),
+      );
+      executor.registerMCPClient('files', { callTool, listTools: vi.fn().mockResolvedValue([]) });
+      executor.registerToolMapping('read_file', 'files');
+      executor.registerToolMapping('apply_patch', 'files');
+      const context = makeExecutionContext({
+        collectedContext: { files: new Map([['README.md', original]]) },
+      });
+
+      const result = await executor.executeStep(
+        makeStep({
+          action: 'apply_patch',
+          tool: 'apply_patch',
+          params: {
+            path: 'README.md',
+            patches: [{ operation: 'replace', startLine: 2, content: 'new' }],
+          },
+        }),
+        context,
+      );
+
+      expect(result.stepResult.success).toBe(true);
+      expect(callTool).toHaveBeenCalledWith(
+        'apply_patch',
+        expect.objectContaining({ __frontagentExpectedOriginalHash: expect.any(String) }),
+      );
+      expect(context.collectedContext.files.get('README.md')).toBe(projected);
+    });
+
+    it('keeps deferral state out of the plan and allows resume with the refreshed base', async () => {
+      const original = 'export const value = 1;';
+      const callTool = vi
+        .fn()
+        .mockImplementation(async (name: string) =>
+          name === 'read_file'
+            ? { success: true, content: original }
+            : { success: true, snapshotId: 'snap-1' },
+        );
+      const executor = new Executor(
+        makeConfig({
+          getFileSystemFacts: () => ({ ...projectFacts(), existingFiles: new Set(['src/a.ts']) }),
+          hallucinationGuard: new HallucinationGuard({
+            projectRoot: '/test',
+            enabledChecks: { importValidity: false, fileExistence: false },
+          }),
+        }),
+      );
+      executor.registerMCPClient('files', { callTool, listTools: vi.fn().mockResolvedValue([]) });
+      executor.registerToolMapping('read_file', 'files');
+      executor.registerToolMapping('apply_patch', 'files');
+
+      const step = makeStep({
+        action: 'apply_patch',
+        tool: 'apply_patch',
+        params: {
+          path: 'src/a.ts',
+          patches: [{ operation: 'replace', startLine: 1, content: 'export const value = 2;' }],
+        },
+      });
+
+      const firstRun = await executor.executeStep(
+        step,
+        makeExecutionContext({
+          collectedContext: { files: new Map([['src/a.ts', original]]) },
+        }),
+        { deferredSameTargetWrite: true, deferredOriginalContent: 'old content' },
+      );
+
+      // A stale deferred base blocks this invocation without mutating the plan.
+      expect(firstRun.stepResult.success).toBe(false);
+      expect(firstRun.validation?.blockedBy?.join()).toMatch(/changed after/i);
+      expect(step.params.__frontagentDeferredSameTargetWrite).toBeUndefined();
+      expect(callTool).not.toHaveBeenCalledWith('apply_patch', expect.anything());
+
+      // Resume uses the refreshed content without persisted scheduling state.
+      const secondRun = await executor.executeStep(
+        step,
+        makeExecutionContext({
+          collectedContext: { files: new Map([['src/a.ts', original]]) },
+        }),
+      );
+
+      expect(secondRun.stepResult.success).toBe(true);
+      expect(callTool).toHaveBeenCalledWith(
+        'apply_patch',
+        expect.objectContaining({ __frontagentExpectedOriginalHash: expect.any(String) }),
+      );
+    });
+
+    it('rejects a patch whose projected final content is invalid', async () => {
+      const original = 'export const value = 1;';
+      const callTool = vi.fn().mockResolvedValue({ success: true });
+      const executor = new Executor(
+        makeConfig({
+          getFileSystemFacts: () => ({
+            ...projectFacts(),
+            existingFiles: new Set(['src/value.ts']),
+          }),
+          hallucinationGuard: new HallucinationGuard({
+            projectRoot: '/test',
+            enabledChecks: { importValidity: false, fileExistence: false },
+          }),
+        }),
+      );
+      executor.registerMCPClient('files', {
+        callTool,
+        listTools: vi.fn().mockResolvedValue([]),
+      });
+      executor.registerToolMapping('apply_patch', 'files');
+
+      const result = await executor.executeStep(
+        makeStep({
+          action: 'apply_patch',
+          tool: 'apply_patch',
+          params: {
+            path: 'src/value.ts',
+            patches: [{ operation: 'replace', startLine: 1, content: 'export const value = {' }],
+          },
+        }),
+        makeExecutionContext({
+          collectedContext: { files: new Map([['src/value.ts', original]]) },
+        }),
+      );
+
+      expect(result.stepResult.success).toBe(false);
+      expect(callTool).not.toHaveBeenCalled();
+    });
+
+    it('does not use import validity as a pre-write veto', async () => {
+      const callTool = vi.fn().mockResolvedValue({ success: true });
+      const guard = new HallucinationGuard({
+        projectRoot: '/test',
+        enabledChecks: { fileExistence: false },
+      });
+      const executor = new Executor(
+        makeConfig({ getFileSystemFacts: projectFacts, hallucinationGuard: guard }),
+      );
+      executor.registerMCPClient('files', {
+        callTool,
+        listTools: vi.fn().mockResolvedValue([]),
+      });
+      executor.registerToolMapping('create_file', 'files');
+
+      await executor.executeStep(
+        makeStep({
+          params: {
+            path: 'src/forward.ts',
+            content: "import { later } from './later';\nexport const value = later;",
+          },
+        }),
+        makeExecutionContext(),
+      );
+
+      expect(callTool).toHaveBeenCalledOnce();
+    });
+  });
+
   describe('validation_failed observability (#388)', () => {
     // #388 的核心：事件有类型定义、桌面端有消费方，却在全仓没有发射点，
     // 于是「校验是否拦截」在遥测层恒为 0——那个 0 证明的是「没接线」，
@@ -541,19 +896,21 @@ describe('Executor', () => {
         makeConfig({
           hallucinationGuard: {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
-            validateCode: vi.fn().mockResolvedValue({
+            isCheckEnabled: vi.fn().mockReturnValue(true),
+            validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
+            validateImports: vi.fn().mockResolvedValue({
               pass: false,
               results: [
                 {
                   pass: false,
-                  type: 'syntax_validity',
+                  type: 'import_validity',
                   severity: 'block',
-                  message: 'Syntax errors found in src/a.ts',
+                  message: 'Import not found in src/a.ts',
                 },
               ],
-              blockedBy: ['Syntax errors found in src/a.ts'],
+              blockedBy: ['Import not found in src/a.ts'],
             }),
-            isCheckEnabled: () => true,
+            validateCode: vi.fn(),
           } as unknown as ExecutorConfig['hallucinationGuard'],
           emitEvent: (event) => events.push(event),
           getFileSystemFacts: () => ({
@@ -571,7 +928,7 @@ describe('Executor', () => {
       executor.registerToolMapping('create_file', 'files');
 
       await executor.executeStep(
-        makeStep({ params: { path: 'src/a.ts', content: 'export const a = {' } }),
+        makeStep({ params: { path: 'src/a.ts', content: 'export const a = 1;' } }),
         makeExecutionContext(),
       );
 
@@ -591,8 +948,10 @@ describe('Executor', () => {
         makeConfig({
           hallucinationGuard: {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
-            validateCode: vi.fn().mockResolvedValue({ pass: true, results: [] }),
-            isCheckEnabled: () => true,
+            isCheckEnabled: vi.fn().mockReturnValue(true),
+            validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
+            validateImports: vi.fn().mockResolvedValue({ pass: true, results: [] }),
+            validateCode: vi.fn(),
           } as unknown as ExecutorConfig['hallucinationGuard'],
           emitEvent: (event) => events.push(event),
           getFileSystemFacts: () => ({

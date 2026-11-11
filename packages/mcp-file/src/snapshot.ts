@@ -100,6 +100,24 @@ export class SnapshotManager {
     }
   }
 
+  discardSnapshot(snapshotId: string): boolean {
+    const snapshot = this.snapshots.get(snapshotId);
+    if (!snapshot) return false;
+
+    this.snapshots.delete(snapshotId);
+    const fileHistory = this.fileSnapshots.get(snapshot.filePath) ?? [];
+    const remaining = fileHistory.filter((id) => id !== snapshotId);
+    if (remaining.length > 0) {
+      this.fileSnapshots.set(snapshot.filePath, remaining);
+    } else {
+      this.fileSnapshots.delete(snapshot.filePath);
+    }
+
+    const snapshotPath = join(this.snapshotDir, `${snapshotId}.json`);
+    if (existsSync(snapshotPath)) unlinkSync(snapshotPath);
+    return true;
+  }
+
   /**
    * 回滚到指定快照
    */

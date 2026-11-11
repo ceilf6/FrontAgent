@@ -9,6 +9,112 @@ describe('checkSyntaxValidity', () => {
       expect(result.pass).toBe(true);
     });
 
+    it('accepts valid strings, multiline templates, regexes, and TSX', async () => {
+      const cases = [
+        {
+          code: `export const msg = "it's fine";`,
+          language: 'typescript' as const,
+          filePath: 'src/message.ts',
+        },
+        {
+          code: 'export const message = `first line\nsecond line`;',
+          language: 'typescript' as const,
+          filePath: 'src/template.ts',
+        },
+        {
+          code: 'export const pattern = /[{}()[\\]]/;',
+          language: 'javascript' as const,
+          filePath: 'src/pattern.js',
+        },
+        {
+          code: `export const Card = () => <p>Don't panic</p>;`,
+          language: 'typescript' as const,
+          filePath: 'src/Card.tsx',
+        },
+      ];
+
+      for (const input of cases) {
+        await expect(checkSyntaxValidity(input)).resolves.toEqual(
+          expect.objectContaining({ pass: true }),
+        );
+      }
+    });
+
+    it('uses the real extension to distinguish TSX and JSX', async () => {
+      const tsx = await checkSyntaxValidity({
+        code: 'export const Card = () => <div />;',
+        language: 'typescript',
+        filePath: 'src/Card.tsx',
+      });
+      const ts = await checkSyntaxValidity({
+        code: 'export const Card = () => <div />;',
+        language: 'typescript',
+        filePath: 'src/Card.ts',
+      });
+      const jsx = await checkSyntaxValidity({
+        code: 'export const Card = () => <div />;',
+        language: 'javascript',
+        filePath: 'src/Card.jsx',
+      });
+      const jsWithTypes = await checkSyntaxValidity({
+        code: 'const value: number = 1;',
+        language: 'javascript',
+        filePath: 'src/value.js',
+      });
+
+      expect(tsx.pass).toBe(true);
+      expect(ts.pass).toBe(false);
+      expect(jsx.pass).toBe(true);
+      await expect(
+        checkSyntaxValidity({
+          code: 'export const Card = () => <div />;',
+          language: 'javascript',
+          filePath: 'src/Card.js',
+        }),
+      ).resolves.toMatchObject({ pass: true });
+      expect(jsWithTypes.pass).toBe(false);
+    });
+
+    it('reports parser diagnostics with location and code', async () => {
+      const result = await checkSyntaxValidity({
+        code: 'const ok = 1;\nconst broken: number = ;',
+        language: 'typescript',
+        filePath: 'src/broken.ts',
+      });
+
+      expect(result.pass).toBe(false);
+      expect(result.details).toEqual(
+        expect.objectContaining({
+          errors: expect.arrayContaining([
+            expect.objectContaining({ line: 2, column: expect.any(Number), code: 1109 }),
+          ]),
+        }),
+      );
+    });
+
+    it('rejects an outer markdown code fence but allows fences inside a template', async () => {
+      const fenced = await checkSyntaxValidity({
+        code: '```ts\nexport const value = 1;\n```',
+        language: 'typescript',
+        filePath: 'src/value.ts',
+      });
+      const template = await checkSyntaxValidity({
+        code: 'export const markdown = `\n\\`\\`\\`md\ntext\n\\`\\`\\`\n`;',
+        language: 'typescript',
+        filePath: 'src/markdown.ts',
+      });
+
+      expect(fenced.pass).toBe(false);
+      expect(fenced.details).toEqual(
+        expect.objectContaining({
+          errors: [
+            expect.objectContaining({ message: expect.stringMatching(/markdown code fences/i) }),
+          ],
+        }),
+      );
+      expect(template.pass).toBe(true);
+    });
+
     it('detects unclosed brackets', async () => {
       const code = `function hello() {\n  return "world";\n`;
       const result = await checkSyntaxValidity({ code, language: 'typescript' });
@@ -46,6 +152,172 @@ describe('checkSyntaxValidity', () => {
       const code = `{"name": "test", "version": "1.0.0"}`;
       const result = await checkSyntaxValidity({ code, language: 'json' });
       expect(result.pass).toBe(true);
+    });
+
+    it('accepts valid JSON with non-object roots at ordinary file paths', async () => {
+      const cases = [
+        { code: '[{"id": 1}, {"id": 2}]', filePath: 'mocks/users.json' },
+        { code: '["red", "green"]', filePath: 'fixtures/colors.json' },
+        { code: '"a plain string"', filePath: 'notes/title.json' },
+        { code: '123', filePath: 'data/count.json' },
+        { code: 'null', filePath: 'data/empty-value.json' },
+      ];
+
+      for (const { code, filePath } of cases) {
+        await expect(checkSyntaxValidity({ code, language: 'json', filePath })).resolves.toEqual(
+          expect.objectContaining({ pass: true }),
+        );
+      }
+    });
+
+    it('does not treat an ordinary JSON document as a tsconfig that requires an object root', async () => {
+      const result = await checkSyntaxValidity({
+        code: '[{"id": 1}]',
+        language: 'json',
+        filePath: 'mocks/users.json',
+      });
+
+      expect(result.pass).toBe(true);
+      expect(result.details?.errors).toBeUndefined();
+    });
+
+    it('accepts strict JSON documents unchanged when consumed by a strict consumer', async () => {
+      // A mock/list file that is strict JSON must stay byte-identical to what
+      // JSON.parse at runtime will see — no JSONC leniency for valid content.
+      const code = '{"items": [1, 2, 3], "name": "list"}';
+      const result = await checkSyntaxValidity({
+        code,
+        language: 'json',
+        filePath: 'mocks/items.json',
+      });
+
+      expect(result.pass).toBe(true);
+      expect(result.details).toBeUndefined();
+    });
+
+    it('keeps JSONC (comments) allowed for known configuration paths while strict JSON wins for data files', async () => {
+      const jsonc = '{\n  // team tooling\n  "enabled": true,\n}';
+
+      // Tool configurations explicitly support comments and trailing commas.
+      await expect(
+        checkSyntaxValidity({ code: jsonc, language: 'json', filePath: 'biome.json' }),
+      ).resolves.toEqual(expect.objectContaining({ pass: true }));
+
+      // A data file that is strict JSON is not rewritten into JSONC form.
+      const strict = '{"enabled": true}';
+      await expect(
+        checkSyntaxValidity({ code: strict, language: 'json', filePath: 'mocks/flags.json' }),
+      ).resolves.toEqual(expect.objectContaining({ pass: true }));
+    });
+
+    it('documents empty-file behavior: lenient on JSONC paths, strict on strict paths', async () => {
+      // An empty file is tolerated on JSONC-capable paths (creating an empty
+      // config placeholder should not be blocked)...
+      for (const filePath of ['tsconfig.json', 'turbo.jsonc']) {
+        await expect(
+          checkSyntaxValidity({ code: '', language: 'json', filePath }),
+        ).resolves.toEqual(expect.objectContaining({ pass: true }));
+      }
+      // ...but strict consumers reject empty content.
+      for (const filePath of ['package.json', 'data.json', 'mocks/empty.json']) {
+        await expect(
+          checkSyntaxValidity({ code: '', language: 'json', filePath }),
+        ).resolves.toEqual(expect.objectContaining({ pass: false }));
+      }
+    });
+
+    it('accepts JSONC only for known configuration paths', async () => {
+      const jsonc = '{\n  // compiler settings\n  "compilerOptions": { "strict": true, },\n}';
+      const paths = [
+        'tsconfig.json',
+        'configs/tsconfig.build.json',
+        'jsconfig.web.json',
+        '.vscode/settings.json',
+        '.vscode/tasks.json',
+        '.vscode/launch.json',
+        '.vscode/extensions.json',
+        '.vscode/mcp.json',
+        '.devcontainer.json',
+        '.devcontainer/devcontainer.json',
+        '.devcontainer/node/devcontainer.json',
+        '.eslintrc.json',
+        'turbo.jsonc',
+        'turbo.json',
+        'biome.json',
+        'deno.json',
+        '.vscode/keybindings.json',
+        'C:\\repo\\.vscode\\tasks.json',
+      ];
+
+      for (const filePath of paths) {
+        await expect(
+          checkSyntaxValidity({ code: jsonc, language: 'json', filePath }),
+        ).resolves.toEqual(expect.objectContaining({ pass: true }));
+      }
+    });
+
+    it('accepts JSONC for additional supported tool configurations', async () => {
+      const jsonc = '{\n  // tool settings\n  "enabled": true,\n}';
+      for (const filePath of ['biome.json', 'nest-cli.json', 'components.json']) {
+        const result = await checkSyntaxValidity({ code: jsonc, language: 'json', filePath });
+        expect(result.pass).toBe(true);
+      }
+    });
+
+    it('keeps package and application JSON strict', async () => {
+      const jsonc = '{\n  // not valid strict JSON\n  "name": "test",\n}';
+
+      for (const filePath of [
+        'package.json',
+        'nested/package.json',
+        'data.json',
+        'mocks/flags.json',
+        'fixtures/users.json',
+        '.frontagent/settings.json',
+        '.vscode/data.json',
+        '.vscode/package.json',
+      ]) {
+        const result = await checkSyntaxValidity({ code: jsonc, language: 'json', filePath });
+        expect(result.pass).toBe(false);
+      }
+    });
+
+    it('accepts JSONC array roots for keybindings', async () => {
+      await expect(
+        checkSyntaxValidity({
+          code: '[/* shortcut */ {"key":"ctrl+k",},]',
+          language: 'json',
+          filePath: '.vscode/keybindings.json',
+        }),
+      ).resolves.toMatchObject({ pass: true });
+    });
+
+    it('rejects non-JSON values and unquoted keys in JSONC files', async () => {
+      for (const code of ['{foo: 1}', '{"x": undefined}', '{"x": NaN}']) {
+        const result = await checkSyntaxValidity({
+          code,
+          language: 'json',
+          filePath: 'tsconfig.json',
+        });
+        expect(result.pass).toBe(false);
+      }
+    });
+
+    it('reports malformed JSONC configuration syntax', async () => {
+      const result = await checkSyntaxValidity({
+        code: '{\n  "compilerOptions": {\n',
+        language: 'json',
+        filePath: 'tsconfig.json',
+      });
+
+      expect(result.pass).toBe(false);
+      expect(result.details).toEqual(
+        expect.objectContaining({
+          errors: expect.arrayContaining([
+            expect.objectContaining({ line: expect.any(Number), column: expect.any(Number) }),
+          ]),
+        }),
+      );
     });
 
     it('detects invalid JSON', async () => {

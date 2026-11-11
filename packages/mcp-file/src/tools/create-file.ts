@@ -7,12 +7,15 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { assertWritableByPolicy, resolveWritePath } from '../path-safety.js';
 import type { SnapshotManager } from '../snapshot.js';
+import { syntaxValidationError, validateFileSyntax } from '../syntax-validation.js';
 
 export interface CreateFileParams {
   path: string;
   content: string;
   overwrite?: boolean;
+  skipSyntaxValidation?: boolean;
   __frontagentSecurityApproved?: boolean;
+  __frontagentSyntaxValidationEnabled?: boolean;
 }
 
 export interface CreateFileResult {
@@ -34,7 +37,9 @@ export function createFile(
     path: filePath,
     content,
     overwrite = false,
+    skipSyntaxValidation = false,
     __frontagentSecurityApproved = false,
+    __frontagentSyntaxValidationEnabled = true,
   } = params;
 
   const safePath = resolveWritePath(filePath, projectRoot);
@@ -57,8 +62,19 @@ export function createFile(
     };
   }
 
-  // 检查文件是否已存在
-  if (existsSync(safePath.fullPath) && !overwrite) {
+  if (typeof content !== 'string') {
+    return { success: false, error: 'File content must be a string' };
+  }
+
+  if (__frontagentSyntaxValidationEnabled && !skipSyntaxValidation) {
+    const syntaxValidation = validateFileSyntax(content, filePath);
+    if (!syntaxValidation.syntaxValid) {
+      return { success: false, error: syntaxValidationError(syntaxValidation, filePath) };
+    }
+  }
+
+  const existedBeforeWrite = existsSync(safePath.fullPath);
+  if (existedBeforeWrite && !overwrite) {
     return {
       success: false,
       error: `File already exists: ${filePath}. Set overwrite=true to overwrite.`,
@@ -68,9 +84,10 @@ export function createFile(
   // 创建快照
   const snapshotId = snapshotManager.createSnapshot(
     safePath.fullPath,
-    existsSync(safePath.fullPath) ? 'modify' : 'create',
+    existedBeforeWrite ? 'modify' : 'create',
   );
 
+  let writeCompleted = false;
   try {
     // 确保目录存在
     const dir = dirname(safePath.fullPath);
@@ -78,8 +95,17 @@ export function createFile(
       mkdirSync(dir, { recursive: true });
     }
 
-    // 写入文件
-    writeFileSync(safePath.fullPath, content, 'utf-8');
+    // Exclusive creation only guards non-overwrite writes: a file created after
+    // the initial existence check must not be clobbered by a race. When
+    // overwrite is requested, honor that intent even if the file appears
+    // between the check and the write instead of failing with
+    // "appeared concurrently".
+    if (overwrite) {
+      writeFileSync(safePath.fullPath, content, 'utf-8');
+    } else {
+      writeFileSync(safePath.fullPath, content, { encoding: 'utf-8', flag: 'wx' });
+    }
+    writeCompleted = true;
     snapshotManager.updateSnapshotContent(snapshotId, content);
 
     return {
@@ -88,8 +114,21 @@ export function createFile(
       snapshotId,
     };
   } catch (error) {
-    // 回滚快照
-    snapshotManager.rollback(snapshotId);
+    const lostExclusiveRace = isAlreadyExistsError(error) && !existedBeforeWrite;
+    if (lostExclusiveRace) {
+      snapshotManager.discardSnapshot(snapshotId);
+    } else if (overwrite || writeCompleted) {
+      snapshotManager.rollback(snapshotId);
+    } else {
+      snapshotManager.discardSnapshot(snapshotId);
+    }
+
+    if (lostExclusiveRace) {
+      return {
+        success: false,
+        error: `File appeared concurrently: ${filePath}. Retry after reading the current file.`,
+      };
+    }
 
     return {
       success: false,
@@ -98,15 +137,25 @@ export function createFile(
   }
 }
 
+function isAlreadyExistsError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error && error.code === 'EEXIST';
+}
+
 /**
  * 工具的 JSON Schema 定义
  */
 export const createFileSchema = {
   name: 'create_file',
-  description: '创建新文件。如果目录不存在会自动创建。',
+  description:
+    '创建新文件并自动创建目录。TS/JS/JSON 内容先做解析器校验，失败则不写盘；测试 fixture 可显式设置 skipSyntaxValidation。',
   inputSchema: {
     type: 'object' as const,
     properties: {
+      skipSyntaxValidation: {
+        type: 'boolean',
+        description: '跳过语法校验，用于故意包含无效语法的测试 fixture；默认 false',
+        default: false,
+      },
       path: {
         type: 'string',
         description: '相对于项目根目录的文件路径',

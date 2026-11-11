@@ -42,6 +42,7 @@ export interface ExecutorActionSkill {
   }) => Promise<Record<string, unknown>>;
   shouldSkipToolError?: (input: {
     errorMsg: string;
+    errorCode?: string;
     step: ExecutionStep;
     params: Record<string, unknown>;
   }) => boolean | undefined;
@@ -105,6 +106,7 @@ export class ExecutorSkillRegistry {
 
   shouldSkipToolError(input: {
     errorMsg: string;
+    errorCode?: string;
     step: ExecutionStep;
     params: Record<string, unknown>;
   }): boolean | undefined {
@@ -288,7 +290,10 @@ function createApplyPatchSkill(runtime: ExecutorSkillRuntime): ExecutorActionSki
         patches: [patch],
       };
     },
-    shouldSkipToolError: ({ errorMsg }) => {
+    shouldSkipToolError: ({ errorMsg, errorCode }) => {
+      if (errorCode === 'stale_original_hash' || errorMsg.includes('changed since executor preflight')) {
+        return false;
+      }
       if (
         errorMsg.includes('file not found in context') ||
         errorMsg.includes('Cannot apply patch')

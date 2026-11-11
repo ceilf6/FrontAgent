@@ -55,6 +55,7 @@ function makeDeps(overrides: Partial<PhaseRunnerDeps> = {}): PhaseRunnerDeps {
     throwIfAborted: vi.fn(),
     getMaxRecoveryAttempts: () => 3,
     createRecoveryFingerprint: (errors) => errors.map((e) => e.error).join(','),
+    getWriteTarget: () => undefined,
     parallelExecution: false,
     ...overrides,
   };
@@ -196,6 +197,30 @@ describe('PhaseRunner', () => {
       expect(step.status).toBe('failed');
     });
 
+    it('continues sequential execution for unrelated steps after a recovery-required failure', async () => {
+      const failed = makeStep({ stepId: 's1' });
+      const unrelated = makeStep({ stepId: 's2' });
+      const failure = { ...makeOutput(false), needsRollback: true };
+      const executeStep = vi
+        .fn()
+        .mockResolvedValueOnce(failure)
+        .mockResolvedValueOnce(makeOutput(true));
+      const deps = makeDeps({ executeStep });
+      const runner = new PhaseRunner(deps);
+
+      await runner.executeSinglePhaseWithRecovery(
+        makePhaseGroup([failed, unrelated]),
+        makeContext(),
+        new Set(),
+        [],
+        {},
+      );
+
+      expect(executeStep).toHaveBeenCalledTimes(2);
+      expect(failed.status).toBe('failed');
+      expect(unrelated.status).toBe('completed');
+    });
+
     it('calls onPhaseStart and onPhaseComplete callbacks', async () => {
       const step = makeStep({ stepId: 's1' });
       const deps = makeDeps();
@@ -282,6 +307,91 @@ describe('PhaseRunner', () => {
       expect(step2.status).toBe('completed');
     });
 
+    it('skips a dependent after failure while allowing unrelated work to complete', async () => {
+      const failed = makeStep({ stepId: 's1', dependencies: [] });
+      const dependent = makeStep({ stepId: 's2', dependencies: ['s1'] });
+      const unrelated = makeStep({ stepId: 's3', dependencies: [] });
+      const failure = { ...makeOutput(false), needsRollback: true };
+      const executeStep = vi
+        .fn()
+        .mockImplementation(async (step: ExecutionStep) =>
+          step.stepId === 's1' ? failure : makeOutput(true),
+        );
+      const deps = makeDeps({ parallelExecution: true, executeStep });
+      const runner = new PhaseRunner(deps);
+
+      await runner.executeSinglePhaseWithRecovery(
+        makePhaseGroup([failed, dependent, unrelated]),
+        makeContext(),
+        new Set(),
+        [],
+        {},
+      );
+
+      expect(executeStep).toHaveBeenCalledTimes(2);
+      expect(failed.status).toBe('failed');
+      expect(dependent.status).toBe('skipped');
+      expect(unrelated.status).toBe('completed');
+    });
+
+    it('serializes same-target writes while keeping different targets parallel', async () => {
+      const sameFirst = makeStep({
+        stepId: 's1',
+        action: 'apply_patch',
+        params: { path: 'src/a.ts' },
+      });
+      const sameSecond = makeStep({
+        stepId: 's2',
+        action: 'create_file',
+        params: { path: './src/a.ts' },
+      });
+      const different = makeStep({
+        stepId: 's3',
+        action: 'apply_patch',
+        params: { path: 'src/b.ts' },
+      });
+      const started: string[] = [];
+      let releaseFirst!: () => void;
+      const firstBlocked = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      let resolveTwoStarted!: () => void;
+      const twoStarted = new Promise<void>((resolve) => {
+        resolveTwoStarted = resolve;
+      });
+      const executeStep = vi.fn().mockImplementation(async (step: ExecutionStep) => {
+        started.push(step.stepId);
+        if (started.length === 2) resolveTwoStarted();
+        if (step.stepId === 's1') await firstBlocked;
+        return makeOutput(true);
+      });
+      const deps = makeDeps({
+        parallelExecution: true,
+        executeStep,
+        getWriteTarget: (step) =>
+          typeof step.params.path === 'string' ? step.params.path.replace(/^\.\//, '') : undefined,
+      });
+      const runner = new PhaseRunner(deps);
+
+      const execution = runner.executeSinglePhaseWithRecovery(
+        makePhaseGroup([sameFirst, sameSecond, different]),
+        makeContext(),
+        new Set(),
+        [],
+        {},
+      );
+
+      await twoStarted;
+      expect(started).toEqual(['s1', 's3']);
+      releaseFirst();
+      await execution;
+
+      expect(started).toEqual(['s1', 's3', 's2']);
+      expect(sameFirst.status).toBe('completed');
+      expect(sameSecond.status).toBe('completed');
+      expect(different.status).toBe('completed');
+    });
+
     it('respects dependencies in parallel mode', async () => {
       const step1 = makeStep({ stepId: 's1', dependencies: [] });
       const step2 = makeStep({ stepId: 's2', dependencies: ['s1'] });
@@ -289,7 +399,7 @@ describe('PhaseRunner', () => {
       const deps = makeDeps({
         parallelExecution: true,
         executeStep: vi.fn().mockImplementation(async (step: ExecutionStep) => {
-          await new Promise((r) => setTimeout(r, 5));
+          await new Promise((resolve) => setTimeout(resolve, 5));
           completedOrder.push(step.stepId);
           return makeOutput();
         }),
@@ -415,5 +525,52 @@ describe('PhaseRunner', () => {
 
       expect(callbacks.onPhaseError).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+it('keeps deferred writes out of a snapshot when the phase aborts before their turn', async () => {
+  const first = makeStep({ stepId: 'first', params: { path: 'a.ts' } });
+  const second = makeStep({ stepId: 'second', params: { path: 'a.ts' } });
+  const controller = new AbortController();
+  const executeStep = vi.fn().mockImplementation(async () => {
+    controller.abort();
+    return makeOutput();
+  });
+  const runner = new PhaseRunner(
+    makeDeps({
+      parallelExecution: true,
+      executeStep,
+      getWriteTarget: () => 'a.ts',
+      throwIfAborted: (signal) => signal?.throwIfAborted(),
+    }),
+  );
+  await expect(
+    runner.executeSinglePhaseWithRecovery(
+      makePhaseGroup([first, second]),
+      makeContext(),
+      new Set(),
+      [],
+      { signal: controller.signal },
+    ),
+  ).rejects.toBeDefined();
+  expect(executeStep).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(JSON.stringify(second)).params).toEqual({ path: 'a.ts' });
+  const resumedExecute = vi.fn().mockResolvedValue(makeOutput());
+  await new PhaseRunner(
+    makeDeps({
+      parallelExecution: true,
+      executeStep: resumedExecute,
+      getWriteTarget: () => 'a.ts',
+    }),
+  ).executeSinglePhaseWithRecovery(
+    makePhaseGroup([first, second]),
+    makeContext(),
+    new Set(),
+    [],
+    {},
+  );
+  expect(resumedExecute).toHaveBeenCalledWith(second, expect.anything(), {
+    deferredSameTargetWrite: false,
+    deferredOriginalContent: undefined,
   });
 });

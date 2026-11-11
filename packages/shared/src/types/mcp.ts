@@ -24,16 +24,21 @@ export interface FilePatch {
   content?: string;
 }
 
+export type PatchErrorCode = 'stale_original_hash';
+
 export interface PatchResult {
   success: boolean;
   diff: string;
   validation: {
+    /** False means syntaxValid is not a checked verdict. */
+    syntaxChecked?: boolean;
     syntaxValid: boolean;
     lintErrors: LintError[];
     typeErrors: TypeError[];
   };
   snapshotId: string;
   error?: string;
+  errorCode?: PatchErrorCode;
 }
 
 export interface LintError {

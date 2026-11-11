@@ -10,7 +10,7 @@ import {
 } from '../skills/index.js';
 import type { ExecutorOutput } from '../types.js';
 import { buildOrderedPhaseGroups, detectLanguage } from './phase-ordering.js';
-import { PhaseRunner } from './phase-runner.js';
+import { PhaseRunner, type StepExecutionOptions } from './phase-runner.js';
 import { executeStepsWithProgressEnforcement } from './progress-enforcement.js';
 import { executeStepsWithErrorFeedbackViaLangGraph } from './step-feedback-runner.js';
 import { createStepTraceRecorder } from './step-trace-recorder.js';
@@ -24,14 +24,13 @@ import type {
 import {
   describeWriteFailure,
   readWrittenFile,
-  resolvePreWriteVeto,
   resolveWriteOutcome,
   rollbackFailedWrite,
 } from './write-outcome.js';
+import { validateWriteBeforeExecution } from './write-preflight.js';
 import {
   demoteNonDecidingVerdicts,
   resolveWriteActionContent,
-  resolveWriteContent,
   WRITE_ACTIONS,
 } from './write-validation.js';
 
@@ -65,15 +64,22 @@ export class Executor {
       detectLanguage: (path) => detectLanguage(path),
     });
     this.phaseRunner = new PhaseRunner({
-      executeStep: (step, ctx) => this.executeStep(step, ctx),
+      executeStep: (step, ctx, options) => this.executeStep(step, ctx, options),
       debugLog: (...args) => this.debugLog(...args),
       debugWarn: (...args) => this.debugWarn(...args),
       debugError: (...args) => this.debugError(...args),
       throwIfAborted: (signal) => this.throwIfAborted(signal),
       getMaxRecoveryAttempts: () => this.getMaxRecoveryAttempts(),
       createRecoveryFingerprint: (errors) => this.createRecoveryFingerprint(errors),
+      getWriteTarget: (step) => this.getWriteTarget(step),
       parallelExecution: Boolean(config.parallelExecution),
     });
+  }
+
+  private getWriteTarget(step: ExecutionStep): string | undefined {
+    if (step.action !== 'create_file' && step.action !== 'apply_patch') return undefined;
+    const path = typeof step.params.path === 'string' ? step.params.path : undefined;
+    return path ? resolve(this.config.projectRoot, path) : undefined;
   }
 
   private debugLog(...args: unknown[]): void {
@@ -120,6 +126,7 @@ export class Executor {
       task: AgentTask;
       collectedContext: ExecutorCollectedContext;
     },
+    options: StepExecutionOptions = {},
   ): Promise<ExecutorOutput> {
     const startTime = Date.now();
     const trace = createStepTraceRecorder({
@@ -153,7 +160,7 @@ export class Executor {
       this.groundStepPathInPlace(step);
 
       const preValidation = await trace.withStage('validate_before', () =>
-        this.validateBeforeExecution(step, context),
+        this.validateBeforeExecution(step, context, options),
       );
       if (!preValidation.pass) {
         const skip = this.getPreValidationSkip(step, preValidation);
@@ -179,7 +186,15 @@ export class Executor {
         });
       }
 
-      let toolParams = { ...step.params };
+      let toolParams: Record<string, unknown> = {
+        ...step.params,
+        ...(['create_file', 'apply_patch'].includes(step.action)
+          ? {
+              __frontagentSyntaxValidationEnabled:
+                this.config.hallucinationGuard.isCheckEnabled('syntaxValidity'),
+            }
+          : {}),
+      };
 
       if (this.config.debug) {
         const stepAny = step as { needsCodeGeneration?: boolean };
@@ -200,41 +215,58 @@ export class Executor {
         }),
       );
 
-      // 写入路径只解析这一次，写盘前后共用；技能可能改写 params.path，
-      // 两侧各解析一次就会指向不同文件。
       const writePath = (toolParams.path ?? step.params.path) as string | undefined;
-      const writeContent = resolveWriteContent(step, toolParams, writePath, context);
-      const vetoEnabled = this.config.hallucinationGuard.isCheckEnabled('syntaxValidity');
-      // 否决判据先跑：它是纯字符串扫描，而 validateCode 会做文件系统解析
-      // （import 检查）。围栏一旦命中就直接 return，没必要为一份不会落盘的内容
-      // 白跑一次完整 guard。
-      const veto = resolvePreWriteVeto(writeContent, vetoEnabled, Date.now() - startTime);
-      if (veto) {
-        this.emitValidationFailed('pre_write', veto.validation, step, writeContent?.path);
-        if (this.config.debug) {
-          console.log(`[Executor] Blocked write before disk: ${veto.output.stepResult.error}`);
-        }
-        return trace.finish(veto.output);
-      }
-
-      const rawContentValidation = await trace.withStage('validate_content', () =>
-        writeContent
-          ? this.config.hallucinationGuard.validateCode(
-              writeContent.content,
-              writeContent.language,
-              writeContent.path,
-            )
-          : Promise.resolve<ValidationResult>({ pass: true, results: [] }),
+      const dryRun = step.action === 'apply_patch' && toolParams.dryRun === true;
+      const vetoEnabled =
+        WRITE_ACTIONS.includes(step.action) &&
+        this.config.hallucinationGuard.isCheckEnabled('syntaxValidity') &&
+        toolParams.skipSyntaxValidation !== true;
+      const preflight = await validateWriteBeforeExecution(
+        this.config.hallucinationGuard,
+        step,
+        toolParams,
+        context.collectedContext.files,
       );
+      if (preflight) {
+        if (!preflight.validation.pass) {
+          this.emitValidationFailed('pre_write', preflight.validation, step, preflight.path);
+          const errorMsg = preflight.validation.blockedBy?.join('; ') || 'Invalid write content';
+          return trace.finish({
+            stepResult: {
+              success: false,
+              error: `Pre-write validation failed: ${errorMsg}`,
+              duration: Date.now() - startTime,
+            },
+            validation: preflight.validation,
+            needsRollback: true,
+          });
+        }
+        toolParams = preflight.toolParams;
+      }
 
       const toolResult = await trace.withStage('call_tool', () =>
         this.callTool(step.tool, toolParams),
       );
 
       if (typeof toolResult === 'object' && toolResult !== null) {
-        const resultObj = toolResult as { success?: boolean; error?: string };
+        const resultObj = toolResult as {
+          success?: boolean;
+          error?: string;
+          errorCode?: string;
+        };
         if (resultObj.success === false && resultObj.error) {
-          const isSkippableError = this.isSkippableError(resultObj.error, step, toolParams);
+          if (resultObj.errorCode === 'stale_original_hash') {
+            await this.refreshCollectedFileContext(
+              (toolParams as Record<string, unknown>).path,
+              context,
+            );
+          }
+          const isSkippableError = this.isSkippableError(
+            resultObj.error,
+            step,
+            toolParams,
+            resultObj.errorCode,
+          );
           if (isSkippableError) {
             if (this.config.debug) {
               console.log(`[Executor] Skipping step due to tool error: ${resultObj.error}`);
@@ -244,23 +276,18 @@ export class Executor {
         }
       }
 
-      // 一次步骤只读回一次落盘内容，路径也只解析一次：写盘前用的是
-      // `toolParams.path ?? step.params.path`（技能可能改写路径），写盘后若改用
-      // `step.params.path`，两侧就会指向不同文件——今天的技能都不改写 path，
-      // 所以那是个隐性假设而非现存缺陷，但它正是 emitValidationFailed 的
-      // resolvedPath 参数存在的理由，不该在同一个函数里自相矛盾。
+      // Read back once so validation and rollback describe the same disk content.
       const landedPath = writePath;
-      const landedContent = WRITE_ACTIONS.includes(step.action)
-        ? readWrittenFile(this.config.projectRoot, landedPath)
-        : undefined;
+      const landedContent =
+        !dryRun && WRITE_ACTIONS.includes(step.action)
+          ? readWrittenFile(this.config.projectRoot, landedPath)
+          : undefined;
 
       const postValidation = await trace.withStage('validate_after', () =>
         this.validateAfterExecution(step, toolResult, toolParams, {
           path: landedPath,
           landedContent,
-          preWriteContentValidation: writeContent
-            ? { validation: rawContentValidation, content: writeContent.content }
-            : undefined,
+          preflightContent: preflight?.content,
         }),
       );
 
@@ -268,20 +295,13 @@ export class Executor {
         action: step.action,
         landedPath,
         landedContent,
-        // 补丁前的原文，供围栏判据判断「这次写入是否引入了围栏」
         priorContent: landedPath ? context.collectedContext.files.get(landedPath) : undefined,
-        landedLanguage: detectLanguage(String(landedPath)) ?? '',
         toolResult,
         postValidation,
-        vetoEnabled,
+        vetoEnabled: vetoEnabled && !dryRun,
         durationMs: Date.now() - startTime,
       });
 
-      // 发事件与判成败刻意解耦：降级后的判定仍留在 `results` 里（`pass: false`），
-      // 只是不再决定步骤成败。emitValidationFailed 自己按「有没有真实检查判失败」
-      // 过滤，所以把它挂在 `!pass` 分支里，等于让降级顺手把遥测也一起关掉——
-      // #388 要的恰恰是一个能计数的拦截量。消费方必须读 `result.pass` 才能把
-      // 「拦下了」与「只是记了一笔」分开。
       this.emitValidationFailed('post_write', outcome.validation, step, landedPath);
 
       if (outcome.unreadablePath) {
@@ -296,6 +316,16 @@ export class Executor {
             warn: (message) => this.debugWarn(message),
           })
         : { rollbackFailed: false as boolean, error: undefined as string | undefined };
+
+      if (writePath && WRITE_ACTIONS.includes(step.action) && !dryRun) {
+        if (outcome.stepResult.success && landedContent !== undefined) {
+          context.collectedContext.files.set(writePath, landedContent);
+        } else if (outcome.stepResult.success && preflight) {
+          context.collectedContext.files.set(writePath, preflight.content);
+        } else {
+          context.collectedContext.files.delete(writePath);
+        }
+      }
 
       return trace.finish({
         stepResult: {
@@ -325,6 +355,25 @@ export class Executor {
         },
         needsRollback: true,
       });
+    }
+  }
+
+  private async refreshCollectedFileContext(
+    pathValue: unknown,
+    context: { task: AgentTask; collectedContext: ExecutorCollectedContext },
+  ): Promise<void> {
+    if (typeof pathValue !== 'string') return;
+    context.collectedContext.files.delete(pathValue);
+    try {
+      const readResult = (await this.callTool('read_file', { path: pathValue })) as {
+        success?: boolean;
+        content?: string;
+      };
+      if (readResult.success && typeof readResult.content === 'string') {
+        context.collectedContext.files.set(pathValue, readResult.content);
+      }
+    } catch {
+      // Leave the entry absent so recovery cannot reuse stale content.
     }
   }
 
@@ -388,9 +437,11 @@ export class Executor {
     errorMsg: string,
     step: ExecutionStep,
     params?: Record<string, unknown>,
+    errorCode?: string,
   ): boolean {
     const skillDecision = this.actionSkills.shouldSkipToolError({
       errorMsg,
+      errorCode,
       step,
       params: params ?? {},
     });
@@ -438,6 +489,7 @@ export class Executor {
   private async validateBeforeExecution(
     step: ExecutionStep,
     context: { task: AgentTask; collectedContext: ExecutorCollectedContext },
+    options: StepExecutionOptions = {},
   ): Promise<ValidationResult> {
     const results: ValidationResult['results'] = [];
 
@@ -465,10 +517,9 @@ export class Executor {
         };
       }
 
-      if (!context.collectedContext.files.has(path)) {
-        this.debugLog(
-          `[Executor] 📖 File ${path} not in context, auto-reading before apply_patch...`,
-        );
+      {
+        const cachedContent = context.collectedContext.files.get(path);
+        this.debugLog(`[Executor] 📖 Refreshing ${path} before apply_patch...`);
 
         try {
           const readResult = (await this.callTool('read_file', { path })) as {
@@ -479,8 +530,31 @@ export class Executor {
 
           if (readResult.success && readResult.content !== undefined) {
             context.collectedContext.files.set(path, readResult.content);
+            if (
+              Array.isArray(step.params.patches) &&
+              ((options.deferredSameTargetWrite &&
+                (options.deferredOriginalContent === undefined ||
+                  options.deferredOriginalContent !== readResult.content)) ||
+                (!options.deferredSameTargetWrite &&
+                  cachedContent !== undefined &&
+                  cachedContent !== readResult.content))
+            ) {
+              const message = `Cannot apply explicit patches: ${path} changed after its patch context was collected`;
+              return {
+                pass: false,
+                results: [
+                  {
+                    pass: false,
+                    type: 'stale_patch_context',
+                    severity: 'block',
+                    message,
+                  },
+                ],
+                blockedBy: [message],
+              };
+            }
             this.debugLog(
-              `[Executor] ✅ Auto-read file ${path} (${readResult.content.length} chars) into context`,
+              `[Executor] ✅ Refreshed file ${path} (${readResult.content.length} chars) into context`,
             );
           } else {
             const errorMsg = readResult.error || 'Failed to read file';
@@ -703,15 +777,10 @@ export class Executor {
     step: ExecutionStep,
     result: unknown,
     toolParams?: Record<string, unknown>,
-    /**
-     * 写盘前已在同一份内容上算出的完整校验结果（含 import 检查）。
-     * 有它就直接沿用：内容一模一样，再跑一遍只是重复开销。
-     */
     write?: {
-      /** 解析后的写入路径与落盘内容，由 executeStep 各读一次后传入 */
       path: string | undefined;
       landedContent: string | undefined;
-      preWriteContentValidation?: { validation: ValidationResult; content: string };
+      preflightContent?: string;
     },
   ): Promise<ValidationResult> {
     if (typeof result === 'object' && result !== null) {
@@ -725,56 +794,23 @@ export class Executor {
       }
     }
 
-    if (write?.preWriteContentValidation) {
-      // 只有「实际落盘的就是被校验过的那份」才能复用。整文件判定依赖
-      // collectedContext.files 的行数快照，而 apply_patch 成功后该 Map 不刷新——
-      // 同一计划内二次改同一文件时，工具可能只替换了前 N 行并保留尾部，
-      // 落盘内容 ≠ 被校验的 patch.content。不一致就按读回内容重新判。
-      if (
-        write.landedContent === undefined ||
-        write.landedContent === write.preWriteContentValidation.content
-      ) {
-        // 同样按 action 降级：这份结果是写盘**前**算的，但它现在被当作
-        // 写盘**后**的结论用——判据的可信度不因复用而改变。
-        return demoteNonDecidingVerdicts(write.preWriteContentValidation.validation, step.action);
-      }
-    }
-
+    if (toolParams?.dryRun === true) return { pass: true, results: [] };
     if (WRITE_ACTIONS.includes(step.action)) {
       const path = write?.path;
-      // 与写盘前共用同一条分派规则（见 resolveWriteActionContent）。这里补丁内容
-      // 来自读回磁盘：真实的 create_file / apply_patch 都不返回 `content`，
-      // 局部行补丁也没有 `content` 参数。
       const content = resolveWriteActionContent(step, toolParams, {
         landedContent: write?.landedContent,
-        patchContent: () => write?.landedContent,
+        patchContent: () => write?.preflightContent,
         resultContent: (result as { content?: string })?.content,
       });
-
-      if (content && path) {
+      if (typeof content === 'string' && path) {
         const language = detectLanguage(path);
-        if (language) {
-          // 对 `apply_patch` 这次调用是**纯遥测**：validateCode 只产出
-          // syntax_validity 与 import_validity，而 NON_DECIDING_CHECKS 把两者都
-          // 降级了，所以它决定不了这个动作的成败。保留是因为遥测本身是目标
-          // （#388 要一个能计数的量），代价是每个 modify 步骤多一次整文件的
-          // import 解析。不在这里按 ablation 短路：guard 内部本就跳过被禁用的
-          // 检查，而写盘前那次 validateCode 也是无条件调用的——只在一侧短路会让
-          // 读者以为两条路径的 ablation 行为不同。
-          const codeValidation = await this.config.hallucinationGuard.validateCode(
-            content,
-            language,
-            path,
-          );
-          return demoteNonDecidingVerdicts(codeValidation, step.action);
+        if (language === 'typescript' || language === 'javascript') {
+          const validation = await this.config.hallucinationGuard.validateImports(content, path);
+          return demoteNonDecidingVerdicts(validation, step.action);
         }
       }
     }
-
-    return {
-      pass: true,
-      results: [],
-    };
+    return { pass: true, results: [] };
   }
 
   async callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {

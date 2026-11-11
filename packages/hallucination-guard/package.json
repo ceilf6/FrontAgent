@@ -9,6 +9,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./syntax": {
+      "import": "./dist/checks/syntax-validity.js",
+      "types": "./dist/checks/syntax-validity.d.ts"
     }
   },
   "scripts": {
@@ -20,10 +24,10 @@
   },
   "dependencies": {
     "@frontagent/sdd": "workspace:*",
-    "@frontagent/shared": "workspace:*"
+    "@frontagent/shared": "workspace:*",
+    "typescript": "^6.0.3"
   },
   "devDependencies": {
-    "@types/node": "^25.9.5",
-    "typescript": "^6.0.3"
+    "@types/node": "^25.9.5"
   }
 }

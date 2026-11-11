@@ -2,6 +2,8 @@
  * @frontagent/shared - Shared types and utilities
  */
 
+// File patch projection
+export { type ApplyFilePatchesResult, applyFilePatches } from './file-patches.js';
 // Logger
 export { getLogLevel, type LogLevel, logger, setLogLevel } from './logger.js';
 // Security - Permission rules
@@ -41,12 +43,15 @@ export type {
   SecurityRuleProvenance,
   SecurityRuleSource,
 } from './security/types.js';
+// Syntax language detection
+export { detectSyntaxLanguage, type SyntaxLanguage } from './syntax-language.js';
 // Types - MCP
 export type {
   FilePatch,
   LintError,
   MCPPropertySchema,
   MCPToolDefinition,
+  PatchErrorCode,
   PatchResult,
   TypeError,
 } from './types/mcp.js';

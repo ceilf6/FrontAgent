@@ -28,6 +28,9 @@ importers:
       ts-morph:
         specifier: ^28.0.0
         version: 28.0.0
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.6
@@ -44,9 +47,6 @@ importers:
       turbo:
         specifier: ^2.10.8
         version: 2.10.8
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@25.9.5)(vite@7.3.6(@types/node@25.9.5)(jiti@2.7.0)(yaml@2.9.0))
@@ -248,16 +248,19 @@ importers:
       '@frontagent/shared':
         specifier: workspace:*
         version: link:../shared
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
     devDependencies:
       '@types/node':
         specifier: ^25.9.5
         version: 25.9.5
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
 
   packages/mcp-file:
     dependencies:
+      '@frontagent/hallucination-guard':
+        specifier: workspace:*
+        version: link:../hallucination-guard
       '@frontagent/mcp-filesense':
         specifier: workspace:*
         version: link:../mcp-filesense

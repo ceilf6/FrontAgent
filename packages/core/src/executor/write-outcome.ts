@@ -1,40 +1,24 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { StepResult, ValidationResult } from '@frontagent/shared';
-import type { AgentEvent, ExecutorOutput } from '../types.js';
-import { buildFenceVeto, WRITE_ACTIONS } from './write-validation.js';
+import { validateSourceSyntax } from '@frontagent/hallucination-guard/syntax';
+import { detectSyntaxLanguage, type StepResult, type ValidationResult } from '@frontagent/shared';
+import type { AgentEvent } from '../types.js';
+import { WRITE_ACTIONS } from './write-validation.js';
 
-/**
- * 一次写步骤在工具返回之后的全部判定：合成最终 validation、决定要不要撤销、
- * 拼出对恢复循环有用的错误文案。
- *
- * 抽出来是因为这几件事互相耦合——`landedContent === undefined`、
- * `landedFenceVeto.pass`、`needsRollback` 三者的交叉分支要一起读才成立——
- * 而它们塞在 `executeStep` 里会让那个函数变成「读完 280 行才敢改一行」。
- * 除回滚外全是纯计算，回滚以回调注入，所以这个模块可以脱离执行器单独推演。
- */
+/** Write validation and rollback decisions share one view of the content on disk. */
 export interface WriteOutcomeInput {
   action: string;
   /** 已解析的写入路径，写盘前后共用同一份 */
   landedPath: string | undefined;
   /** 落盘内容；读不回时为 undefined。一次步骤只读一次，由调用方传入 */
   landedContent: string | undefined;
-  /**
-   * 本次写入之前的文件内容，取自 `collectedContext.files`；不可知时为 undefined。
-   *
-   * 围栏判据要判的是「**这次写入**引入了围栏」，而不是「文件里有围栏」。局部行
-   * 补丁只改几行，却会拿到整份落盘文件——文件别处早就存在的围栏会让一次无关的
-   * 合法编辑失败并触发回滚。undefined 时按 fail-closed 处理（`create_file` 没有
-   * 前置内容，任何围栏都必然是这次引入的）。
-   */
+  /** Original content lets patches repair files that already contain syntax errors. */
   priorContent: string | undefined;
-  /** 落盘路径的语言，供围栏判据判断适用性 */
-  landedLanguage: string;
   /** 工具原始返回值，用于取 snapshotId 与判断工具自身是否失败 */
   toolResult: unknown;
   /** 写盘后校验结论 */
   postValidation: ValidationResult;
-  /** guard 的 syntaxValidity 是否启用；关掉时围栏判据也必须一起失效 */
+  /** Whether parser validation is enabled for this write. */
   vetoEnabled: boolean;
   durationMs: number;
 }
@@ -69,7 +53,7 @@ function snapshotIdOf(toolResult: unknown): string | undefined {
  * `rollbackFailed`（那会驱动中止语义，是比「读不回」更强的断言）。
  */
 export function resolveWriteOutcome(input: WriteOutcomeInput): WriteOutcome {
-  const { action, landedPath, landedContent, landedLanguage, toolResult, postValidation } = input;
+  const { action, landedPath, landedContent, toolResult, postValidation } = input;
 
   // 工具自己失败时，写盘后的这套判定全都不适用：没有落盘内容可判，
   // 而 `validateAfterExecution` 已经把工具错误原样放进 blockedBy。继续往下走会
@@ -91,34 +75,29 @@ export function resolveWriteOutcome(input: WriteOutcomeInput): WriteOutcome {
     };
   }
 
-  // 落盘内容里的围栏是**独立**的失败来源，不依附于 postValidation：写盘后的
-  // syntax_validity 在 apply_patch 上已降级为不否决，所以一份写进 .ts 的围栏不会
-  // 再让 postValidation 失败——但它确实是坏内容，必须自己让步骤失败并触发撤销。
-  // 这也让「判失败」与「触发回滚」用同一条确定性判据，不会一个判失败、另一个不撤销。
-  const landedVeto =
-    landedContent !== undefined && input.vetoEnabled
-      ? buildFenceVeto(landedContent, String(landedPath), landedLanguage)
-      : { pass: true, results: [] };
-  // 补丁前就已存在围栏时，这次写入没有引入任何东西——放行，否则一次只改几行的
-  // 合法补丁会因文件别处的既有围栏被判失败并回滚。原文不可知时不放行。
+  const language = landedPath ? detectSyntaxLanguage(landedPath) : undefined;
+  const syntax =
+    landedContent !== undefined && input.vetoEnabled && language && language !== 'yaml'
+      ? validateSourceSyntax({ code: landedContent, language, filePath: landedPath })
+      : undefined;
   const preExisting =
-    input.priorContent !== undefined && !landedVeto.pass
-      ? !buildFenceVeto(input.priorContent, String(landedPath), landedLanguage).pass
+    action === 'apply_patch' &&
+    input.priorContent !== undefined &&
+    syntax?.pass === false &&
+    language
+      ? !validateSourceSyntax({ code: input.priorContent, language, filePath: landedPath }).pass
       : false;
-  const landedFenceVeto = preExisting ? { pass: true, results: [] } : landedVeto;
-
-  // 合并而不是替换。整体换成 landedFenceVeto 会让 postValidation 的
-  // import_validity / syntax_validity 条目、以及工具自身的错误文案一起消失，
-  // 而这个对象同时喂给 validation_failed 事件、stepResult.error 和
-  // ExecutorOutput.validation——正好与 write-validation.ts 里「降级不删除、
-  // 遥测照常可见」的原则相反。
-  const validation: ValidationResult = landedFenceVeto.pass
-    ? postValidation
-    : {
+  const syntaxFailure = syntax?.pass === false && !preExisting;
+  const validation: ValidationResult = syntaxFailure
+    ? {
         pass: false,
-        results: [...postValidation.results, ...landedFenceVeto.results],
-        blockedBy: [...(postValidation.blockedBy ?? []), ...(landedFenceVeto.blockedBy ?? [])],
-      };
+        results: [...postValidation.results, syntax],
+        blockedBy: [
+          ...(postValidation.blockedBy ?? []),
+          syntax.message ?? 'Invalid written syntax',
+        ],
+      }
+    : postValidation;
 
   let rollback: 'requested' | undefined;
   let unreadablePath: string | undefined;
@@ -129,9 +108,8 @@ export function resolveWriteOutcome(input: WriteOutcomeInput): WriteOutcome {
       // 至少要让它在 stepResult.error 里可见，否则又是一个静默为「什么都没发生」
       // 的分支。
       unreadablePath = landedPath;
-    } else if (!landedFenceVeto.pass) {
-      // 回滚只由确定性的围栏判据触发：`create` 快照的回滚是 unlinkSync，
-      // 误判一次就是删掉一个合法文件。
+    } else if (syntaxFailure) {
+      // Only parser-confirmed errors introduced by this write trigger automatic rollback.
       rollback = 'requested';
     }
   }
@@ -174,47 +152,6 @@ export function describeWriteFailure(
     return `${baseError ?? 'step failed'} (could not read back ${unreadablePath}; rollback was not attempted)`;
   }
   return baseError;
-}
-
-/**
- * 写盘前的否决判定。返回 `null` 表示放行。
- *
- * 判据故意只有围栏这一条确定性规则——见 `write-validation.ts` 里为什么不能把
- * 否决权交给 guard 的 `syntax_validity`。而 `vetoEnabled` 必须来自 guard 自己的
- * `enabledChecks`：执行器在 guard 之外复刻了一条检查，若它不受同一份配置管辖，
- * `syntaxValidity: false` 就关不掉写盘否决——那正是 #386 让七月消融基准 guard 臂
- * 失效的机制。
- */
-export function resolvePreWriteVeto(
-  writeContent: { path: string; content: string; language: string } | null,
-  vetoEnabled: boolean,
-  durationMs: number,
-): { output: ExecutorOutput; validation: ValidationResult } | null {
-  if (!writeContent || !vetoEnabled) return null;
-  const validation = buildFenceVeto(writeContent.content, writeContent.path, writeContent.language);
-  if (validation.pass) return null;
-
-  return {
-    validation,
-    output: {
-      stepResult: {
-        success: false,
-        error: `Pre-write validation failed: ${validation.blockedBy?.join('; ') ?? ''}`,
-        duration: durationMs,
-      },
-      validation,
-      // 磁盘上没有残留（rollbackFailed 保持 false），但中止语义必须与其余真实
-      // 检查失败一致：否则计划继续跑，后续针对该文件的 apply_patch 会拿到
-      // 「文件不存在」并被判为可跳过、记成成功——整轮以「零文件产出」呈现为成功。
-      //
-      // 范围限定：`needsRollback` 的唯一读取方是 progress-enforcement，只对直接
-      // 嵌入 `Executor.executeSteps` 的调用方生效。agent 主路径走
-      // `executeStepsWithErrorFeedback` → phase-runner，两者都不读这个字段，那条
-      // 路径上的实际效果是「步骤失败 → 进入 runPhaseRecovery 重试」，而不是中止。
-      needsRollback: true,
-      rollbackFailed: false,
-    },
-  };
 }
 
 /**

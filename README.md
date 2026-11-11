@@ -203,11 +203,7 @@ If you are using a source checkout instead of a globally linked package, point `
   "mcpServers": {
     "frontagent": {
       "command": "/opt/homebrew/bin/node",
-      "args": [
-        "/absolute/path/to/FrontAgent-app/apps/cli/dist/index.js",
-        "mcp",
-        "serve"
-      ]
+      "args": ["/absolute/path/to/FrontAgent-app/apps/cli/dist/index.js", "mcp", "serve"]
     }
   }
 }
@@ -819,22 +815,21 @@ FrontAgent adds a dedicated `skills` layer in Planner to encapsulate reusable pl
 - Supports runtime extension via API:
 
 ```typescript
-import { createAgent, type TaskPlanningSkill } from "@frontagent/core";
+import { createAgent, type TaskPlanningSkill } from '@frontagent/core';
 
 const agent = createAgent(config);
 
 const customSkill: TaskPlanningSkill = {
-  name: "task.security-audit",
-  supports: (task) =>
-    task.type === "debug" && task.description.includes("security"),
+  name: 'task.security-audit',
+  supports: (task) => task.type === 'debug' && task.description.includes('security'),
   plan: ({ stepFactory }) => [
     stepFactory.createStep({
-      description: "Scan for security-sensitive patterns",
-      action: "search_code",
-      tool: "search_code",
+      description: 'Scan for security-sensitive patterns',
+      action: 'search_code',
+      tool: 'search_code',
       params: {
-        pattern: "eval|innerHTML|dangerouslySetInnerHTML",
-        filePattern: "src/**/*.{ts,tsx,js,jsx}",
+        pattern: 'eval|innerHTML|dangerouslySetInnerHTML',
+        filePattern: 'src/**/*.{ts,tsx,js,jsx}',
       },
     }),
   ],
@@ -844,13 +839,13 @@ agent.registerTaskSkill(customSkill);
 console.log(agent.getPlannerSkillSnapshot());
 
 agent.registerExecutorActionSkill({
-  name: "action.run-command.noncritical-policy",
-  action: "run_command",
+  name: 'action.run-command.noncritical-policy',
+  action: 'run_command',
   shouldSkipToolError: ({ errorMsg, params }) => {
-    if (typeof params.command === "string" && params.command.includes("echo")) {
+    if (typeof params.command === 'string' && params.command.includes('echo')) {
       return true;
     }
-    return errorMsg.includes("already exists");
+    return errorMsg.includes('already exists');
   },
 });
 console.log(agent.getExecutorSkillSnapshot());

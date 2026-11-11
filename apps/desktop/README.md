@@ -30,14 +30,14 @@ renderer (React, sandboxed)
 
 ## Scripts
 
-| Script | What it does |
-|--------|--------------|
-| `dev` | Vite dev server + Electron against it |
-| `dev:renderer` | renderer only, in a browser (mock bridge) |
-| `build` | typecheck + Vite renderer build + esbuild main/preload |
-| `package` | unsigned, host-platform unpacked app (`electron-builder --dir`) |
-| `release` | unsigned per-platform distributable zip (`electron-builder`) |
-| `test` / `typecheck` | Vitest / `tsc --noEmit` |
+| Script               | What it does                                                    |
+| -------------------- | --------------------------------------------------------------- |
+| `dev`                | Vite dev server + Electron against it                           |
+| `dev:renderer`       | renderer only, in a browser (mock bridge)                       |
+| `build`              | typecheck + Vite renderer build + esbuild main/preload          |
+| `package`            | unsigned, host-platform unpacked app (`electron-builder --dir`) |
+| `release`            | unsigned per-platform distributable zip (`electron-builder`)    |
+| `test` / `typecheck` | Vitest / `tsc --noEmit`                                         |
 
 ## Packaging & release
 

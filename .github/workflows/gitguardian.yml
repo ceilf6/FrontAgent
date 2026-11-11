@@ -19,12 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: GitGuardian scan
-        uses: GitGuardian/ggshield/actions/secret@faa02e4bc7218c28e0ccfdb8bf33309ed72dbb99  # v1.53.0
+        uses: GitGuardian/ggshield/actions/secret@faa02e4bc7218c28e0ccfdb8bf33309ed72dbb99 # v1.53.0
         env:
           GITHUB_PUSH_BEFORE_SHA: ${{ github.event.before }}
           GITHUB_PUSH_BASE_SHA: ${{ github.event.base }}

@@ -542,6 +542,25 @@ test('desktop release workflow publishes per-platform zips on version tags', () 
   assert.match(config, /win:\s*\n\s*target:\s*zip/u);
 });
 
+test('desktop release downloads all platform artifacts into the release asset directory', () => {
+  const release = readFileSync('.github/workflows/release.yml', 'utf8');
+  const downloadStep = /uses: actions\/download-artifact@[^\n]*\n([\s\S]*?)(?=\n {6}- |$)/u.exec(
+    release,
+  )?.[1];
+  const publishStep = /uses: softprops\/action-gh-release@[^\n]*\n([\s\S]*?)(?=\n {6}- |$)/u.exec(
+    release,
+  )?.[1];
+  assert.ok(downloadStep, 'release has no artifact download step');
+  assert.ok(publishStep, 'release has no asset publishing step');
+  assert.match(downloadStep, /merge-multiple:\s*true/u);
+  assert.doesNotMatch(downloadStep, /^\s+(?:name|artifact-ids|pattern|repository|run-id):/mu);
+  assert.doesNotMatch(downloadStep, /skip-decompress:\s*true/u);
+  const downloadPath = /^\s+path:\s*(\S+)/mu.exec(downloadStep)?.[1];
+  const releaseAssets = /^\s+files:\s*(\S+)/mu.exec(publishStep)?.[1];
+  assert.ok(downloadPath, 'artifact downloads need an explicit directory');
+  assert.equal(releaseAssets, `${downloadPath}/*.zip`);
+});
+
 test('PR template contains enforced GitNexus summary fields', () => {
   const template = readFileSync('.github/PULL_REQUEST_TEMPLATE.md', 'utf8');
 

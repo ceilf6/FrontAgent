@@ -63,8 +63,7 @@ function normalizeDir(input: string): string {
   const normalized = input.replace(/\\/g, '/');
   if (!normalized || normalized === '.') return '.';
   if (normalized.endsWith('/')) return normalized.replace(/\/+$/, '') || '.';
-  const ext = path.posix.extname(normalized);
-  return ext ? path.posix.dirname(normalized) || '.' : normalized;
+  return normalized;
 }
 
 function uniqueDirs(dirs: string[], limit: number): string[] {
@@ -109,7 +108,13 @@ function collectTargetDirs(steps: ExecutionStep[]): string[] {
       dirs.push(stringParam(step, 'directory') ?? '.');
     } else {
       const pathParam = stringParam(step, 'path');
-      if (pathParam) dirs.push(pathParam);
+      if (pathParam) {
+        dirs.push(
+          step.action === 'list_directory'
+            ? pathParam
+            : path.posix.dirname(pathParam.replace(/\\/g, '/')),
+        );
+      }
     }
   }
   return uniqueDirs(dirs, 5);
@@ -162,7 +167,7 @@ export function decideFilesense(task: AgentTask, steps: ExecutionStep[]): Filese
     return skip('known single-file task can use direct file tools');
   }
 
-  if (taskMentionsLocationNeed(task) || (task.type === 'modify' && needsDiscovery)) {
+  if (taskMentionsLocationNeed(task)) {
     return enable('locate', 'task needs locating files or entrypoints', {
       paths: collectTargetDirs(steps),
       depth: 2,
@@ -189,6 +194,14 @@ export function decideFilesense(task: AgentTask, steps: ExecutionStep[]): Filese
       depth: 2,
       maxEntries: 500,
       maxBytes: 160 * 1024,
+    });
+  }
+
+  if (task.type === 'modify' && needsDiscovery) {
+    return enable('locate', 'task needs locating files or entrypoints', {
+      paths: collectTargetDirs(steps),
+      depth: 2,
+      maxEntries: 300,
     });
   }
 

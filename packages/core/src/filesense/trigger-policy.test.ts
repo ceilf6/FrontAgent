@@ -102,9 +102,74 @@ it('takes search roots from directory, not file patterns or prose', () => {
   expect(decision.paths).toEqual(['src/features/cart']);
 });
 
-it('skips a known single-file query without adding navigation for incidental words', () => {
-  const decision = decideFilesense(task('explain this module'), [
+it.each(['explain this architecture', '解释这个文件的结构'])(
+  'skips a known single-file query with structure vocabulary: %s',
+  (description) => {
+    const decision = decideFilesense(task(description), [
+      step('read_file', { path: 'src/App.tsx' }),
+    ]);
+    expect(decision.enabled).toBe(false);
+  },
+);
+
+it.each([
+  step('search_code', { directory: 'src/features/cart.v2' }),
+  step('list_directory', { path: 'src/features/cart.v2' }),
+])('preserves the explicit directory of $action', (discoveryStep) => {
+  const decision = decideFilesense(task('Explain responsibilities here'), [discoveryStep]);
+  expect(decision.paths).toEqual(['src/features/cart.v2']);
+});
+
+it.each(['read_file', 'apply_patch', 'create_file'] as const)(
+  'uses the parent of an extensionless %s target without changing a dotted directory',
+  (action) => {
+    const decision = decideFilesense(task('Explain responsibilities here'), [
+      step('list_directory', { path: 'src/features/cart.v2' }),
+      step(action, { path: 'src/features/cart.v2/README' }),
+    ]);
+    expect(decision.paths).toEqual(['src/features/cart.v2']);
+  },
+);
+
+it.each([
+  step('search_code', { directory: 'src/features/cart' }),
+  step('list_directory', { path: 'src/features/cart' }),
+])('keeps the multi-file modification budget with $action discovery', (discoveryStep) => {
+  const decision = decideFilesense(task('repair merge logic', 'modify'), [
+    discoveryStep,
+    step('apply_patch', { path: 'src/features/cart/merge.ts' }),
+    step('apply_patch', { path: 'src/features/cart/merge.test.ts' }),
+  ]);
+  expect(decision).toMatchObject({
+    enabled: true,
+    intent: 'prepare_refactor',
+    depth: 2,
+    maxEntries: 500,
+    maxBytes: 160 * 1024,
+    timeoutMs: 3000,
+  });
+});
+
+it.each([
+  {
+    type: 'create' as const,
+    intent: 'prepare_create',
+    depth: 1,
+    maxEntries: 180,
+    maxBytes: 64 * 1024,
+  },
+  {
+    type: 'refactor' as const,
+    intent: 'prepare_refactor',
+    depth: 2,
+    maxEntries: 500,
+    maxBytes: 160 * 1024,
+  },
+])('preserves the $type intent when discovery is needed', (expected) => {
+  const decision = decideFilesense(task('Implement the total calculation', expected.type), [
+    step('search_code', { directory: 'src' }),
     step('read_file', { path: 'src/App.tsx' }),
   ]);
-  expect(decision.enabled).toBe(false);
+  const { type: _type, ...budget } = expected;
+  expect(decision).toMatchObject({ enabled: true, ...budget, timeoutMs: 3000 });
 });

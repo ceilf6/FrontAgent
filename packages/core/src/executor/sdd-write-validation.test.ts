@@ -97,6 +97,82 @@ function step(
 }
 
 describe('SDD on the real executor write path', () => {
+  it.each(['index.ts', 'index.tsx', 'index.js'])(
+    'blocks a directory import resolved to %s before the write',
+    async (entry) => {
+      const sdd = config();
+      sdd.moduleBoundaries = [
+        { from: 'src/components/**', canImport: [], cannotImport: ['src/api/**'] },
+      ];
+      const test = setup({ sdd });
+      test.put('src/components/Existing.ts', 'export {};');
+      test.put(`src/api/${entry}`, 'export const value = 1;');
+      const result = await test.executor.executeStep(
+        step('create_file', {
+          path: 'src/components/Card.ts',
+          content: "import { value } from '../api'; export { value };",
+        }),
+        test.context,
+      );
+      expect(result.stepResult.success).toBe(false);
+      expect(result.validation.results).toContainEqual(
+        expect.objectContaining({ type: 'sdd_compliance', pass: false, severity: 'block' }),
+      );
+      expect(test.callTool).not.toHaveBeenCalled();
+      expect(existsSync(join(test.projectRoot, 'src/components/Card.ts'))).toBe(false);
+      expect(test.events.filter((event) => event.type === 'validation_failed')).toEqual([
+        expect.objectContaining({ stage: 'pre_write' }),
+      ]);
+    },
+  );
+
+  it('allows the same-name file selected ahead of a forbidden directory entry', async () => {
+    const sdd = config();
+    sdd.moduleBoundaries = [
+      { from: 'src/components/**', canImport: ['src/api.ts'], cannotImport: ['src/api/**'] },
+    ];
+    const test = setup({ sdd });
+    test.put('src/components/Existing.ts', 'export {};');
+    test.put('src/api.ts', 'export const value = 1;');
+    test.put('src/api/index.ts', 'export const value = 2;');
+    const result = await test.executor.executeStep(
+      step('create_file', {
+        path: 'src/components/Card.ts',
+        content: "import { value } from '../api'; export { value };",
+      }),
+      test.context,
+    );
+    expect(result.stepResult.success, result.stepResult.error).toBe(true);
+    expect(result.validation.warnings).toBeUndefined();
+    expect(test.callTool).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(test.projectRoot, 'src/components/Card.ts'))).toBe(true);
+  });
+
+  it('does not invent a directory entry for an unresolved forward import', async () => {
+    const sdd = config();
+    sdd.moduleBoundaries = [
+      { from: 'src/components/**', canImport: [], cannotImport: ['src/api/**'] },
+    ];
+    const test = setup({ sdd, checks: { importValidity: true } });
+    test.put('src/components/Existing.ts', 'export {};');
+    const result = await test.executor.executeStep(
+      step('create_file', {
+        path: 'src/components/Card.ts',
+        content: "import { value } from '../api'; export { value };",
+      }),
+      test.context,
+    );
+    expect(test.callTool).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(test.projectRoot, 'src/components/Card.ts'))).toBe(true);
+    expect(result.validation.results).toContainEqual(
+      expect.objectContaining({ type: 'sdd_compliance', pass: true }),
+    );
+    expect(result.stepResult.error).toContain('Cannot resolve import');
+    expect(test.events.filter((event) => event.type === 'validation_failed')).toEqual([
+      expect.objectContaining({ stage: 'post_write' }),
+    ]);
+  });
+
   it('blocks forbidden generated content before creating a file and emits one pre-write verdict', async () => {
     const test = setup();
     const result = await test.executor.executeStep(

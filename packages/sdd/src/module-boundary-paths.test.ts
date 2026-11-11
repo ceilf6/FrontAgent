@@ -11,6 +11,22 @@ function validator() {
 }
 
 describe('project-relative SDD module boundaries', () => {
+  it('uses a resolved module path while preserving the original specifier in the violation', () => {
+    const result = validator().validate({
+      type: 'create_file',
+      targetPath: 'src/components/Card.ts',
+      imports: ['../api'],
+      resolvedImports: { '../api': 'src/api/index.ts' },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.violations).toContainEqual(
+      expect.objectContaining({
+        type: 'error',
+        message: 'Module src/components/Card.ts cannot import from ../api',
+      }),
+    );
+  });
+
   it('blocks a relative import into a forbidden module', () => {
     const result = validator().validate({
       type: 'create_file',

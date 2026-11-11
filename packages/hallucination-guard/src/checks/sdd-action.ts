@@ -3,6 +3,7 @@ import type { AgentAction } from '@frontagent/sdd';
 import { detectSyntaxLanguage, normalizePath } from '@frontagent/shared';
 import ts from 'typescript';
 import type { AgentOutput } from '../guard.js';
+import { isInsidePath } from './path-containment.js';
 
 /** Static module references only: comments and string examples are not dependencies. */
 function sourceImports(content: string, filePath: string): string[] {
@@ -40,6 +41,34 @@ function packageRoot(specifier: string): string | undefined {
   return segments[0] || undefined;
 }
 
+/** Resolve existing relative file/index entries without reading package or alias configuration. */
+function resolveRelativeImports(
+  imports: string[],
+  targetPath: string,
+  projectRoot: string,
+): Record<string, string> {
+  const root = resolve(projectRoot);
+  const resolvedImports: Record<string, string> = {};
+  const host: ts.ModuleResolutionHost = {
+    fileExists: (path) => isInsidePath(path, root) && ts.sys.fileExists(path),
+    readFile: () => undefined,
+    directoryExists: (path) => isInsidePath(path, root) && ts.sys.directoryExists(path),
+  };
+  for (const specifier of imports) {
+    if (!specifier.startsWith('./') && !specifier.startsWith('../')) continue;
+    const module = ts.resolveModuleName(
+      specifier,
+      resolve(root, targetPath),
+      { moduleResolution: ts.ModuleResolutionKind.Node10, allowJs: true, resolveJsonModule: true },
+      host,
+    ).resolvedModule;
+    if (module && isInsidePath(module.resolvedFileName, root)) {
+      resolvedImports[specifier] = normalizePath(relative(root, module.resolvedFileName));
+    }
+  }
+  return resolvedImports;
+}
+
 /** SDD paths are project-relative; module availability is checked separately after writes. */
 export function createSDDAction(output: AgentOutput, projectRoot: string): AgentAction {
   const targetPath = output.targetPath
@@ -66,6 +95,9 @@ export function createSDDAction(output: AgentOutput, projectRoot: string): Agent
     sourcePath: output.sourcePath,
     content: output.content,
     imports,
+    resolvedImports: targetPath
+      ? resolveRelativeImports(imports, targetPath, projectRoot)
+      : undefined,
     dependencies,
   };
 }

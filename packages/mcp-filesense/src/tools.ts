@@ -297,11 +297,8 @@ export async function handleFilesenseTool(
         for (const requested of requestedPaths ?? []) {
           resolvePath(requested, projectRoot);
         }
-        const firstPath =
-          requestedPaths && requestedPaths.length > 0
-            ? resolvePath(requestedPaths[0], projectRoot)
-            : targetPath;
-        const result = await engine.navigate(firstPath, {
+        // Requested paths are relative to this project, including missing targets.
+        const result = await engine.navigate(sandboxRoot, {
           boundary: sandboxRoot,
           paths: requestedPaths,
           intent: args.intent as never,

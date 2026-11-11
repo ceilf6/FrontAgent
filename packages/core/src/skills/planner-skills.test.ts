@@ -116,3 +116,27 @@ describe('phase.filesense-navigate writeMode boundary', () => {
     expect(navigateStepOf({ enabled: false })).toBeUndefined();
   });
 });
+
+it('injects discovery navigation without keyword hints and honors the disable switch', () => {
+  const query = {
+    ...createTask,
+    type: 'query' as const,
+    description: '这个代码库按什么原则分层？',
+  };
+  const steps: ExecutionStep[] = [
+    {
+      ...writeSteps[0],
+      action: 'search_code',
+      tool: 'search_code',
+      params: { directory: 'src/features' },
+    },
+  ];
+  const registry = buildRegistry();
+  const injected = registry.injectPhaseSteps(query, steps, stepFactory, {});
+  expect(injected[0]).toMatchObject({
+    tool: 'filesense_navigate',
+    phase: 'preparation',
+    params: { paths: ['src/features'] },
+  });
+  expect(registry.injectPhaseSteps(query, steps, stepFactory, { enabled: false })).toEqual(steps);
+});

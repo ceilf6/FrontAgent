@@ -32,6 +32,7 @@ function makeConfig(overrides: Partial<ExecutorConfig> = {}): ExecutorConfig {
       validateFilePath: vi.fn(),
       isCheckEnabled: vi.fn().mockReturnValue(true),
       validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
+      validateSDDCompliance: vi.fn().mockResolvedValue({ pass: true, results: [] }),
       validateImports: vi.fn().mockResolvedValue({ pass: true, results: [] }),
       validateCode: vi.fn(),
     } as unknown as ExecutorConfig['hallucinationGuard'],
@@ -898,6 +899,7 @@ describe('Executor', () => {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
             isCheckEnabled: vi.fn().mockReturnValue(true),
             validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
+            validateSDDCompliance: vi.fn().mockResolvedValue({ pass: true, results: [] }),
             validateImports: vi.fn().mockResolvedValue({
               pass: false,
               results: [
@@ -950,6 +952,7 @@ describe('Executor', () => {
             validateFilePath: vi.fn().mockResolvedValue({ pass: true, type: 'file_existence' }),
             isCheckEnabled: vi.fn().mockReturnValue(true),
             validateSyntax: vi.fn().mockResolvedValue({ pass: true, results: [] }),
+            validateSDDCompliance: vi.fn().mockResolvedValue({ pass: true, results: [] }),
             validateImports: vi.fn().mockResolvedValue({ pass: true, results: [] }),
             validateCode: vi.fn(),
           } as unknown as ExecutorConfig['hallucinationGuard'],

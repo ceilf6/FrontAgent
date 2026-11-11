@@ -3,6 +3,7 @@
  * 根据 SDD 配置验证 Agent 的操作是否符合约束
  */
 
+import { posix } from 'node:path';
 import {
   type ActionType,
   type ConstraintViolation,
@@ -157,10 +158,15 @@ export class SDDValidator {
       if (minimatch(normalizedSource, boundary.from)) {
         for (const importPath of imports) {
           const normalizedImport = normalizePath(importPath);
+          // Relative specifiers refer to the importing file; SDD module globs
+          // describe paths from the project root. Raw-specifier rules also apply.
+          const modulePath = normalizedImport.startsWith('.')
+            ? posix.normalize(posix.join(posix.dirname(normalizedSource), normalizedImport))
+            : normalizedImport;
 
           // 检查是否在禁止导入列表中
           for (const forbidden of boundary.cannotImport) {
-            if (minimatch(normalizedImport, forbidden)) {
+            if (minimatch(normalizedImport, forbidden) || minimatch(modulePath, forbidden)) {
               violations.push({
                 type: 'error',
                 rule: 'module_boundary',
@@ -176,6 +182,7 @@ export class SDDValidator {
             const isAllowed = boundary.canImport.some(
               (allowed) =>
                 minimatch(normalizedImport, allowed) ||
+                minimatch(modulePath, allowed) ||
                 normalizedImport.startsWith('node:') ||
                 !normalizedImport.startsWith('.'), // 外部包
             );

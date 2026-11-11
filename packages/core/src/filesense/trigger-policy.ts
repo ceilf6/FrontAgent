@@ -104,58 +104,15 @@ function taskMentionsStructureNeed(task: AgentTask): boolean {
 function collectTargetDirs(steps: ExecutionStep[]): string[] {
   const dirs: string[] = [];
   for (const step of steps) {
-    const pathParam = stringParam(step, 'path');
-    if (pathParam) dirs.push(pathParam);
-  }
-  return uniqueDirs(dirs, 5);
-}
-
-const FOCUS_DIRS = [
-  'src',
-  'components',
-  'hooks',
-  'api',
-  'services',
-  'pages',
-  'routes',
-  'views',
-  'store',
-  'stores',
-];
-
-function taskMentionedFocusDirs(task: AgentTask): string[] {
-  const text = task.description.toLowerCase();
-  return FOCUS_DIRS.filter((dir) => new RegExp(`(^|[^a-z0-9_-])${dir}([^a-z0-9_-]|$)`).test(text));
-}
-
-/**
- * 合并「任务文本里提到的目录名」与「计划步骤里的真实目录」。
- *
- * 提到的名字是**裸名**（`hooks` / `components` / `api`），不是路径，此前它们排在
- * 计划推导出的真实目录**前面**。engine 对不存在的路径只是跳过并记 warning
- * （已实测），所以不会毁掉整次扫描——但 `paths` 上限是 5，一个不解析的名字
- * 就白占一个名额，把真正该扫的目录挤出预算。实测
- * `deep-create-checkout-hook` 的 `paths: ["hooks", "src/features/checkout",
- * "src/features/checkout/hooks"]` 即为此形（issue #420）。
- *
- * 现在：① 计划推导出的真实目录排前面——那是即将写入的位置，证据强度高于
- * 从散文里捞到的名字；② 额外补上拼接变体（`src/features/checkout` + `hooks`
- * → `src/features/checkout/hooks`），这才是裸名真正想表达的位置；
- * ③ 裸名本身排最后，仍保留（在根下确有同名目录的仓库里它是对的）。
- */
-function mergeFocusDirs(task: AgentTask, dirs: string[], limit = 5): string[] {
-  const mentioned = taskMentionedFocusDirs(task);
-  const realDirs = uniqueDirs(dirs, limit);
-
-  const derived: string[] = [];
-  for (const base of realDirs) {
-    if (base === '.') continue;
-    for (const name of mentioned) {
-      derived.push(`${base}/${name}`);
+    if (!FILE_ACTIONS.has(step.action)) continue;
+    if (step.action === 'search_code') {
+      dirs.push(stringParam(step, 'directory') ?? '.');
+    } else {
+      const pathParam = stringParam(step, 'path');
+      if (pathParam) dirs.push(pathParam);
     }
   }
-
-  return uniqueDirs([...realDirs, ...derived, ...mentioned], limit);
+  return uniqueDirs(dirs, 5);
 }
 
 function taskMentionsFreshnessNeed(task: AgentTask): boolean {
@@ -168,13 +125,20 @@ export function decideFilesense(task: AgentTask, steps: ExecutionStep[]): Filese
     return skip('no file-system exploration or mutation steps');
   }
 
+  const needsDiscovery = steps.some((step) =>
+    ['search_code', 'list_directory'].includes(step.action),
+  );
+
   if (task.type === 'query') {
+    if (!needsDiscovery && isKnownSingleFileTask(steps)) {
+      return skip('known single-file query can use direct file tools');
+    }
     if (taskMentionsFreshnessNeed(task)) {
       return enable(
         'validate_freshness',
         'query asks for fresh repository layout or missing paths',
         {
-          paths: mergeFocusDirs(task, collectTargetDirs(steps), 3),
+          paths: uniqueDirs(collectTargetDirs(steps), 3),
           depth: 1,
           maxEntries: 120,
           maxBytes: 48 * 1024,
@@ -183,9 +147,9 @@ export function decideFilesense(task: AgentTask, steps: ExecutionStep[]): Filese
       );
     }
 
-    if (taskMentionsStructureNeed(task) || taskMentionsLocationNeed(task)) {
+    if (needsDiscovery || taskMentionsStructureNeed(task) || taskMentionsLocationNeed(task)) {
       return enable('understand_structure', 'query requires repository structure', {
-        paths: mergeFocusDirs(task, ['.'], 3),
+        paths: uniqueDirs(collectTargetDirs(steps), 3),
         depth: 2,
         maxEntries: 250,
         maxBytes: 96 * 1024,
@@ -198,9 +162,9 @@ export function decideFilesense(task: AgentTask, steps: ExecutionStep[]): Filese
     return skip('known single-file task can use direct file tools');
   }
 
-  if (taskMentionsLocationNeed(task)) {
+  if (taskMentionsLocationNeed(task) || (task.type === 'modify' && needsDiscovery)) {
     return enable('locate', 'task needs locating files or entrypoints', {
-      paths: mergeFocusDirs(task, ['.']),
+      paths: collectTargetDirs(steps),
       depth: 2,
       maxEntries: 300,
     });
@@ -208,7 +172,7 @@ export function decideFilesense(task: AgentTask, steps: ExecutionStep[]): Filese
 
   if (task.type === 'create') {
     return enable('prepare_create', 'create task benefits from nearby placement conventions', {
-      paths: mergeFocusDirs(task, collectTargetDirs(steps)),
+      paths: collectTargetDirs(steps),
       depth: 1,
       maxEntries: 180,
       maxBytes: 64 * 1024,
@@ -221,7 +185,7 @@ export function decideFilesense(task: AgentTask, steps: ExecutionStep[]): Filese
       1
   ) {
     return enable('prepare_refactor', 'multi-file change benefits from local directory map', {
-      paths: mergeFocusDirs(task, collectTargetDirs(steps)),
+      paths: collectTargetDirs(steps),
       depth: 2,
       maxEntries: 500,
       maxBytes: 160 * 1024,
@@ -230,7 +194,7 @@ export function decideFilesense(task: AgentTask, steps: ExecutionStep[]): Filese
 
   if (task.type === 'debug' || taskMentionsStructureNeed(task)) {
     return enable('understand_structure', 'debug or structure task benefits from lightweight map', {
-      paths: mergeFocusDirs(task, collectTargetDirs(steps)),
+      paths: collectTargetDirs(steps),
       depth: 2,
       maxEntries: 300,
     });

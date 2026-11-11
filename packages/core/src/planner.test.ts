@@ -148,8 +148,13 @@ describe('Planner query tasks', () => {
       [],
     );
 
-    expect(result.plan?.steps).toHaveLength(1);
+    expect(result.plan?.steps).toHaveLength(2);
     expect(result.plan?.steps[0]).toMatchObject({
+      tool: 'filesense_navigate',
+      phase: 'preparation',
+      params: { paths: ['.'] },
+    });
+    expect(result.plan?.steps[1]).toMatchObject({
       action: 'search_code',
       tool: 'search_code',
       params: { query: '读取 README.md 并总结', maxResults: 20 },

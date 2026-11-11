@@ -244,6 +244,27 @@ export class Executor {
         toolParams = preflight.toolParams;
       }
 
+      const sddValidation =
+        preflight && !dryRun
+          ? await this.config.hallucinationGuard.validateSDDCompliance({
+              action: step.action,
+              targetPath: preflight.path,
+              content: preflight.content,
+            })
+          : undefined;
+      if (sddValidation && !sddValidation.pass) {
+        this.emitValidationFailed('pre_write', sddValidation, step, preflight?.path);
+        return trace.finish({
+          stepResult: {
+            success: false,
+            error: `Pre-write validation failed: ${sddValidation.blockedBy?.join('; ')}`,
+            duration: Date.now() - startTime,
+          },
+          validation: sddValidation,
+          needsRollback: true,
+        });
+      }
+
       const toolResult = await trace.withStage('call_tool', () =>
         this.callTool(step.tool, toolParams),
       );
@@ -288,6 +309,7 @@ export class Executor {
           path: landedPath,
           landedContent,
           preflightContent: preflight?.content,
+          sddValidation,
         }),
       );
 
@@ -762,7 +784,12 @@ export class Executor {
     /** 已解析的写入路径；技能可能改写过 step.params.path */
     resolvedPath?: string,
   ): void {
-    if (validation.results.some((result) => !result.pass)) {
+    if (
+      validation.results.some(
+        (result) =>
+          !result.pass && (result.type !== 'sdd_compliance' || result.severity === 'block'),
+      )
+    ) {
       this.config.emitEvent?.({
         type: 'validation_failed',
         stage,
@@ -781,6 +808,7 @@ export class Executor {
       path: string | undefined;
       landedContent: string | undefined;
       preflightContent?: string;
+      sddValidation?: ValidationResult;
     },
   ): Promise<ValidationResult> {
     if (typeof result === 'object' && result !== null) {
@@ -803,11 +831,28 @@ export class Executor {
         resultContent: (result as { content?: string })?.content,
       });
       if (typeof content === 'string' && path) {
+        const sddValidation =
+          content === write?.preflightContent && write.sddValidation
+            ? write.sddValidation
+            : await this.config.hallucinationGuard.validateSDDCompliance({
+                action: step.action,
+                targetPath: path,
+                content,
+              });
+        const validations = [sddValidation];
         const language = detectLanguage(path);
         if (language === 'typescript' || language === 'javascript') {
           const validation = await this.config.hallucinationGuard.validateImports(content, path);
-          return demoteNonDecidingVerdicts(validation, step.action);
+          validations.push(demoteNonDecidingVerdicts(validation, step.action));
         }
+        const blockedBy = validations.flatMap((validation) => validation.blockedBy ?? []);
+        const warnings = validations.flatMap((validation) => validation.warnings ?? []);
+        return {
+          pass: validations.every((validation) => validation.pass),
+          results: validations.flatMap((validation) => validation.results),
+          blockedBy: blockedBy.length > 0 ? blockedBy : undefined,
+          warnings: warnings.length > 0 ? warnings : undefined,
+        };
       }
     }
     return { pass: true, results: [] };

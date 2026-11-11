@@ -4,7 +4,6 @@
  */
 
 import { resolve } from 'node:path';
-import type { AgentAction } from '@frontagent/sdd';
 import type {
   ActionType,
   HallucinationCheckResult,
@@ -14,6 +13,7 @@ import type {
 import { checkFileExistence } from './checks/file-existence.js';
 import { checkAllImports, extractImports } from './checks/import-validity.js';
 import { isInsidePath } from './checks/path-containment.js';
+import { createSDDAction } from './checks/sdd-action.js';
 import { checkSDDCompliance } from './checks/sdd-compliance.js';
 import { checkSyntaxValidity } from './checks/syntax-validity.js';
 
@@ -152,22 +152,7 @@ export class HallucinationGuard {
     }
 
     // 4. SDD 合规性检查
-    if (this.isCheckEnabled('sddCompliance') && this.config.sddConfig) {
-      const agentAction: AgentAction = {
-        type: output.action,
-        targetPath: output.targetPath,
-        sourcePath: output.sourcePath,
-        content: output.content,
-        imports: output.imports,
-        dependencies: output.dependencies,
-      };
-
-      const sddCheck = await checkSDDCompliance({
-        action: agentAction,
-        sddConfig: this.config.sddConfig,
-      });
-      results.push(sddCheck);
-    }
+    results.push(...(await this.validateSDDCompliance(output)).results);
 
     // 汇总结果
     const blockedBy = results
@@ -181,6 +166,24 @@ export class HallucinationGuard {
       results,
       blockedBy: blockedBy.length > 0 ? blockedBy : undefined,
       warnings: warnings.length > 0 ? warnings : undefined,
+    };
+  }
+
+  /** Validate SDD without file-existence, syntax, or import-availability checks. */
+  async validateSDDCompliance(output: AgentOutput): Promise<ValidationResult> {
+    if (!this.isCheckEnabled('sddCompliance') || !this.config.sddConfig) {
+      return { pass: true, results: [] };
+    }
+    const result = await checkSDDCompliance({
+      action: createSDDAction(output, this.config.projectRoot),
+      sddConfig: this.config.sddConfig,
+    });
+    const blocked = !result.pass && result.severity === 'block';
+    return {
+      pass: !blocked,
+      results: [result],
+      blockedBy: blocked ? [result.message ?? result.type] : undefined,
+      warnings: result.severity === 'warn' ? [result.message ?? result.type] : undefined,
     };
   }
 

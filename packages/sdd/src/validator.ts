@@ -3,6 +3,7 @@
  * 根据 SDD 配置验证 Agent 的操作是否符合约束
  */
 
+import { posix } from 'node:path';
 import {
   type ActionType,
   type ConstraintViolation,
@@ -20,6 +21,8 @@ export interface AgentAction {
   sourcePath?: string;
   content?: string;
   imports?: string[];
+  /** Existing module files keyed by their original specifier; paths are project-relative. */
+  resolvedImports?: Readonly<Record<string, string>>;
   exports?: string[];
   dependencies?: string[];
 }
@@ -60,7 +63,11 @@ export class SDDValidator {
 
     // 2. 检查模块边界
     if (action.targetPath && action.imports) {
-      const boundaryViolations = this.checkModuleBoundaries(action.targetPath, action.imports);
+      const boundaryViolations = this.checkModuleBoundaries(
+        action.targetPath,
+        action.imports,
+        action.resolvedImports,
+      );
       violations.push(...boundaryViolations);
     }
 
@@ -149,7 +156,11 @@ export class SDDValidator {
   /**
    * 检查模块边界
    */
-  private checkModuleBoundaries(sourcePath: string, imports: string[]): ConstraintViolation[] {
+  private checkModuleBoundaries(
+    sourcePath: string,
+    imports: string[],
+    resolvedImports?: Readonly<Record<string, string>>,
+  ): ConstraintViolation[] {
     const violations: ConstraintViolation[] = [];
     const normalizedSource = normalizePath(sourcePath);
 
@@ -157,10 +168,18 @@ export class SDDValidator {
       if (minimatch(normalizedSource, boundary.from)) {
         for (const importPath of imports) {
           const normalizedImport = normalizePath(importPath);
+          // Relative specifiers refer to the importing file; SDD module globs
+          // describe paths from the project root. Raw-specifier rules also apply.
+          const modulePath = normalizedImport.startsWith('.')
+            ? posix.normalize(posix.join(posix.dirname(normalizedSource), normalizedImport))
+            : normalizedImport;
+          const resolvedImport = resolvedImports?.[importPath];
+          const paths = [normalizedImport, modulePath];
+          if (typeof resolvedImport === 'string') paths.push(normalizePath(resolvedImport));
 
           // 检查是否在禁止导入列表中
           for (const forbidden of boundary.cannotImport) {
-            if (minimatch(normalizedImport, forbidden)) {
+            if (paths.some((path) => minimatch(path, forbidden))) {
               violations.push({
                 type: 'error',
                 rule: 'module_boundary',
@@ -175,7 +194,7 @@ export class SDDValidator {
           if (boundary.canImport.length > 0) {
             const isAllowed = boundary.canImport.some(
               (allowed) =>
-                minimatch(normalizedImport, allowed) ||
+                paths.some((path) => minimatch(path, allowed)) ||
                 normalizedImport.startsWith('node:') ||
                 !normalizedImport.startsWith('.'), // 外部包
             );

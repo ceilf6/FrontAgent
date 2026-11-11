@@ -1,5 +1,6 @@
 export { createLLMService } from './factory.js';
 export {
+  getLLMRequestFailureText,
   isLLMRequestFailure,
   stripLLMRequestTag,
   tagLLMRequestFailure,

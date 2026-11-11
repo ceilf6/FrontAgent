@@ -30,6 +30,7 @@ export {
   type GeneratedCode,
   type GeneratedPatch,
   type GeneratedPlan,
+  getLLMRequestFailureText,
   isLLMRequestFailure,
   LLMService,
   stripLLMRequestTag,

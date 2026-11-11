@@ -1,5 +1,6 @@
 import type { ExecutionStep } from '@frontagent/shared';
 import { describe, expect, it, vi } from 'vitest';
+import { Executor } from '../executor.js';
 import { isLLMRequestFailure, tagLLMRequestFailure } from '../llm/llm-request-error.js';
 import { Planner } from '../planner.js';
 import type { AgentEvent, AgentSessionSnapshot } from '../types.js';
@@ -110,4 +111,107 @@ describe('agent error provenance at output boundaries', () => {
     expect(JSON.stringify(events)).toContain('401 Unauthorized');
     expect(step.result?.error).toBe(error);
   });
+});
+
+it('keeps retained planning events independent from subsequent execution errors', () => {
+  const agent = agentWithFailure();
+  const events: AgentEvent[] = [];
+  agent.addEventListener((event) => events.push(event));
+  const step: ExecutionStep = {
+    stepId: 's1',
+    description: 'read',
+    action: 'read_file',
+    tool: 'read_file',
+    params: {},
+    dependencies: [],
+    validation: [],
+    status: 'pending',
+  };
+  (agent as unknown as { emit(event: AgentEvent): void }).emit({
+    type: 'planning_completed',
+    plan: { steps: [step], reasoning: '', estimatedDuration: 0 },
+  });
+  step.result = { success: false, error: '[llm-request-failed] 401 Unauthorized', duration: 1 };
+  expect(JSON.stringify(events)).not.toContain('[llm-request-failed]');
+});
+
+it('cleans validation diagnostics in completion and validation events', () => {
+  const agent = agentWithFailure();
+  const events: AgentEvent[] = [];
+  agent.addEventListener((event) => events.push(event));
+  const error = '[llm-request-failed] 401 Unauthorized';
+  const validation = { pass: false, results: [], blockedBy: [error] };
+  const emit = (event: AgentEvent) =>
+    (agent as unknown as { emit(event: AgentEvent): void }).emit(event);
+  emit({ type: 'validation_failed', stage: 'pre_write', result: validation });
+  emit({
+    type: 'task_completed',
+    result: {
+      success: false,
+      taskId: 't',
+      executedSteps: [],
+      duration: 1,
+      validations: [validation],
+    },
+  });
+  expect(JSON.stringify(events)).not.toContain('[llm-request-failed]');
+  expect(validation.blockedBy).toEqual([error]);
+});
+
+it('cleans failed-step validations in the returned task result', async () => {
+  const agent = agentWithFailure();
+  const events: AgentEvent[] = [];
+  agent.addEventListener((event) => events.push(event));
+  const error = '[llm-request-failed] 401 Unauthorized';
+  const validation = { pass: false, results: [], blockedBy: [error] };
+  const spy = vi
+    .spyOn(Executor.prototype, 'executeStepsWithErrorFeedback')
+    .mockImplementation(async (steps, _context, onStart, onComplete) => {
+      const step = steps[0];
+      onStart?.(step);
+      const output = {
+        stepResult: { success: false, error, duration: 1 },
+        validation,
+        needsRollback: true,
+      };
+      step.status = 'failed';
+      step.result = output.stepResult;
+      onComplete?.(step, output);
+      return [output];
+    });
+  try {
+    const result = await agent.execute('read file', {
+      resume: {
+        taskId: 't',
+        taskDescription: 'read file',
+        taskType: 'modify',
+        messages: [],
+        files: {},
+        plan: {
+          steps: [
+            {
+              stepId: 's1',
+              description: 'read',
+              action: 'read_file',
+              tool: 'read_file',
+              params: { path: 'src/a.ts' },
+              dependencies: [],
+              validation: [],
+              status: 'pending',
+            },
+          ],
+          reasoning: '',
+          estimatedDuration: 0,
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.validations[0].blockedBy).toEqual(['401 Unauthorized']);
+    expect(result.executedSteps[0].result?.error).toBe('401 Unauthorized');
+    expect(isLLMRequestFailure(result.error ?? '')).toBe(true);
+    expect(JSON.stringify(events)).not.toContain('[llm-request-failed]');
+    expect(validation.blockedBy).toEqual([error]);
+  } finally {
+    spy.mockRestore();
+  }
 });

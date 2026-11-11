@@ -91,3 +91,27 @@ it.each(['404 Not Found', '401 Unauthorized'])(
     expect(formatted).not.toContain('[llm-request-failed]');
   },
 );
+
+it.each([
+  [
+    'Cannot apply patch: file not found; ',
+    '401 Unauthorized; check credentials',
+    '',
+    'ANTHROPIC_API_KEY',
+  ],
+  ['', '401 Unauthorized', '; file not found', 'ANTHROPIC_API_KEY'],
+  ['401 from a tool; ', '404 Not Found', '', 'provider=anthropic'],
+  ['', 'socket hang up', '; file not found', 'LLM 请求失败：'],
+])('classifies only the LLM segment in a mixed error', (before, llm, after, hint) => {
+  const formatted = formatRunError(before + fromLLM(llm) + after, input);
+  expect(formatted).toContain(hint);
+  expect(formatted).toContain(before + llm + after);
+  if (!llm.includes('404')) expect(formatted).not.toContain('404 Not Found');
+  expect(formatted).not.toContain('[llm-request-failed]');
+  expect(formatted).not.toContain('[/llm-request-failed]');
+});
+
+it('uses a generic hint for old prefix-only errors with ambiguous source boundaries', () => {
+  const formatted = formatRunError('file not found; [llm-request-failed] 401 Unauthorized', input);
+  expect(formatted).toBe('LLM 请求失败：file not found; 401 Unauthorized');
+});

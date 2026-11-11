@@ -8,6 +8,7 @@ import {
   type AgentSessionSnapshot,
   createAgent,
   type ExecutorStepTrace,
+  getLLMRequestFailureText,
   type HallucinationGuardConfig,
   isLLMRequestFailure,
   type LLMBackend,
@@ -95,7 +96,8 @@ export function formatRunError(
 
   const endpoint = `provider=${input.provider}, model=${input.model}, baseURL=${input.baseURL ?? '(default)'}`;
 
-  if (/not found|404/i.test(original)) {
+  const providerError = getLLMRequestFailureText(error);
+  if (/not found|404/i.test(providerError)) {
     return [
       `LLM 请求失败：404 Not Found（${original}）`,
       `请检查 provider/model/base-url：${endpoint}`,
@@ -105,7 +107,7 @@ export function formatRunError(
     ].join('\n');
   }
 
-  if (/api key|apikey|unauthorized|401/i.test(original)) {
+  if (/api key|apikey|unauthorized|401/i.test(providerError)) {
     return `LLM 鉴权失败（${original}）。请检查 ${input.provider.toUpperCase()}_API_KEY 或 --api-key。`;
   }
 

@@ -1,4 +1,5 @@
 import type { ExecutionStep } from '@frontagent/shared';
+import { stripLLMRequestTag } from '../llm/llm-request-error.js';
 import type { ExecutorOutput } from '../types.js';
 import type {
   ExecutorStepTrace,
@@ -80,10 +81,19 @@ export function createStepTraceRecorder({
           totalMs: nowMs() - traceStartedAt,
           success: stepResult.success,
           skipped: isSkippedOutput(stepResult.output),
-          error: stepResult.error,
-          stages,
+          error: stepResult.error === undefined ? undefined : stripLLMRequestTag(stepResult.error),
+          stages: stages.map((stage) => ({
+            ...stage,
+            error: stage.error === undefined ? undefined : stripLLMRequestTag(stage.error),
+          })),
           toolDurationMs: toolResult?.__toolDurationMs as number | undefined,
-          subStages: subStages.length > 0 ? subStages : undefined,
+          subStages:
+            subStages.length > 0
+              ? subStages.map((stage) => ({
+                  ...stage,
+                  error: stage.error === undefined ? undefined : stripLLMRequestTag(stage.error),
+                }))
+              : undefined,
         };
         trace?.onStepTrace?.(stepTrace);
       }

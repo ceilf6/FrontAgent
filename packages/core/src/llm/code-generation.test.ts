@@ -10,6 +10,56 @@ import {
   SECURITY_DISCIPLINE,
 } from './prompts.js';
 
+describe.each(['create', 'modify'] as const)('%s generated source', (operation) => {
+  function generate(response: string, filePath = 'a.ts') {
+    const deps = {
+      debugLog: () => {},
+      debugWarn: () => {},
+      debugError: () => {},
+      generateText: async () => response,
+      generateObject: async () => {
+        throw new Error('Unexpected object generation');
+      },
+    };
+    return operation === 'create'
+      ? generateCodeForFile(
+          { task: 'test', filePath, codeDescription: 'test', context: '', language: 'typescript' },
+          deps,
+        )
+      : generateModifiedCode(
+          { originalCode: '', changeDescription: 'test', filePath, language: 'typescript' },
+          deps,
+        );
+  }
+
+  it.each([
+    '```ts\nexport const a = 1;\n```\n```ts\nexport const b = 2;\n```',
+    'Here is the code:\n```ts\nexport const a = 1;\n```',
+    '```ts\nexport const a = 1;\n```\nPlease check this implementation.',
+    'export const a = 1;\n```ts\nexport const b = 2;\n```',
+    '```ts\nexport const a = 1;',
+  ])('rejects ambiguous or incomplete Markdown responses: %s', async (response) => {
+    await expect(generate(response)).rejects.toThrow(/Markdown code fences/);
+  });
+
+  it.each(['\n', '\r\n'])('unwraps one complete fenced block with %j endings', async (eol) => {
+    const code = ["'use client';", 'export const a = 1;'].join(eol);
+    await expect(generate(`  \n\`\`\`typescript${eol}${code}${eol}\`\`\`\n`)).resolves.toBe(code);
+  });
+
+  it.each([
+    "'use client';\nexport const a = 1;",
+    '/*\n```ts\nconst example = 1;\n```\n*/\nexport const a = 1;',
+    'export const a = 1; /*\n```ts\nconst example = 1;\n```\n*/',
+    'export const text = "```ts";',
+    'export const text = `before\n\\`\\`\\`ts\nexample\n\\`\\`\\`\nafter`;',
+    'export const view = <pre>\n```ts\nexample\n```\n</pre>;',
+  ])('preserves source text, including literal backticks: %s', async (code) => {
+    await expect(generate(code, 'a.tsx')).resolves.toBe(code);
+    await expect(generate(`\`\`\`tsx\n${code}\n\`\`\``, 'a.tsx')).resolves.toBe(code);
+  });
+});
+
 describe('parseTypeScriptErrors', () => {
   it('parses standard tsc error format (parentheses)', () => {
     const steps = [

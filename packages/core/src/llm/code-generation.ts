@@ -1,3 +1,5 @@
+import { findMarkdownCodeFence } from '@frontagent/hallucination-guard/syntax';
+import { detectSyntaxLanguage } from '@frontagent/shared';
 import type { z } from 'zod';
 import type { Message } from '../types.js';
 import {
@@ -26,38 +28,21 @@ export interface CodeGenerationDeps {
   }) => Promise<T>;
 }
 
-function cleanGeneratedCode(code: string): string {
-  let cleaned = code;
+function cleanGeneratedCode(code: string, filePath: string): string {
+  const response = code.trim();
+  const fenced = response.match(/^(`{3,})[^`\r\n]*\r?\n([\s\S]*?)\r?\n\1$/);
+  const cleaned = fenced ? fenced[2].trim() : response;
+  const language = detectSyntaxLanguage(filePath);
 
-  cleaned = cleaned.replace(/^```[\w]*\n/m, '').replace(/\n```$/m, '');
-  cleaned = cleaned.replace(/\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/g, '');
-
-  const lines = cleaned.split('\n');
-  let codeStartIndex = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (
-      line.startsWith('import ') ||
-      line.startsWith('export ') ||
-      line.startsWith('const ') ||
-      line.startsWith('let ') ||
-      line.startsWith('var ') ||
-      line.startsWith('function ') ||
-      line.startsWith('class ') ||
-      line.startsWith('interface ') ||
-      line.startsWith('type ') ||
-      line.startsWith('//') ||
-      line.startsWith('/*') ||
-      line.startsWith('{') ||
-      line.startsWith('<')
-    ) {
-      codeStartIndex = i;
-      break;
-    }
+  if (
+    (language === 'typescript' || language === 'javascript') &&
+    findMarkdownCodeFence(cleaned, filePath)
+  ) {
+    throw new Error(
+      'Markdown code fences remain in generated source; return one complete source file.',
+    );
   }
-
-  cleaned = lines.slice(codeStartIndex).join('\n');
-  return cleaned.trim();
+  return cleaned;
 }
 
 export async function generateCodeForFile(
@@ -123,7 +108,7 @@ ${CODE_MINIMALISM_DISCIPLINE}`;
   ];
 
   const code = await deps.generateText({ messages, system, temperature: 0.2 });
-  return cleanGeneratedCode(code);
+  return cleanGeneratedCode(code, options.filePath);
 }
 
 export async function analyzeCode(
@@ -192,7 +177,7 @@ ${CODE_MINIMALISM_DISCIPLINE}`;
   ];
 
   const code = await deps.generateText({ messages, system, temperature: 0.2 });
-  return cleanGeneratedCode(code);
+  return cleanGeneratedCode(code, options.filePath);
 }
 
 export function parseTypeScriptErrors(

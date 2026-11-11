@@ -3,6 +3,59 @@ import { checkSyntaxValidity } from './syntax-validity.js';
 
 describe('checkSyntaxValidity', () => {
   describe('typescript/javascript', () => {
+    it.each([
+      ['a.ts', '这是一段说明文字，不是代码。'],
+      ['formatDate.ts', '我需要先澄清一下：您提供的代码中没有具体说明要做什么修改。'],
+      ['TodoList.tsx', '无法完成。您提供了原始代码和一般性的修改要求。'],
+    ])('rejects prose in %s with parser diagnostics', async (filePath, code) => {
+      const result = await checkSyntaxValidity({ code, language: 'typescript', filePath });
+      expect(result.pass).toBe(false);
+      expect(result.details?.errors).toEqual(
+        expect.arrayContaining([expect.objectContaining({ code: 1127 })]),
+      );
+    });
+
+    it.each(['a.ts', 'a.tsx', 'a.js', 'a.jsx'])(
+      'rejects a residual Markdown block in %s',
+      async (filePath) => {
+        const result = await checkSyntaxValidity({
+          code: 'export const a = 1;\n```ts\nexport const b = 2;\n```',
+          language: filePath.includes('.j') ? 'javascript' : 'typescript',
+          filePath,
+        });
+        expect(result.pass).toBe(false);
+        expect(result.details?.errors).toEqual([
+          expect.objectContaining({
+            line: 2,
+            column: 1,
+            message: expect.stringMatching(/Markdown code fences/),
+          }),
+        ]);
+      },
+    );
+
+    it.each([
+      '/*\n```ts\nconst example = 1;\n```\n*/\nexport const a = 1;',
+      'export const a = 1; /*\n```ts\nconst example = 1;\n```\n*/',
+      'export const view = <pre>\n```ts\nexample\n```\n</pre>;',
+      'export const text = "first\\\n```ts";',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: This is source text for the parser.
+      'export const text = `before\n${"value"}\n\\`\\`\\`ts\nafter`;',
+    ])('accepts fences inside source text: %s', async (code) => {
+      await expect(
+        checkSyntaxValidity({ code, language: 'typescript', filePath: 'a.tsx' }),
+      ).resolves.toMatchObject({ pass: true });
+    });
+
+    it('preserves JSX text when JavaScript callers omit the file path', async () => {
+      await expect(
+        checkSyntaxValidity({
+          code: 'export const view = <pre>\n```ts\nexample\n```\n</pre>;',
+          language: 'javascript',
+        }),
+      ).resolves.toMatchObject({ pass: true });
+    });
+
     it('passes for valid code', async () => {
       const code = `function hello() {\n  return "world";\n}`;
       const result = await checkSyntaxValidity({ code, language: 'typescript' });

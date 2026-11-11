@@ -100,10 +100,10 @@ function checkJavaScriptSyntax(
   language: 'typescript' | 'javascript',
   filePath?: string,
 ): SyntaxErrorDetail[] {
-  const fenceError = checkOuterMarkdownFence(code);
+  const fileName = filePath ?? (language === 'typescript' ? 'source.ts' : 'source.js');
+  const fenceError = findMarkdownCodeFence(code, fileName);
   if (fenceError) return [fenceError];
 
-  const fileName = filePath ?? (language === 'typescript' ? 'source.ts' : 'source.js');
   const sourceFile = ts.createSourceFile(
     fileName,
     code,
@@ -177,20 +177,57 @@ function formatDiagnostic(sourceFile: ts.SourceFile, diagnostic: ts.Diagnostic):
   };
 }
 
-function checkOuterMarkdownFence(code: string): SyntaxErrorDetail | undefined {
-  const lines = code.trim().split(/\r?\n/);
-  if (lines.length < 2) return undefined;
+/** Find standalone Markdown fences without rejecting literal source text. */
+export function findMarkdownCodeFence(
+  code: string,
+  filePath?: string,
+): SyntaxErrorDetail | undefined {
+  const candidates = [...code.matchAll(/^[\t ]*`{3,}[^`\r\n]*\r?$/gm)];
+  if (candidates.length === 0) return undefined;
 
-  const first = lines[0].trim();
-  const last = lines[lines.length - 1].trim();
-  if (/^```[^`]*$/.test(first) && last === '```') {
+  const sourceFile = ts.createSourceFile(
+    filePath ?? 'source.ts',
+    code,
+    ts.ScriptTarget.Latest,
+    false,
+    getScriptKind('typescript', filePath),
+  );
+  const literalRanges: ts.TextRange[] = [];
+  const collectLiteralRanges = (node: ts.Node): void => {
+    const children = node.getChildren(sourceFile);
+    if (children.length > 0) {
+      children.forEach(collectLiteralRanges);
+      return;
+    }
+
+    literalRanges.push(
+      ...(ts.getLeadingCommentRanges(code, node.getFullStart()) ?? []),
+      ...(ts.getTrailingCommentRanges(code, node.end) ?? []),
+    );
+    if (node.kind === ts.SyntaxKind.JsxText) {
+      literalRanges.push(node);
+    } else if (
+      ts.isStringLiteralLike(node) ||
+      ts.isTemplateLiteralToken(node) ||
+      node.kind === ts.SyntaxKind.RegularExpressionLiteral
+    ) {
+      // A fence can parse as consecutive tagged templates. Its first backtick
+      // starts a token, so only the interior of a literal protects a candidate.
+      literalRanges.push({ pos: node.getStart(sourceFile) + 1, end: node.end });
+    }
+  };
+  collectLiteralRanges(sourceFile);
+
+  for (const candidate of candidates) {
+    const offset = candidate.index + candidate[0].indexOf('`');
+    if (literalRanges.some((range) => range.pos <= offset && offset < range.end)) continue;
+    const location = sourceFile.getLineAndCharacterOfPosition(offset);
     return {
-      line: 1,
-      column: 1,
+      line: location.line + 1,
+      column: location.character + 1,
       message: 'Markdown code fences are not valid file content',
     };
   }
-
   return undefined;
 }
 

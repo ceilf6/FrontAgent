@@ -13,6 +13,7 @@ import type {
   ValidationRule,
 } from '@frontagent/shared';
 import { generateId, logger } from '@frontagent/shared';
+import { stripLLMRequestTag } from './llm/llm-request-error.js';
 import { type GeneratedPlan, LLMService } from './llm.js';
 import { injectRepositoryManagementPhase } from './planner-phase-helpers.js';
 import {
@@ -161,7 +162,9 @@ export class Planner {
         const llmPlan = await this.generatePlanWithLLM(task, context);
         steps = this.convertLLMPlanToSteps(llmPlan);
       } catch (error) {
-        this.fallbackReason = error instanceof Error ? error.message : String(error);
+        this.fallbackReason = stripLLMRequestTag(
+          error instanceof Error ? error.message : String(error),
+        );
         if (this.config.debug) {
           logger.warn('LLM plan generation failed, falling back to rule-based:', error);
         }

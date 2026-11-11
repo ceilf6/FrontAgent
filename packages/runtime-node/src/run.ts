@@ -8,8 +8,11 @@ import {
   type AgentSessionSnapshot,
   createAgent,
   type ExecutorStepTrace,
+  getLLMRequestFailureText,
   type HallucinationGuardConfig,
+  isLLMRequestFailure,
   type LLMBackend,
+  stripLLMRequestTag,
 } from '@frontagent/core';
 import { createShellMCPClient } from '@frontagent/mcp-shell';
 import type { ApprovalRequest, SecurityApprovalResponse, TaskType } from '@frontagent/shared';
@@ -85,23 +88,30 @@ export function formatRunError(
     debug: boolean;
   },
 ): string | undefined {
-  if (!error || input.debug) return error;
+  if (!error) return error;
 
-  if (/not found|404/i.test(error)) {
+  const original = stripLLMRequestTag(error);
+  if (input.debug) return original;
+  if (!isLLMRequestFailure(error)) return original.split('\n')[0];
+
+  const endpoint = `provider=${input.provider}, model=${input.model}, baseURL=${input.baseURL ?? '(default)'}`;
+
+  const providerError = getLLMRequestFailureText(error);
+  if (/not found|404/i.test(providerError)) {
     return [
-      'LLM 请求失败：404 Not Found。',
-      `请检查 provider/model/base-url：provider=${input.provider}, model=${input.model}, baseURL=${input.baseURL ?? '(default)'}`,
+      `LLM 请求失败：404 Not Found（${original}）`,
+      `请检查 provider/model/base-url：${endpoint}`,
       input.provider === 'anthropic'
         ? 'Anthropic provider 会请求 baseURL + /messages；请确认供应商支持 Anthropic Messages API。'
         : '如 baseURL 包含 /chat/completions，CLI 会自动裁剪；仍失败时请确认供应商的 OpenAI-compatible 地址。',
     ].join('\n');
   }
 
-  if (/api key|apikey|unauthorized|401/i.test(error)) {
-    return `LLM 鉴权失败。请检查 ${input.provider.toUpperCase()}_API_KEY 或 --api-key。`;
+  if (/api key|apikey|unauthorized|401/i.test(providerError)) {
+    return `LLM 鉴权失败（${original}）。请检查 ${input.provider.toUpperCase()}_API_KEY 或 --api-key。`;
   }
 
-  return error.split('\n')[0];
+  return `LLM 请求失败：${original}`;
 }
 
 export async function runFrontAgentTask(

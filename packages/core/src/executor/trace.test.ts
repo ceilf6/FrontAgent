@@ -239,3 +239,25 @@ describe('createStepTraceRecorder', () => {
     );
   });
 });
+
+it('strips LLM markers from trace diagnostics while preserving the internal result', async () => {
+  const traces: ExecutorStepTrace[] = [];
+  const recorder = createStepTraceRecorder({
+    taskId: 't',
+    step: makeStep(),
+    nowMs: () => 1,
+    trace: { enabled: true, onStepTrace: (trace) => traces.push(trace) },
+  });
+  const error = '[llm-request-failed] 401 Unauthorized';
+  await expect(
+    recorder.withStage('call_tool', () => {
+      throw new Error(error);
+    }),
+  ).rejects.toThrow(error);
+  recorder.addSubStage('provider', 1, false, error);
+  const output = makeOutput({ stepResult: { success: false, error, duration: 1 } });
+  expect(recorder.finish(output)).toBe(output);
+  expect(JSON.stringify(traces)).not.toContain('[llm-request-failed]');
+  expect(traces[0].error).toBe('401 Unauthorized');
+  expect(output.stepResult.error).toBe(error);
+});

@@ -16,6 +16,7 @@ import {
   generateCodeForFile as generateCodeForFileImpl,
   generateModifiedCode as generateModifiedCodeImpl,
 } from './code-generation.js';
+import { tagLLMRequestFailure } from './llm-request-error.js';
 import { tryFixGeneratedObject } from './object-repair.js';
 import {
   generatePlan as generatePlanImpl,
@@ -186,20 +187,24 @@ export class LLMService {
     topP?: number;
     topK?: number;
   }): Promise<string> {
-    if (this.config.backend) {
-      return this.config.backend.generateText(options);
-    }
-    if (!this.model) {
+    if (!this.config.backend && !this.model) {
       throw new Error('No LLM model is configured');
     }
-    const result = await generateText({
-      model: this.model,
-      messages: this.convertMessages(options.messages),
-      system: options.system,
-      ...this.buildCallSettings(options),
-    });
+    try {
+      if (this.config.backend) {
+        return await this.config.backend.generateText(options);
+      }
+      const result = await generateText({
+        model: this.model!,
+        messages: this.convertMessages(options.messages),
+        system: options.system,
+        ...this.buildCallSettings(options),
+      });
 
-    return result.text;
+      return result.text;
+    } catch (error) {
+      throw tagLLMRequestFailure(error);
+    }
   }
 
   async *streamText(options: {
@@ -210,26 +215,30 @@ export class LLMService {
     topP?: number;
     topK?: number;
   }): AsyncGenerator<string> {
-    if (this.config.backend?.streamText) {
-      yield* this.config.backend.streamText(options);
-      return;
-    }
-    if (this.config.backend) {
-      yield await this.config.backend.generateText(options);
-      return;
-    }
-    if (!this.model) {
+    if (!this.config.backend && !this.model) {
       throw new Error('No LLM model is configured');
     }
-    const result = streamText({
-      model: this.model,
-      messages: this.convertMessages(options.messages),
-      system: options.system,
-      ...this.buildCallSettings(options),
-    });
+    try {
+      if (this.config.backend?.streamText) {
+        yield* this.config.backend.streamText(options);
+        return;
+      }
+      if (this.config.backend) {
+        yield await this.config.backend.generateText(options);
+        return;
+      }
+      const result = streamText({
+        model: this.model!,
+        messages: this.convertMessages(options.messages),
+        system: options.system,
+        ...this.buildCallSettings(options),
+      });
 
-    for await (const chunk of result.textStream) {
-      yield chunk;
+      for await (const chunk of result.textStream) {
+        yield chunk;
+      }
+    } catch (error) {
+      throw tagLLMRequestFailure(error);
     }
   }
 
@@ -246,7 +255,11 @@ export class LLMService {
     maxRetries?: number;
   }): Promise<T> {
     if (this.config.backend) {
-      return this.config.backend.generateObject(options);
+      try {
+        return await this.config.backend.generateObject(options);
+      } catch (error) {
+        throw tagLLMRequestFailure(error);
+      }
     }
     if (!this.model) {
       throw new Error('No LLM model is configured');
@@ -320,7 +333,7 @@ export class LLMService {
         LLMService.errorStats.unfixedErrors++;
         this.debugError('[LLMService] ❌ All fix attempts and retries failed');
         this.debugLog('[LLMService] Error Stats:', LLMService.getErrorStats());
-        throw error;
+        throw tagLLMRequestFailure(error);
       }
     }
 

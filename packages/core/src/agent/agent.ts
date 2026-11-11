@@ -41,6 +41,7 @@ import type {
 import { WorkflowIntegration } from '../workflow-integration.js';
 import { buildFinalOutput } from './answer-generation.js';
 import { gatherRequestedContext } from './context-gathering.js';
+import { cleanEventErrors, cleanStepError, cleanValidationError } from './event-errors.js';
 import { createExecutionCallbacks } from './execution-callbacks.js';
 import { FactsUpdateFlusher } from './facts-update-flush.js';
 import { persistMemory, preloadMemory } from './memory-lifecycle.js';
@@ -345,9 +346,10 @@ export class FrontAgent {
   }
 
   private emit(event: AgentEvent): void {
+    const displayEvent = cleanEventErrors(event);
     for (const listener of this.eventListeners) {
       try {
-        listener(event);
+        listener(displayEvent);
       } catch (error) {
         this.debugError('Event listener error:', error);
       }
@@ -783,7 +785,7 @@ export class FrontAgent {
       const result: AgentExecutionResult = {
         success,
         taskId: task.id,
-        executedSteps: executionPlan.steps,
+        executedSteps: executionPlan.steps.map(cleanStepError),
         output: finalOutput,
         error: success
           ? undefined
@@ -793,7 +795,7 @@ export class FrontAgent {
               : '任务完成了工具步骤，但未生成最终回答。'
             : failedSteps.map((s) => s.result?.error).join('; '),
         duration: Date.now() - startTime,
-        validations,
+        validations: validations.map(cleanValidationError),
         // 无条件带出：降级过的计划不该和正常计划长得一样
         plannerFallbackReason: this.lastLlmFailureError,
       };

@@ -407,6 +407,32 @@ test('CI and contract guard target develop and call named quality scripts', () =
   assert.match(contractGuard, /GITNEXUS_IMPACT_SUMMARY/u);
 });
 
+test('Node setup restores pnpm cache between pnpm setup and frozen install', () => {
+  for (const file of ['ci.yml', 'contract-guard.yml', 'release.yml']) {
+    const workflow = readFileSync(join('.github/workflows', file), 'utf8');
+    const jobs = workflow
+      .split(/\n {2}[\w-]+:\s*\n/u)
+      .filter((job) => job.includes('uses: actions/setup-node@'));
+    assert.ok(jobs.length > 0, `${file} has no Node setup job`);
+    for (const job of jobs) {
+      const pnpmSetup = job.indexOf('uses: pnpm/action-setup@');
+      const nodeSetup = job.indexOf('uses: actions/setup-node@');
+      const install = job.indexOf('run: pnpm install --frozen-lockfile');
+      assert.ok(
+        pnpmSetup >= 0 && pnpmSetup < nodeSetup,
+        `${file} must install pnpm before caching`,
+      );
+      assert.ok(install > nodeSetup, `${file} must install dependencies after Node setup`);
+      const setupStep = /uses: actions\/setup-node@[^\n]*\n([\s\S]*?)(?=\n {6}- |$)/u.exec(
+        job,
+      )?.[1];
+      assert.ok(setupStep, `${file} has no Node setup inputs`);
+      assert.match(setupStep, /^\s+node-version:\s*\S+/mu);
+      assert.match(setupStep, /^\s+cache:\s*pnpm\s*$/mu);
+    }
+  }
+});
+
 // Contract Guard 对 critical 文件同时要求「同 PR 有 scripts/tests/ 契约测试」和
 // 「PR 正文里的结构化 impact summary」;dependabot 两样都给不出,所以每一次碰
 // .github/workflows/ 的版本升级都会红。跳过判定必须挂在 PR 作者上而不是

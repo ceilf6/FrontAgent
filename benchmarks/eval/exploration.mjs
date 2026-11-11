@@ -2,7 +2,6 @@ import { statSync } from 'node:fs';
 import { posix, relative, resolve } from 'node:path';
 
 const EXPLORATION_ACTIONS = new Set(['read_file', 'list_directory', 'search_code']);
-const isPattern = (value) => /[*?\[\]{}]/u.test(value);
 const normalize = (value) => posix.normalize(value.replaceAll('\\', '/')).replace(/\/$/u, '');
 
 /** Capture filesystem and tool observations before subsequent steps can change the workspace. */
@@ -12,7 +11,7 @@ export function observeExploration(event, workspace) {
   if (!EXPLORATION_ACTIONS.has(action)) return undefined;
   const params = event.step.params ?? {};
   const requestedPath = String(params.path ?? params.directory ?? params.filePattern ?? '.');
-  const pattern = action === 'search_code' && isPattern(String(params.filePattern ?? requestedPath));
+  const pattern = action === 'search_code';
   const path = relative(workspace, resolve(workspace, requestedPath)).replaceAll('\\', '/') || '.';
   let exists = null;
   let existenceError;
@@ -47,7 +46,7 @@ export function observeExploration(event, workspace) {
 }
 
 export function classifyExploration(step, targetDirs) {
-  if (step.pattern === true || (step.action === 'search_code' && isPattern(step.path))) return 'glob';
+  if (step.action === 'search_code' || step.pattern === true) return 'glob';
   if (step.exists === false) return 'ghost';
   if (step.exists !== true) return 'unknown';
   if (step.ok === false || step.resultSuccess === false || step.toolSuccess === false || step.skipped) return 'miss';

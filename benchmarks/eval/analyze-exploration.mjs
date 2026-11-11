@@ -21,7 +21,16 @@ const suffix = argv[1] === 'deep' || argv[0]?.includes('deep') ? '-deep' : '';
  */
 function requireRecords(arms) {
   const total = arms.reduce((n, [, rows]) => n + rows.length, 0);
-  if (total > 0) return;
+  if (total > 0) {
+    const missing = arms.flatMap(([arm, rows]) => rows
+      .filter(row => !Array.isArray(row.eventDetails?.explored))
+      .map(row => `${arm}/${row.taskId}`));
+    if (missing.length > 0) {
+      console.error(`缺少 eventDetails.explored，无法重算探索指标：${missing.slice(0, 5).join(', ')}（共 ${missing.length} 条）`);
+      process.exit(1);
+    }
+    return;
+  }
   const names = arms.map(([a]) => join(dir, `${a}${suffix}.jsonl`)).join('\n  ');
   console.error(`未从以下路径读到任何记录：\n  ${names}\n`);
   console.error('注意参数是位置参数：analyze-exploration.mjs <outDir> [deep]');
@@ -49,7 +58,7 @@ const arms = { full: load('full'), 'no-filesense': load('no-filesense') };
 requireRecords(Object.entries(arms));
 
 console.log('# 探索质量重算\n');
-console.log('| 臂 | 任务数 | 命中(目录对+操作成功) | 路径缺失 | 脱靶 | glob | 失败或未读到内容 | 不可判定 |');
+console.log('| 臂 | 任务数 | 命中(目录对+操作成功) | 路径缺失 | 脱靶 | 搜索（含 glob / 文件筛选） | 失败或未读到内容 | 不可判定 |');
 console.log('|---|---|---|---|---|---|---|---|');
 
 for (const [arm, rows] of Object.entries(arms)) {
@@ -73,7 +82,7 @@ const navigated = new Set(
   (arms.full ?? []).filter((r) => r.events?.filesense_navigated).map((r) => r.taskId),
 );
 console.log(`触发导航的任务：${navigated.size} / ${(arms.full ?? []).length}\n`);
-console.log('| 臂 | 任务数 | 命中 | 路径缺失 | 脱靶 | glob | 失败或未读到内容 | 不可判定 |');
+console.log('| 臂 | 任务数 | 命中 | 路径缺失 | 脱靶 | 搜索（含 glob / 文件筛选） | 失败或未读到内容 | 不可判定 |');
 console.log('|---|---|---|---|---|---|---|---|');
 for (const [arm, rows] of Object.entries(arms)) {
   const subset = rows.filter((r) => navigated.has(r.taskId));

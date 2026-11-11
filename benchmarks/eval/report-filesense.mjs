@@ -163,7 +163,7 @@ console.log(`# FrontAgent 消融评测：filesense 目录导航对一次通过�
 ## 定位精度（本报告的主指标）
 
 探索结果根据事件发生时记录的路径存在性和工具输出判定。空文件的成功读取属于命中；
-跳过、失败或没有读到内容单独计数。glob 搜索不当作具体路径命中。
+跳过、失败或没有读到内容单独计数。搜索（含 glob / 文件筛选）不当作具体路径命中。
 旧记录缺少存在性证据时计为不可判定，不使用旧版计数推断命中。
 
 | 指标 | filesense 关 | filesense 开 |
@@ -173,7 +173,7 @@ console.log(`# FrontAgent 消融评测：filesense 目录导航对一次通过�
 | 路径缺失 | ${explorationMetric(arms.off, 'exploredGhost')} | ${explorationMetric(arms.full, 'exploredGhost')} |
 | 失败或未读到内容 | ${explorationMetric(arms.off, 'exploredMiss')} | ${explorationMetric(arms.full, 'exploredMiss')} |
 | 脱靶探索 | ${explorationMetric(arms.off, 'offTargetExplored')} | ${explorationMetric(arms.full, 'offTargetExplored')} |
-| glob 搜索 | ${explorationMetric(arms.off, 'globExplored')} | ${explorationMetric(arms.full, 'globExplored')} |
+| 搜索（含 glob / 文件筛选） | ${explorationMetric(arms.off, 'globExplored')} | ${explorationMetric(arms.full, 'globExplored')} |
 | 不可判定 | ${explorationMetric(arms.off, 'exploredUnknown')} | ${explorationMetric(arms.full, 'exploredUnknown')} |
 
 ## 分类通过率

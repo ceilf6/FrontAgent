@@ -106,3 +106,19 @@ test('search patterns are separate from literal read paths with placeholders', (
       'ghost',
     );
   }));
+
+test('search_code is a file-pattern search with default or literal filePattern', () =>
+  withWorkspace((root) => {
+    for (const params of [
+      { query: 'token' },
+      { directory: 'src/app', query: 'token' },
+      { directory: 'src/app', filePattern: 'real.ts', query: 'token' },
+    ]) {
+      const search = {
+        type: 'step_completed',
+        step: { action: 'search_code', params },
+        result: { success: true, output: { success: true, matches: [] } },
+      };
+      assert.equal(classifyExploration(observeExploration(search, root), ['src/app']), 'glob');
+    }
+  }));

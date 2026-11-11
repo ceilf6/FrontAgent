@@ -112,3 +112,45 @@ test('filesense reports replay stored existence instead of trusting stale aggreg
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('exploration analyzer rejects missing telemetry rather than printing zero counters', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'frontagent-missing-exploration-'));
+  try {
+    writeFileSync(
+      join(dir, 'full.jsonl'),
+      `${JSON.stringify(makeRow({ filesense_navigated: 1 }))}\n`,
+    );
+    assert.throws(
+      () =>
+        execFileSync(process.execPath, ['benchmarks/eval/analyze-exploration.mjs', dir], {
+          encoding: 'utf8',
+          stdio: 'pipe',
+        }),
+      (error) => {
+        assert.match(error.stderr, /缺少 eventDetails\.explored/);
+        assert.doesNotMatch(error.stdout, /\| full \| 1 \| 0/);
+        return true;
+      },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('exploration analyzer preserves genuine zero-exploration records', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'frontagent-empty-exploration-'));
+  try {
+    writeFileSync(
+      join(dir, 'full.jsonl'),
+      `${JSON.stringify({ ...makeRow({}), eventDetails: { explored: [] } })}\n`,
+    );
+    const report = execFileSync(
+      process.execPath,
+      ['benchmarks/eval/analyze-exploration.mjs', dir],
+      { encoding: 'utf8' },
+    );
+    assert.match(report, /\| full \| 1 \| 0 \| \*\*0\*\* \| 0 \| 0 \| 0 \| 0 \|/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

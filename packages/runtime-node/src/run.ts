@@ -87,22 +87,14 @@ export function formatRunError(
     debug: boolean;
   },
 ): string | undefined {
-  if (!error || input.debug) return error;
+  if (!error) return error;
 
-  // 按**来源**分类，不按子串。此前这里用 `/not found|404/` 猜，于是
-  // `Cannot apply patch: file not found in context: src/hooks/useDebounce.ts`
-  // 被改写成一次 404 供应商配置错误，还附上从配置里读来的 provider / model /
-  // baseURL——一次没发生过的 LLM 失败，被伪造得证据充分（#408）。标记由
-  // llm-service 在真实请求失败处打上，是唯一能穿过 `error.message` 拍平的通道。
-  if (!isLLMRequestFailure(error)) {
-    return error.split('\n')[0];
-  }
+  const original = stripLLMRequestTag(error);
+  if (input.debug) return original;
+  if (!isLLMRequestFailure(error)) return original.split('\n')[0];
 
-  const original = stripLLMRequestTag(error).split('\n')[0];
   const endpoint = `provider=${input.provider}, model=${input.model}, baseURL=${input.baseURL ?? '(default)'}`;
 
-  // 原文一律保留。它是唯一准确的那部分信息，此前被整条替换掉——而 debug 模式
-  // 早就把它原样打出来了，说明它一直存在，只是在默认路径上被丢了。
   if (/not found|404/i.test(original)) {
     return [
       `LLM 请求失败：404 Not Found（${original}）`,

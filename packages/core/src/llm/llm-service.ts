@@ -187,15 +187,15 @@ export class LLMService {
     topP?: number;
     topK?: number;
   }): Promise<string> {
-    if (this.config.backend) {
-      return this.config.backend.generateText(options);
-    }
-    if (!this.model) {
+    if (!this.config.backend && !this.model) {
       throw new Error('No LLM model is configured');
     }
     try {
+      if (this.config.backend) {
+        return await this.config.backend.generateText(options);
+      }
       const result = await generateText({
-        model: this.model,
+        model: this.model!,
         messages: this.convertMessages(options.messages),
         system: options.system,
         ...this.buildCallSettings(options),
@@ -215,20 +215,20 @@ export class LLMService {
     topP?: number;
     topK?: number;
   }): AsyncGenerator<string> {
-    if (this.config.backend?.streamText) {
-      yield* this.config.backend.streamText(options);
-      return;
-    }
-    if (this.config.backend) {
-      yield await this.config.backend.generateText(options);
-      return;
-    }
-    if (!this.model) {
+    if (!this.config.backend && !this.model) {
       throw new Error('No LLM model is configured');
     }
     try {
+      if (this.config.backend?.streamText) {
+        yield* this.config.backend.streamText(options);
+        return;
+      }
+      if (this.config.backend) {
+        yield await this.config.backend.generateText(options);
+        return;
+      }
       const result = streamText({
-        model: this.model,
+        model: this.model!,
         messages: this.convertMessages(options.messages),
         system: options.system,
         ...this.buildCallSettings(options),
@@ -255,7 +255,11 @@ export class LLMService {
     maxRetries?: number;
   }): Promise<T> {
     if (this.config.backend) {
-      return this.config.backend.generateObject(options);
+      try {
+        return await this.config.backend.generateObject(options);
+      } catch (error) {
+        throw tagLLMRequestFailure(error);
+      }
     }
     if (!this.model) {
       throw new Error('No LLM model is configured');

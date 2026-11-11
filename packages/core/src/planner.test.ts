@@ -1,5 +1,6 @@
 import type { AgentTask } from '@frontagent/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tagLLMRequestFailure } from './llm/llm-request-error.js';
 import { Planner } from './planner.js';
 import type { PlannerContextSnapshot } from './skills/index.js';
 
@@ -292,7 +293,7 @@ describe('Planner LLM-based plan generation', () => {
   it('falls back to rule-based planning when LLM throws an error', async () => {
     const planner = createPlanner({ useLLM: true });
     mockLLMGeneratePlan(planner, async () => {
-      throw new Error('API rate limit exceeded');
+      throw tagLLMRequestFailure(new Error('API rate limit exceeded'));
     });
 
     const result = await planner.plan(

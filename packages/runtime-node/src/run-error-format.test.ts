@@ -16,10 +16,6 @@ function fromLLM(message: string): string {
 }
 
 describe('formatRunError classifies by provenance, not by substring', () => {
-  // #408 的原始复现。这条错误来自 apply_patch 技能自己
-  // （executor-skills.ts: `Cannot apply patch: file not found in context: ${filePath}`），
-  // 没有任何 LLM 调用失败——而它曾被改写成一次 404 供应商配置错误，还附上
-  // 从配置里读来的 provider / model / baseURL。伪造的三元组让错误的故事看起来证据充分。
   it('leaves a tool error that merely contains "not found" alone', () => {
     const error = 'Cannot apply patch: file not found in context: src/hooks/useDebounce.ts';
 
@@ -44,7 +40,6 @@ describe('formatRunError classifies by provenance, not by substring', () => {
 
     expect(formatted).toContain('404 Not Found');
     expect(formatted).toContain('provider=anthropic');
-    // 原文必须保留：它是唯一准确的那部分，此前被整条替换掉
     expect(formatted).toContain('model does not exist');
     expect(formatted).toContain('Anthropic Messages API');
   });
@@ -56,8 +51,6 @@ describe('formatRunError classifies by provenance, not by substring', () => {
     expect(formatted).toContain('invalid api key');
   });
 
-  // 打了标记但不属于已知的两类：仍然要说清是 LLM 失败，而不是默默退回首行——
-  // 否则「来源已知」这条信息就白拿了。
   it('still reports an unclassified LLM failure as an LLM failure', () => {
     const formatted = formatRunError(fromLLM('socket hang up'), input);
 
@@ -71,10 +64,12 @@ describe('formatRunError classifies by provenance, not by substring', () => {
     }
   });
 
-  it('passes everything through untouched in debug mode', () => {
-    const error = fromLLM('404 Not Found');
+  it('preserves full error detail without the transport tag in debug mode', () => {
+    const error = fromLLM('404 Not Found\nprovider details');
 
-    expect(formatRunError(error, { ...input, debug: true })).toBe(error);
+    expect(formatRunError(error, { ...input, debug: true })).toBe(
+      '404 Not Found\nprovider details',
+    );
   });
 
   it('does not double-tag an already-tagged failure', () => {
@@ -84,3 +79,15 @@ describe('formatRunError classifies by provenance, not by substring', () => {
     expect(twice instanceof Error ? twice.message : String(twice)).toBe(once);
   });
 });
+
+it.each(['404 Not Found', '401 Unauthorized'])(
+  'formats contextualized %s without leaking tags',
+  (cause) => {
+    const formatted = formatRunError(`任务未能生成最终回答：${fromLLM(cause)}`, input);
+    expect(formatted).toContain(cause);
+    expect(formatted).toContain(
+      cause.startsWith('404') ? 'provider=anthropic' : 'ANTHROPIC_API_KEY',
+    );
+    expect(formatted).not.toContain('[llm-request-failed]');
+  },
+);

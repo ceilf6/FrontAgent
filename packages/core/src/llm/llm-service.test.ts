@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { z } from 'zod';
+import { z } from 'zod';
 import type { LLMConfig } from '../types.js';
+import { isLLMRequestFailure } from './llm-request-error.js';
 import { LLMService, normalizeProviderBaseURL } from './llm-service.js';
 
 const sdkMocks = vi.hoisted(() => {
@@ -350,4 +351,77 @@ describe('LLMService v5 SDK boundary', () => {
     expect(callArgs.maxOutputTokens).toBe(512);
     expect(callArgs).not.toHaveProperty('maxTokens');
   });
+});
+
+describe('LLM request failure provenance', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+  it.each(['generateText', 'generateObject', 'streamText', 'streamFallback'] as const)(
+    'tags backend %s failures and preserves the provider error',
+    async (method) => {
+      const error = Object.assign(new Error('401 Unauthorized'), {
+        statusCode: 401,
+        isRetryable: false,
+      });
+      const backend = {
+        name: 'test',
+        generateText: vi.fn().mockRejectedValue(error),
+        generateObject: vi.fn().mockRejectedValue(error),
+        ...(method === 'streamText'
+          ? {
+              streamText: async function* () {
+                yield 'partial';
+                throw error;
+              },
+            }
+          : {}),
+      };
+      const service = new LLMService({ provider: 'openai', model: 'test', backend });
+      const request =
+        method === 'generateText'
+          ? service.generateText({ messages: [] })
+          : method === 'generateObject'
+            ? service.generateObject({ messages: [], schema: z.object({}) })
+            : (async () => {
+                for await (const _chunk of service.streamText({ messages: [] })) {
+                  /* consume */
+                }
+              })();
+      await expect(request).rejects.toBe(error);
+      expect(isLLMRequestFailure(error.message)).toBe(true);
+      expect(error.statusCode).toBe(401);
+    },
+  );
+
+  it.each(['generateText', 'streamText', 'generateObject'] as const)(
+    'preserves direct SDK error identity for %s',
+    async (method) => {
+      const error = Object.assign(new Error('404 Not Found'), {
+        statusCode: 404,
+        responseBody: 'missing model',
+      });
+      sdkMocks.generateText.mockRejectedValueOnce(error);
+      sdkMocks.generateObject.mockRejectedValueOnce(error);
+      sdkMocks.streamText.mockReturnValueOnce({
+        textStream: (async function* () {
+          yield 'partial';
+          throw error;
+        })(),
+      });
+      const service = new LLMService({ provider: 'openai', model: 'test', apiKey: 'test-key' });
+      const request =
+        method === 'generateText'
+          ? service.generateText({ messages: [] })
+          : method === 'generateObject'
+            ? service.generateObject({ messages: [], schema: z.object({}), maxRetries: 0 })
+            : (async () => {
+                for await (const _chunk of service.streamText({ messages: [] })) {
+                  /* consume */
+                }
+              })();
+      await expect(request).rejects.toBe(error);
+      expect(isLLMRequestFailure(error.message)).toBe(true);
+    },
+  );
 });

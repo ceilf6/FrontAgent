@@ -73,9 +73,9 @@ jobs:
       # 一个无条件置位的开关会把 issue_comment 这条边界更宽的路径也静默放行。
       # 表达式渲染为布尔字面量 true / false。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && github.event.issue.pull_request)
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || format('refs/pull/{0}/head', github.event.issue.number) }}
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || (github.event_name == 'issue_comment' && github.event.issue.pull_request && format('refs/pull/{0}/head', github.event.issue.number)) || github.event.repository.default_branch }}
+          clean: true
           persist-credentials: false
           allow-unsafe-pr-checkout: ${{ github.event_name == 'pull_request_target' }}
       - uses: ceilf6/repo-guard@main
@@ -83,6 +83,7 @@ jobs:
           type: both
           engine: ${{ vars.REPO_GUARD_ENGINE || 'api' }}
           claude-model: ${{ vars.CLAUDE_CODE_MODEL }}
+          agy-model: ${{ vars.AGY_MODEL }}
           provider: ${{ vars.LLM_PROVIDER }}
           model: ${{ vars.LLM_MODEL }}
           api-key: ${{ secrets.LLM_API_KEY }}

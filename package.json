@@ -76,7 +76,7 @@
     "typescript": "^6.0.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.3",
+    "@biomejs/biome": "2.6.8",
     "@types/node": "^25.9.5",
     "esbuild": "^0.28.1",
     "gitnexus": "1.6.12",
